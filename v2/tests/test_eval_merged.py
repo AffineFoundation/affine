@@ -123,10 +123,11 @@ def _candidate_tiny(root: Path):
 
 
 def _controller_fold_observer(shim: Path, observation: Path, driver_state: Path) -> None:
-    """Fake the incident GPU's per-PID CUDA context at the real fold boundary."""
+    """Account for fake per-PID CUDA contexts at real fold arithmetic boundaries."""
     shim.mkdir()
     package = Path(__file__).parents[1]
     (shim / "sitecustomize.py").write_text(textwrap.dedent(f"""
+        import fcntl
         import json
         import os
         import runpy
@@ -136,34 +137,112 @@ def _controller_fold_observer(shim: Path, observation: Path, driver_state: Path)
 
         namespace = runpy.run_path({str(driver_state)!r})
         state_path = namespace["state_path"]
-        inline_driver_lock = namespace["inline_driver_lock"]
+        thread_lock = namespace["inline_driver_lock"]
         real_fold = fold_kernel.replay_fold
-        def observe(*args, **kwargs):
-            pid = str(os.getpid())
-            # Map the surviving candidate to the incident's GPU 4 driver slot.
-            # The real build and real SoloRunner path are otherwise unchanged.
-            assert kwargs.get("device") == "cuda:4", kwargs
-            with inline_driver_lock:
-                namespace["observation"].write_text(json.dumps({{"pid": os.getpid(), "ppid": os.getppid(), "device": "cuda:4"}}))
+        real_check = fold_kernel.check_arithmetic
+        real_devices = fold_kernel._devices
+        real_run_fold = None
+        if namespace["mode"] == "full":
+            from sn120_v2 import headfold
+            real_run_fold = headfold.run_fold
+
+        def update_driver(pid, device=None, event=None):
+            # flock serializes the two concurrent chain install children;
+            # the Python lock serializes inline SoloRunner worker threads.
+            with thread_lock, state_path.with_suffix(".lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
                 driver = json.loads(state_path.read_text())
-                driver[pid] = {{"ppid": os.getppid(), "cuda": {{"4": 1316}}}}
-                state_path.write_text(json.dumps(driver, sort_keys=True))
-            kwargs["device"] = "cpu"  # CPU stands in for the driver's arithmetic
-            result = real_fold(*args, **kwargs)
-            # A spawned builder exits and releases its context. The original
-            # inline builder keeps the run PID's context for the GPU guard.
-            if os.environ.get("SN120_TEST_OBSERVE_INLINE") != "1":
-                with inline_driver_lock:
-                    driver = json.loads(state_path.read_text())
+                if event is not None:
+                    with namespace["observation"].open("a") as log:
+                        log.write(json.dumps(event) + "\\n")
+                process = driver.setdefault(pid, {{"ppid": os.getppid(), "cuda": {{}}}})
+                if device is None:
                     del driver[pid]
-                    state_path.write_text(json.dumps(driver, sort_keys=True))
-            return result
+                else:
+                    process["cuda"][device] = 1316
+                temporary = state_path.with_name(f"driver.{{pid}}.{{os.getpid()}}.tmp")
+                temporary.write_text(json.dumps(driver, sort_keys=True))
+                temporary.replace(state_path)  # readers never see a partial JSON document
+
+        def arithmetic_done(pid):
+            # A spawned child exits immediately after returning, releasing its
+            # driver context. Inline arithmetic leaves it in the long-lived PID.
+            if os.environ.get("SN120_TEST_OBSERVE_INLINE") != "1":
+                update_driver(pid)
+
+        def check(*args, **kwargs):
+            requested = kwargs.get("device", args[0] if args else "cpu")
+            device = requested[0] if isinstance(requested, (list, tuple)) else requested
+            if device != "cpu":
+                # Account for the real device-selection boundary. The replay
+                # observer below records the fold kind and requested device.
+                update_driver(str(os.getpid()), device.split(":", 1)[1])
+                replacement = ["cpu"] if isinstance(requested, (list, tuple)) else "cpu"
+                if args:
+                    args = (replacement, *args[1:])
+                else:
+                    kwargs["device"] = replacement
+            return real_check(*args, **kwargs)
+
+        def observe(*args, **kwargs):
+            requested = kwargs.get("device", args[5] if len(args) > 5 else "cpu")
+            install = kwargs.get("out_master") is not None or (len(args) > 3 and args[3] is not None)
+            # A chain install may run its arithmetic check before replay_fold.
+            # Keep the event that establishes its requested device and PID.
+            if install and requested.startswith("cuda:"):
+                namespace["last_install_event"] = {{"pid": os.getpid(), "ppid": os.getppid(), "device": requested,
+                    "kind": "install", "kernel": kwargs.get("kernel")}}
+            # Full-mode BLAS installs are recorded at run_fold, not replay_fold.
+            # Candidate output has no master; its GPU is scheduler-selected,
+            # not necessarily GPU 4 when earlier seats train quickly.
+            candidate = not install
+            pid = str(os.getpid())
+            event = {{"pid": os.getpid(), "ppid": os.getppid(), "device": requested,
+                     "kind": "install" if install else "candidate", "kernel": kwargs.get("kernel")}}
+            if candidate or install:
+                device = requested.split(":", 1)[1] if requested.startswith("cuda:") else "4"
+                update_driver(pid, device, event)
+                if len(args) > 5:
+                    args = (*args[:5], "cpu", *args[6:])
+                kwargs["device"] = "cpu"
+                kwargs["threads"] = 1
+            try:
+                return real_fold(*args, **kwargs)
+            finally:
+                if candidate or install:
+                    arithmetic_done(pid)
         fold_kernel.replay_fold = observe
+        fold_kernel.check_arithmetic = check
+        # Internal _in_order consumers get their selected devices directly;
+        # redirect that module-level lookup as well as replay_fold's public input.
+        fold_kernel._devices = lambda device: real_devices("cpu")
+        if real_run_fold is not None:
+            fold_kernel._devices = real_devices
+            def run_install(job):
+                assert job.out_master is not None
+                assert job.kernel == {TORCH_MATMUL!r}
+                pid = str(os.getpid())
+                update_driver(pid, "4", {{"pid": os.getpid(), "ppid": os.getppid(),
+                    "device": job.device, "kind": "install", "kernel": job.kernel}})
+                try:
+                    return real_run_fold(job)
+                finally:
+                    arithmetic_done(pid)
+            headfold.run_fold = run_install
+            # A full candidate may finish on a SoloRunner worker thread while
+            # the install wrapper above temporarily scopes this process-global
+            # parser. Inline arithmetic is the negative-control path.
+        fold_kernel._devices = real_devices
+        # Full mode has no CUDA arithmetic to redirect. Chain candidate children
+        # use this module-level parser after observing their requested device.
+        if namespace["mode"] == "chain":
+            fold_kernel._devices = lambda device: real_devices("cpu")
         """), encoding="utf-8")
-    # The original inline builder executes in the controller/run process. This
-    # is the same test-only driver substitution at the same real fold boundary.
-    if os.environ.get("SN120_TEST_OBSERVE_INLINE") == "1":
-        runpy.run_path(str(shim / "sitecustomize.py"))
+    # Observe install folds in the parent too. Spawned candidate and install
+    # children load this same hook through PYTHONPATH. Tests that only build a
+    # candidate must not leave that candidate observer installed in the parent.
+    if os.environ.get("SN120_TEST_CONTROLLER_OBSERVER") == "1":
+        return runpy.run_path(str(shim / "sitecustomize.py"))
 
 
 def _candidate_evaluator(tmp_path: Path, build, master: Path, base: Path, lora: Path):
@@ -389,7 +468,8 @@ def test_real_solo_runner_serves_merged_models_and_cleans_round_dirs(build, tmp_
     assert not (tmp_path / "work" / "merged-candidates" / ticket.round_id).exists()
 
 
-def test_real_controller_merged_lease_has_no_controller_cuda_context(tmp_path, build, monkeypatch):
+@pytest.mark.parametrize("mode", ["full", "chain"])
+def test_real_controller_merged_lease_has_no_controller_cuda_context(tmp_path, build, monkeypatch, mode):
     """Real open/train/build/eval/submit, with a PID-accounted fake CUDA driver.
 
     SN120_TEST_OBSERVE_INLINE=1 runs the same fixture against 50afaca3. Its
@@ -405,6 +485,7 @@ def test_real_controller_merged_lease_has_no_controller_cuda_context(tmp_path, b
     from sn120_v2.params import Recipe
     from sn120_v2.sim import sim_params
     from sn120_v2.sim_head import ChainWorld, tiny_lora
+    from sn120_v2.headfold import FoldSettings, in_children
     from sn120_v2.store import LocalStore
     from sn120_v2.types import EntryResult, NO_DECISION, TrainReport
 
@@ -415,8 +496,11 @@ def test_real_controller_merged_lease_has_no_controller_cuda_context(tmp_path, b
                         min_step_norm=0.0, min_signal_rollouts=1, dedup_enabled=True,
                         dedup_rollout_overlap=0.5, dedup_cos_own_seed=0.002, dedup_cos_shared_seed=0.135,
                         lease_timeout_s=12000, round_time_limit_s=10800, train_time_budget_s=2400,
-                        recipe=Recipe(rank=2, image_digests=(build.image,)))
-    world = ChainWorld(tmp_path / "world", params, now=now)
+                        recipe=Recipe(rank=2, image_digests=(build.image,)), apply_retry_s=1)
+    world = ChainWorld(tmp_path / "world", params, now=now,
+                       mode="chain" if mode == "chain" else "full",
+                       settings=FoldSettings(twice=False, devices=("cuda:0", "cuda:1")),
+                       run=in_children)
     # Only the synthetic rollout bytes are adapted; admission, freezing,
     # dedup, ticket construction and controller result sealing stay real.
     raw = canonical_json({"version": "affine-batch-v3", "hotkey": "hk5", "train": {},
@@ -425,7 +509,7 @@ def test_real_controller_merged_lease_has_no_controller_cuda_context(tmp_path, b
                               {"output": f"independent-other-{i}", "reward": 1.0},
                           ]} for i in range(4)]})
     raws = {}
-    for uid in range(1, 6):
+    for uid in range(1, 7):
         body = json.loads(raw)
         body["hotkey"] = f"hk{uid}"
         for group in body["groups"]:
@@ -436,7 +520,7 @@ def test_real_controller_merged_lease_has_no_controller_cuda_context(tmp_path, b
     world.store.put("miners/hk5.json", raw)
     world.admission._read = lambda hotkey: (raws[hotkey], {"valid": True, "quality": 0.0,
                                                            "cap_rate": 0.0, "train": {}})
-    for uid in range(1, 6):
+    for uid in range(1, 7):
         world.register(uid, None)
     # Controller open uses its real clock and real 12,000-second lease.
     tickets = world.controller.open_round(world.clock(), "faithful-merged-lease")
@@ -448,7 +532,7 @@ def test_real_controller_merged_lease_has_no_controller_cuda_context(tmp_path, b
     base = world.folder.resident.tree(layout.public_base_prefix(world.head.head.base_hash), world.head.head.base_hash)
     rank = params.recipe.rank
     observer = tmp_path / "observer"
-    observation = tmp_path / "fold-observation.json"
+    observation = tmp_path / "fold-observations.jsonl"
     driver_path = tmp_path / "driver.json"
     driver_log = tmp_path / "driver-report.jsonl"
     driver_path.write_text("{}")
@@ -459,21 +543,39 @@ def test_real_controller_merged_lease_has_no_controller_cuda_context(tmp_path, b
         from pathlib import Path
         state_path = Path({str(driver_path)!r})
         observation = Path({str(observation)!r})
+        observations = []
+        install_cuda = True
+        mode = {mode!r}
         inline_driver_lock = threading.Lock()
+        driver_log_lock = threading.Lock()
         """), encoding="utf-8")
     monkeypatch.setenv("SN120_TEST_DRIVER_STATE", str(driver_path))
+    monkeypatch.setenv("SN120_TEST_CONTROLLER_OBSERVER", "1")
     monkeypatch.setenv("PYTHONPATH", str(observer))
-    monkeypatch.setenv("SN120_HEAD_PUBLISH", "chain")
+    monkeypatch.setenv("SN120_HEAD_PUBLISH", mode)
     monkeypatch.setenv("SN120_FOLD_THREADS", "1")
     monkeypatch.setenv("SN120_FOLD_TWICE", "0")
+    # The exact-base control must observe its real inline arithmetic in this
+    # process. Register the pre-hook attributes before runpy replaces them so
+    # every test teardown restores the production module boundaries.
+    from sn120_v2 import fold_kernel, headfold
+    for module, name in (
+        (fold_kernel, "replay_fold"),
+        (fold_kernel, "check_arithmetic"),
+        (fold_kernel, "_devices"),
+        (headfold, "run_fold"),
+    ):
+        monkeypatch.setattr(module, name, getattr(module, name))
     _controller_fold_observer(observer, observation, tmp_path / "driver-state.py")
+    observer_namespace = runpy.run_path(str(tmp_path / "driver-state.py"))
+    driver_log_lock = observer_namespace["driver_log_lock"]
     controller_pid = os.getpid()
 
     lease_errors = []
 
     def driver_report():
         states = json.loads(driver_path.read_text())
-        with driver_log.open("a") as log:
+        with driver_log_lock, driver_log.open("a") as log:
             log.write(json.dumps({"pid": os.getpid(), "controller": controller_pid,
                                   "inline": os.environ.get("SN120_TEST_OBSERVE_INLINE"), "states": states}) + "\n")
         by_gpu = {str(gpu): 6 for gpu in range(8)}
@@ -534,17 +636,55 @@ def test_real_controller_merged_lease_has_no_controller_cuda_context(tmp_path, b
 
     monkeypatch.setattr("sn120_v2.gpu.evaluator.wait_gpus_free", record_lease_error)
 
-    training = threading.Barrier(5)
+    training = threading.Condition()
+    arrivals = {}
+    candidate_assigned = set()
+
+    # SoloRunner claims a training job before entering trainer.train(), so a
+    # barrier inside train() alone cannot determine which GPU owns position 4.
+    # Admit the real workers in GPU order and hold GPUs 0-3 in their first
+    # training call. GPU 4 then makes the real fifth claim: position 4. This
+    # changes only fixture timing, not LPT order, claims, builds or scoring.
+    from sn120_v2.gpu import solo
+    real_pool = solo.ThreadPoolExecutor
+
+    class TrainingOrderPool(real_pool):
+        def submit(self, fn, /, *args, **kwargs):
+            if fn.__name__ != "gpu_worker" or len(args) != 1:
+                return super().submit(fn, *args, **kwargs)
+            gpu, round_id = args[0], ticket.round_id
+
+            def enter_in_order():
+                with training:
+                    if gpu:
+                        assert training.wait_for(
+                            lambda: (round_id, gpu - 1) in arrivals, timeout=30
+                        ), (round_id, gpu, arrivals)
+                return fn(gpu)
+
+            return super().submit(enter_in_order)
+
+    monkeypatch.setattr(solo, "ThreadPoolExecutor", TrainingOrderPool)
 
     def train(request):
-        # Only trainer arithmetic is replaced; SoloRunner owns GPU assignment,
-        # merged construction, evaluation and the returned BoxResult.
-        # Keep all five real training workers in flight, so queue position 4
-        # is genuinely assigned to GPU 4 (the production incident's GPU).
-        training.wait(timeout=10)
+        gpu = request.gpu_ids[0]
+        with training:
+            key = (request.round_id, gpu)
+            first = key not in arrivals
+            if first:
+                arrivals[key] = request.entry.queue_pos
+                training.notify_all()
+                if request.entry.queue_pos == 4:
+                    assert gpu == 4, arrivals
+                    candidate_assigned.add(request.round_id)
+                    training.notify_all()
+                else:
+                    assert training.wait_for(
+                        lambda: request.round_id in candidate_assigned, timeout=30
+                    ), (request.round_id, gpu, arrivals)
         if request.entry.queue_pos != 4:
             return EntryResult(request.entry.queue_pos, NO_DECISION, reason="one real candidate is sufficient for the GPU incident fixture")
-        trained_lora = tmp_path / f"trained-lora-{request.entry.queue_pos}"
+        trained_lora = tmp_path / f"trained-lora-{ticket.round_id}-{request.entry.queue_pos}"
         trained_lora.mkdir()
         blobs = tiny_lora(f"{request.head.version_id}|{request.entry.batch.batch_sha256}|{request.seed}", rank, params.recipe.alpha)
         for name, blob in blobs.items():
@@ -560,36 +700,77 @@ def test_real_controller_merged_lease_has_no_controller_cuda_context(tmp_path, b
                           report=TrainReport(request.seed, 1, 0.5, 0.1, 100, 0.1, "cpu", build.image))
 
     trainer = SimpleNamespace(train=train, close=lambda: None)
+
+    def run_real_round(ticket):
+        return SoloRunner(trainer, evaluator, lambda: int(time.time()), build.image,
+                          settings=SoloSettings(prewarm=False, steal_block_tasks=4, clients_while_training=2),
+                          poll_s=0.01).run(ticket)
+
+    # Candidate proof generation must precede the aggregate GPU lease check.
+    # Observe that ordering without substituting a later synthetic failure for
+    # the real evaluator lease in the exact-base negative control.
+    real_build_merged = evaluator.build_merged
+    candidate_on_gpu4 = threading.Event()
+
+    def build_then_check(request_round, head, artifact, build_params, gpu):
+        tested = real_build_merged(request_round, head, artifact, build_params, gpu)
+        if os.environ.get("SN120_TEST_OBSERVE_INLINE") == "1" and gpu == 4:
+            candidate_on_gpu4.set()
+            wait_gpus_free(1024, 0.0, report=driver_report, sleep=lambda _: None)
+        return tested
+
+    monkeypatch.setattr(evaluator, "build_merged", build_then_check)
     try:
-        result = SoloRunner(trainer, evaluator, lambda: int(time.time()), build.image,
-                            settings=SoloSettings(prewarm=False, steal_block_tasks=4, clients_while_training=2),
-                            poll_s=0.01).run(ticket)
+        result = run_real_round(ticket)
     except InfraError as error:
         assert os.environ.get("SN120_TEST_OBSERVE_INLINE") == "1"
         assert str(error) == "GPUs [4] are still in use; evaluation must not start"
+        assert candidate_on_gpu4.is_set()
+        assert str(controller_pid) in json.loads(driver_path.read_text())
         world.controller.fail_lease(ticket.lease_id, f"InfraError: {error}", world.clock())
         assert world.controller.state.round is None
         assert world.controller.state.rounds[-1].outcome == "no_decision"
-        assert str(controller_pid) in json.loads(driver_path.read_text())
         return
     assert os.environ.get("SN120_TEST_OBSERVE_INLINE") != "1"
-    assert observation.exists()
-    folded = json.loads(observation.read_text())
-    assert folded["ppid"] == controller_pid and folded["pid"] != controller_pid
-    assert str(controller_pid) not in json.loads(driver_path.read_text())
-    assert result.entries[4].status == SCORED
-    assert result.entries[4].outcomes == (PASS * len(ticket.draw.task_ids),)
-    assert result.entries[4].lora.rank == 2
-    assert result.entries[4].tested_base_hash
-    assert servers.bound[8104] == result.entries[4].lora.lora_hash
-    assert any(body["model"] == result.entries[4].lora.lora_hash for _, body in servers.bodies)
-    assert result.null_outcomes == ("".join(PASS if i % 2 == 0 else FAIL for i in range(len(ticket.draw.task_ids))),)
-    world.controller.submit_result(result, world.clock())
-    assert world.controller.state.round is None
-    assert world.controller.state.rounds[-1].outcome == "applied"
-    assert world.controller.state.rounds[-1].decision.entries[4].status == WINNER
-    evaluator.cleanup_merged(ticket.round_id)
-    assert not (tmp_path / "work" / "merged-candidates" / ticket.round_id).exists()
+    for round_number in range(2):
+        if round_number:
+            tickets = world.controller.open_round(world.clock(), "faithful-merged-second-round")
+            assert len(tickets) == 1
+            ticket = tickets[0]
+            task_indexes = {task: index for index, task in enumerate(ticket.draw.task_ids)}
+            master = world.folder.resident.tree(layout.public_master_prefix(world.head.head.base_fp32_master_digest), world.head.head.base_fp32_master_digest)
+            base = world.folder.resident.tree(layout.public_base_prefix(world.head.head.base_hash), world.head.head.base_hash)
+            paths.update({ticket.head.base_hash: base, ticket.head.base_fp32_master_digest: master})
+            result = run_real_round(ticket)
+        assert result.entries[4].status == SCORED
+        assert result.entries[4].outcomes == (PASS * len(ticket.draw.task_ids),)
+        assert result.entries[4].lora.rank == 2
+        assert result.entries[4].tested_base_hash
+        assert arrivals[(ticket.round_id, 4)] == 4
+        # The real scheduler may switch GPU 4 back to null after serving the
+        # candidate; the rollout bodies prove the merged model was actually leased.
+        assert any(body["model"] == result.entries[4].lora.lora_hash for _, body in servers.bodies)
+        assert result.null_outcomes == ("".join(PASS if i % 2 == 0 else FAIL for i in range(len(ticket.draw.task_ids))),)
+        world.controller.submit_result(result, world.clock())
+        assert world.controller.state.round is None
+        assert world.controller.state.rounds[-1].outcome == "applied"
+        assert world.controller.state.rounds[-1].decision.entries[4].status == WINNER
+        assert world.head.head.base_hash == result.entries[4].tested_base_hash
+        # Both candidate and crowned install arithmetic belong to spawned PIDs.
+        # The aggregate GPU check has observed every lease, including round two.
+        assert str(controller_pid) not in json.loads(driver_path.read_text())
+        assert not lease_errors
+        assert not (tmp_path / "work" / "merged-candidates" / ticket.round_id).exists()
+    events = [json.loads(line) for line in observation.read_text().splitlines()]
+    for kind in ("candidate", "install"):
+        selected = [event for event in events if event["kind"] == kind]
+        assert len(selected) >= 2, (kind, events)
+        assert all(event["ppid"] == controller_pid for event in selected)
+        assert all(event["pid"] != controller_pid for event in selected)
+    if mode == "full":
+        assert all(event["kernel"] == TORCH_MATMUL for event in events if event["kind"] == "install")
+    else:
+        assert all(event["device"] == "cuda:0" for event in events if event["kind"] == "install")
 
 
 def test_merged_server_switch_waits_for_inflight_requests(build):

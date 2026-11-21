@@ -145,17 +145,26 @@ class LoraFolder:
         try:
             fetched = time.monotonic()
             if params.eval_merged:
-                from ..headfold import FoldJob, run_fold
+                from ..headfold import FoldJob, in_children
 
                 if tested is None or len(head.loras) != 1:
                     raise InfraError("a merged-candidate install needs exactly one tested LoRA and its fold proof")
-                folded = run_fold(FoldJob(master_dir, base_dir, tuple((self.resident.tree(layout.public_lora_prefix(ref.lora_hash), ref.lora_hash), ref.rank) for ref in head.loras), out / "master", out / "base", kernel=tested.tested_fold_kernel))
-                assert_fold_matches(params, tested, manifest_digest(folded.base_files))
+                # Even the CPU matmul kernel must share the candidate/install
+                # process boundary: no tensor arithmetic can retain a CUDA
+                # context in the long-lived controller.
+                folded = in_children([FoldJob(master_dir, base_dir, tuple((self.resident.tree(layout.public_lora_prefix(ref.lora_hash), ref.lora_hash), ref.rank) for ref in head.loras), out / "master", out / "base", kernel=tested.tested_fold_kernel)])[0]
+                base_files, master_files = folded.base_files, folded.master_files
+                assert_fold_matches(params, tested, manifest_digest(base_files))
+                summed = time.monotonic()
+                uploaded_base, _ = upload_tree(self.store, out / "base", f"{out_prefix}/base")
+                uploaded_master, _ = upload_tree(self.store, out / "master", f"{out_prefix}/master")
+                if (uploaded_base, uploaded_master) != (base_files, master_files):
+                    raise InfraError("the installed fold differs from the spawned fold hashes")
             else:
                 fold_files(master_dir, base_dir, loras, out / "master", out / "base")
-            summed = time.monotonic()
-            base_files, _ = upload_tree(self.store, out / "base", f"{out_prefix}/base")
-            master_files, _ = upload_tree(self.store, out / "master", f"{out_prefix}/master")
+                summed = time.monotonic()
+                base_files, _ = upload_tree(self.store, out / "base", f"{out_prefix}/base")
+                master_files, _ = upload_tree(self.store, out / "master", f"{out_prefix}/master")
             artifact = FoldArtifact(
                 parent_version_id=head.version_id,
                 base_hash=manifest_digest(base_files),
