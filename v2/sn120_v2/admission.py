@@ -46,7 +46,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequenc
 from . import layout
 from .canonical import sha256_hex
 from .errors import BatchRejected, ConfigError, InfraError, VerifyError
-from .gpu.batch import advantages
+from .gpu.batch import advantages, render_prompt_ids
 from .params import Params, Recipe
 from .seams import ObjectStore
 from .types import FrozenBatch, Registration, Verdict
@@ -287,7 +287,7 @@ class Tokens(Protocol):
     """Token counts from the head's tokenizer."""
 
     def prompt_tokens(self, prompt: str) -> int:
-        """Tokens of the prompt as one user message in the chat template, with the generation prompt."""
+        """Tokens of the prompt rendered exactly as in scoring and training."""
         ...
 
     def output_tokens(self, text: str) -> int:
@@ -302,9 +302,7 @@ class HFTokens:
         self._tokenizer = tokenizer
 
     def prompt_tokens(self, prompt: str) -> int:
-        message = [{"role": "user", "content": prompt}]
-        ids = self._tokenizer.apply_chat_template(message, tokenize=True, add_generation_prompt=True)
-        return len(ids["input_ids"] if hasattr(ids, "keys") else ids)
+        return len(render_prompt_ids(self._tokenizer, prompt))
 
     def output_tokens(self, text: str) -> int:
         return len(self._tokenizer.encode(text, add_special_tokens=False))

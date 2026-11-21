@@ -37,9 +37,9 @@ from typing import Any, Iterable, Mapping, Sequence
 from . import layout
 from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, MIN_ROLLOUTS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
 from .canonical import digest, sha256_hex, to_jsonable
-from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256, POOL_V2_0_SHA256, Task, load_pool
+from .envs.math_pool import ENV_ID, POOL_FILE, POOL_SHA256, POOL_V2_0_SHA256, Task, load_pool
 from .errors import ConfigError, ContractError, InfraError, V2Error
-from .gpu.batch import END_OF_TURN
+from .gpu.batch import END_OF_TURN, MANDATE
 from .gpu.evaluator import ServeSettings, chat_body, server_argv
 from .gpu.trainer import LORA_FILES
 from .headchain import FIXED_ORDER, MATMUL
@@ -393,7 +393,9 @@ def _recipe_lines(params: Params) -> list[str]:
         "",
         f"- Training code: `sn120_v2/gpu/` in {REPO}/tree/v2/v2 (sha256 `{show(recipe.code_digest)}`).",
         *pinned,
-        "- Each prompt is one user message, rendered with the chat template of the head and the generation prompt.",
+        "- Every prompt is a system message containing the instruction of section 6, then a user message. For a batch",
+        "  row the user text is `prompt` with a leading instruction + blank line removed. The trainer applies the chat",
+        "  template of the head with `add_generation_prompt=True` and `enable_thinking=True`.",
         "",
         "### What you may set",
         "",
@@ -479,10 +481,10 @@ def _training_lines(params: Params) -> list[str]:
         "- Rows: one row for each rollout of the groups that the file check keeps (section 5), in file order. The",
         "  advantage of a row is its reward minus the mean reward of its group (`group_size`, above). The trainer does",
         "  nothing else to it: no division by a standard deviation and no clip.",
-        '- Tokens of a row. Prompt: `tokenizer.apply_chat_template([{"role": "user", "content": prompt}],',
-        "  add_generation_prompt=True, tokenize=False)`, then `tokenizer.encode(text, add_special_tokens=False)`. The",
-        "  template gets no other argument. Output: `tokenizer.encode(output, add_special_tokens=False)`. The tokenizer",
-        "  is the one of the base files.",
+        "- Tokens of a row. Prompt: messages = system instruction (section 6), user = `prompt` with a leading",
+        "  instruction + blank line removed. Apply the head's chat template with `add_generation_prompt=True`,",
+        "  `tokenize=False` and `enable_thinking=True`, then `tokenizer.encode(text, add_special_tokens=False)`.",
+        "  Output: `tokenizer.encode(output, add_special_tokens=False)`. The tokenizer is the one of the base files.",
         "- Room: room = min(`train_max_output_tokens`, `train_max_context_tokens` - prompt tokens). An output shorter",
         f"  than the room gets the end-of-turn token `{END_OF_TURN}` after its last token. An output as long as the room or",
         "  longer is cut to the room and gets no end token: the trainer takes it as a rollout that did not end (a capped",
@@ -875,8 +877,8 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  both caps hold. The other groups are dropped. All rules below apply to the groups that are kept.",
         f"- Tokens: an output has at most {params.max_output_tokens} tokens. Prompt + output has at most",
         f"  {params.max_context_tokens} tokens: an output below the output cap counts 1 token more there, its end-of-sequence",
-        "  token. The prompt is counted as one user message in the chat template of the",
-        f"  head. Training reads at most {recipe.train_max_output_tokens} output tokens and",
+        "  token. The prompt is counted with the exact chat messages, template and `enable_thinking=True` of scoring",
+        f"  and training (section 2). Training reads at most {recipe.train_max_output_tokens} output tokens and",
         f"  {recipe.train_max_context_tokens} prompt + output tokens of a rollout. A longer rollout is valid: the trainer",
         "  truncates it (section 2).",
         "- Reasoning: the reasoning of an output is the text before its first `\\boxed`, or the whole output when it",
@@ -953,7 +955,7 @@ def _rollout_lines(params: Params) -> list[str]:
     recipe = params.recipe
     pool = [
         "  For a task of the pool, `prompt` is the problem text, or the instruction of section 6, one blank line and the",
-        "  problem text. Both are the same task for the grader, and two different prompts for the model.",
+        "  problem text. Both are the same task for the grader and give exactly the same model tokens.",
     ] if params.env == ENV_ID else []
     return [
         "### How to make rollouts",
@@ -964,13 +966,13 @@ def _rollout_lines(params: Params) -> list[str]:
         "",
         "- Model: sample from head M. Get its files as section 1 says. The trainer scores your tokens under head M,",
         "  and a token outside the support of head M does not train (section 2).",
-        "- Prompt: the trainer reads `prompt` as one user message (section 2).",
+        "- Prompt: the trainer and scorer use the same chat messages and template options (section 2).",
         *pool,
-        "  For your sampler, render the prompt as the trainer does: one user message, the chat template of the head,",
-        "  the generation prompt, and no other argument to the template.",
-        "- Scoring renders a task in another way than training (section 6): the instruction is the system message, the",
-        "  problem is the user message, and the template gets `enable_thinking` true. So the model does not read the",
-        "  same tokens before its answer in training and in scoring.",
+        "  For your sampler, render your prompt the same way: system = the instruction of section 6, user = `prompt`",
+        "  with a leading instruction + blank line removed; apply the head's chat template with",
+        "  `add_generation_prompt=True` and `enable_thinking=True`. Sample on-policy with those exact tokens.",
+        "- Training and scoring render a pool task identically. Old-format batches stay valid. Rollouts sampled under",
+        "  the old one-user-message render are now slightly off-policy for the trainer.",
         f"- Sampling: use the temperature that you state in `train.sample_temperature` (default {show(recipe.sample_temperature)}), top_k {recipe.support_top_k}",
         f"  and top_p {show(recipe.support_top_p)}. These are the settings of the support (section 2). The sampler must work as the",
         "  support does: top_k first, then top_p over the tokens that are left. Then each token that you",
