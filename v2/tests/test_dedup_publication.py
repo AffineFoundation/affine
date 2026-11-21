@@ -22,8 +22,9 @@ def published_pair(tmp_path, **changes):
         dedup_rollout_overlap=0.5,
         dedup_cos_shared_seed=0.135,
         dedup_cos_own_seed=0.002,
-        min_signal_rollouts=64,
-        min_step_norm=0.02,
+        min_signal_rollouts=1,
+        min_step_norm=0.0,
+        z_bar=1.5,
     )
     params = dataclasses.replace(
         Params.from_dict(world.params.to_dict() | defaults), **changes
@@ -53,13 +54,17 @@ def test_duplicate_and_null_publication_and_check_pair(tmp_path):
         "cosine >= 0.135 (`dedup_cos_shared_seed`)",
         "threshold is 0.002 (`dedup_cos_own_seed`)",
         "Regenerated or rewritten rollouts are new evidence, not an exemption",
-        "max(64, the effective recipe `minibatches`, currently 1)",
+        "fewer than 1 rollouts with a nonzero advantage",
+        "The configured minimum signal is 1; `recipe.minibatches` adds no admission floor",
         "after `no_signal`",
         "invalid and uncharged: the seat keeps its place",
-        "stored `step_norm` below 0.02, or one that is not finite",
+        "`train.global_norm_cap` below 0 (`min_step_norm`)",
+        "A cap equal to the floor passes this static test",
+        "a stored `step_norm` below 0, or one that is not finite",
+        "because the floor is 0, every valid nonnegative cap and every finite stored norm passes these two floor checks",
         "charged, cannot win or be paid",
         "before any training GPU work",
-        "cannot beat M except by luck",
+        "Finite zero and small stored updates are not rejected by a minimum-norm floor",
         "`queue_pos`, `uid`, `hotkey`, `batch_sha256`, `stage`, `similarity` and `first_seen_unix`",
         "All published times are UTC",
     ]
@@ -78,10 +83,16 @@ def test_duplicate_and_null_publication_and_check_pair(tmp_path):
     assert policy["stage_b"]["own_or_mixed_train_seed_min"] == params.dedup_cos_own_seed
     assert policy["public_cluster_member_fields"] == list(publisher.DUPLICATE_MEMBER_COLUMNS)
     assert policy["stages"] == publisher.DUPLICATE_STAGES
+    assert policy["min_signal_rollouts"] == "min_signal_rollouts; no implicit effective recipe.minibatches floor"
+    assert policy["min_step_norm"] == 0.0
     assert doc["params_hash"] == params.params_hash == doc["contract"]["params_hash"]
+    assert doc["params"]["z_bar"] == 1.5
+    assert "Win rule: z is strictly above 1.5" in sentences
+    assert "beat M by more than that many standard errors" in sentences
+    assert "dropped when (z + c) / sqrt(t) <= 1.5" in sentences
     assert all(name in doc["params"] for name in (
         "train_seed_scope", "dedup_enabled", "dedup_rollout_overlap", "dedup_cos_shared_seed",
-        "dedup_cos_own_seed", "min_signal_rollouts", "min_step_norm",
+        "dedup_cos_own_seed", "min_signal_rollouts", "min_step_norm", "z_bar",
     ))
     assert publisher.check_pair(mining, text.encode(), params) == []
 
@@ -137,6 +148,8 @@ def test_publication_tracks_nondefault_dedup_params(tmp_path):
     assert "Overlap >= 0.75 (`dedup_rollout_overlap`)" in sentences
     assert "cosine >= 0.2 (`dedup_cos_shared_seed`)" in sentences
     assert "threshold is 0.01 (`dedup_cos_own_seed`)" in sentences
-    assert "max(80, the effective recipe `minibatches`, currently 1)" in sentences
+    assert "fewer than 80 rollouts with a nonzero advantage" in sentences
+    assert "The configured minimum signal is 80; `recipe.minibatches` adds no admission floor" in sentences
     assert "stored `step_norm` below 0.04" in sentences
+    assert "No norm floor is active" not in sentences
     assert publisher.check_pair(mining, text.encode(), params) == []
