@@ -8,7 +8,7 @@ import json
 from sn120_v2 import public, publisher, sim
 from sn120_v2.admission import RULES
 from sn120_v2.dedup import STAGE_EXACT, STAGE_LORA
-from sn120_v2.params import Recipe
+from sn120_v2.params import Params, Recipe
 
 SITE = "https://files.example"
 NOW = 1_800_000_000
@@ -25,7 +25,9 @@ def published_pair(tmp_path, **changes):
         min_signal_rollouts=64,
         min_step_norm=0.02,
     )
-    params = dataclasses.replace(world.params, **(defaults | changes))
+    params = dataclasses.replace(
+        Params.from_dict(world.params.to_dict() | defaults), **changes
+    )
     snapshot = public.snapshot(world.controller.state, params, NOW)
     mining, llms = publisher.render(snapshot, SITE)
     return params, json.loads(mining), llms.decode(), mining

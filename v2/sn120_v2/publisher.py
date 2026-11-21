@@ -597,6 +597,9 @@ def _cluster_lines(record: Any, label: str) -> list[str]:
 
 def _duplicate_lines(params: Params) -> list[str]:
     enabled = "on" if params.dedup_enabled else "off"
+    settable_keys = {row["key"] for row in miner_settable(params.recipe)}
+    signal_recipe = "`minibatches`" if "minibatches" in settable_keys else "minibatches"
+    static_cap = "`train.global_norm_cap`" if "global_norm_cap" in settable_keys else "global_norm_cap"
     return [
         "### Duplicate and null batches",
         "",
@@ -604,12 +607,12 @@ def _duplicate_lines(params: Params) -> list[str]:
         "frozen file can also fail another admission rule first; the rule table above gives that order.",
         "",
         f"- Minimum signal: after `{NO_SIGNAL}` rejects a file in which nothing trains, `{MIN_ROLLOUTS}` rejects a file with fewer",
-        f"  than max({params.min_signal_rollouts}, the effective recipe `minibatches`, currently {params.recipe.minibatches}) rollouts with a nonzero advantage",
+        f"  than max({params.min_signal_rollouts}, the effective recipe {signal_recipe}, currently {params.recipe.minibatches}) rollouts with a nonzero advantage",
         "  and at least one usable output token inside the training caps. The formula uses `min_signal_rollouts` (above),",
         "  not a hardcoded minimum. Without tokenizer checks no rollout is known to be dropped by the training caps. This",
         "  admission rejection is invalid and uncharged: the seat keeps its place, and no training GPU is used. Upload a",
         "  new file with enough signal rather than equal-reward filler, whose zero-advantage rows do not count.",
-        f"- Static null-update admission: `{NULL_UPDATE}` rejects `train.global_norm_cap` below {show(params.min_step_norm)} (`min_step_norm`)",
+        f"- Static null-update admission: `{NULL_UPDATE}` rejects {static_cap} below {show(params.min_step_norm)} (`min_step_norm`)",
         "  before any training GPU work. The file is invalid, uncharged and keeps its seat. A cap equal to the floor passes",
         "  this static test, but does not guarantee that training reaches it.",
         f"- Stored null update: after training, a stored `step_norm` below {show(params.min_step_norm)}, or one that is not finite, is terminal",
@@ -724,11 +727,12 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  any other error of the training. The box tries the training again (section 3). If each try fails, your",
         f"  entry has the status `{NO_DECISION}` and no scores, and its `reason` starts with `training failed`. You are not",
         "  charged and you go to the front of the queue.",
-        "- A round with no result: the box failed, not an ordinary seat. This is the case when the training failed for at least",
+        "- A round with no result: the box failed, not a seat. This is the case when the training failed for at least",
         "  one batch and finished for no batch, when the box stopped with an error, when its result did not arrive",
-        "  before the end of the lease, or when the operator ended the round. No failure is counted for an uncharged",
-        f"  seat, and each such seat goes to the front of the queue. The next round starts {duration(params.apply_retry_s)} after the",
-        f"  failure, or later. Ordinarily nobody is charged: the round file has `outcome` `{NO_DECISION}`, no entry has a",
+        "  before the end of the lease, or when the operator ended the round. Ordinarily nobody is charged, no failure",
+        "  is counted for a seat, and each seat of the round goes to the front of the queue. The next round starts",
+        f"  {duration(params.apply_retry_s)} after the",
+        "  failure, or later. In the round file (section 9) you see it thus: `outcome` is `no_decision`, no entry has a",
         "  `status`, and `note` gives the cause. In `history` of mining.json the round has the same `outcome` and its",
         "  entries have no `status`; the `note` is only in the round file. If Stage A already found duplicates, those",
         f"  copies remain charged `{DUPLICATE}` and lose their seats even when every lease fails. Their terminal entries",
