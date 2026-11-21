@@ -213,8 +213,62 @@ post-open rollback of only the undecided r000087, old params then old code,
 one old-code loop, watchdog re-arm and original ingestd/reserve/generator
 preservation. These are isolated synthetic results, not production health.
 
-A fresh normal/abort pair will rerun from the final evidence commit and replace
-the destination logs above. The external evidence collector requires both logs
-to name that exact final head, all eight kit files to compare byte-for-byte,
-the required PASS lines and no traceback or assertion failure before producing
-`final-evidence.json` and the final kit file hashes.
+The normal/abort pair above was run from its cited candidate heads. The external
+evidence collector requires both logs to name their exact head, all eight kit
+files to compare byte-for-byte, the required PASS lines and no traceback or
+assertion failure before producing `final-evidence.json` and the final kit file
+hashes.
+
+## Public named-rotation verification fix
+
+The first `2ccfa324e8d06c11758efe633171b6ecc01b433c` normal/abort rehearsal
+pair reached a passing underlying open-check with no public state, but failed
+when the fixture's projection progress line preceded the JSON report consumed
+by autodeploy. That pair is not a PASS. The failed logs are preserved at
+`/home/bb/scratch/kingx2-public-open-fix-2ccfa324-normal/dry-run.log` and
+`/home/bb/scratch/kingx2-public-open-fix-2ccfa324-abort/dry-run.log`.
+The fixture now writes progress to stderr, leaving the report's stdout
+machine-readable; the unchanged autodeploy JSON contract is retained. Both
+rehearsals will rerun from a fresh commit.
+
+failure caused by requiring the non-public `pool/state` object. Both open and
+public checks authenticate `pool/rotation/<rid>.json` against the journal's
+`state_sha`, size and block, then verify the public active set and IRT snapshot.
+Transient 404/5xx, timeout and connection failures retry within the configured
+bounded window; integrity and schema failures still fail immediately.
+
+The public root in the rehearsal now projects only the public families mirrored
+by the static site. Private state is required in the object store and forbidden
+in the public projection. Third-party replay no longer fetches public
+`pool/state`: it reconstructs and authenticates the previous close from the
+named rotation, public round report, draw snapshot and public outcomes,
+including historical raw-byte and current canonical state hashes. No genfeed
+public-state dependency was found; private controller state persistence remains.
+
+- Focused public/rotation regression suite:
+  `/home/bb/scratch/kingx2-public-open-fix-focused.log` (exit 0, **52 passed,
+  1 skipped**; SHA-256
+  `740486f7f13a0b7144414c1c3d2355b2019a54573a8d52e53ea4f30172abba3c`).
+- Genfeed consumer/deploy regression suite:
+  `/home/bb/scratch/kingx2-public-open-fix-genfeed.log` (exit 0, **15 passed**;
+  SHA-256 `511fb971caf59261241ec2a3919d9d10c7dcb9ec044ee07d50b2db465184f057`).
+- Copied-artifact public-only r000082 replay:
+  `/home/bb/scratch/kingx2-public-open-fix-r82-replay.log` (exit 0; SHA-256
+  `187f775ff828d9b7aeee44871d9438a82234468a8d34ef4bb27b3644d74b3740`).
+  The public contract rejected every `pool/state` request. State lineage
+  r000069-r000081 was reconstructed without public state. This used previously
+  copied local artifacts, not a production read. A separate attempted r000083
+  replay could not start because that local copy lacks its public round report;
+  it is not counted as replay evidence.
+- Normal restricted-public committed-kit rehearsal:
+  `/home/bb/scratch/kingx2-public-open-fix-2ccfa324-normal/dry-run.log`.
+  **Pending terminal outcome.**
+- Abort-after-open restricted-public committed-kit rehearsal:
+  `/home/bb/scratch/kingx2-public-open-fix-2ccfa324-abort/dry-run.log`.
+  **Pending terminal outcome.**
+
+These focused results do not replace the full-suite results and limitations
+above. The two rehearsals use the exact candidate kit and copied inputs with
+synthetic loops/outcomes; they do not establish GPU throughput or production
+health. No production service, chain write, R2 operation, credential or secret
+access was used.

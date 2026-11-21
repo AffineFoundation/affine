@@ -364,7 +364,7 @@ for key in keys:
         public.put(key, raw)
 assert not (root / "site/public/pool/state").exists(), "pool/state must remain verifier-private"
 assert source.list("public/pool/state/"), "fixture needs private state to prove the projection excludes it"
-print(f"public projection: {len(keys)} served objects; pool/state absent")
+print(f"public projection: {len(keys)} served objects; pool/state absent", file=sys.stderr)
 PY
 export KINGX2_DRY_OPEN_CHECK="$D/here/open-check"
 # Controller.close writes the public round report, not the open. Exercise the

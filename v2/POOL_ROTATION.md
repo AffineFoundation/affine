@@ -151,7 +151,7 @@ python -m sn120_v2.replicate rotation \
   --mining-json mining.json --round r000123 --work /data/affine
 ```
 
-The command downloads the public decision, previous state and source IRT snapshot and compares the complete recomputed Rotation. `replicate run` uses the rotated round's active artifact and mirrored reserve for its catalog. No file under `sn120_v2/gpu/` changes.
+The command downloads the public decision and source IRT snapshot, reconstructs the previous state from public round evidence as described above, and compares the complete recomputed Rotation. `replicate run` uses the rotated round's active artifact and mirrored reserve for its catalog. No file under `sn120_v2/gpu/` changes.
 
 ## Enable (only with Jacob's approval)
 
