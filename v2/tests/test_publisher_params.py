@@ -217,6 +217,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "counts 1 token more there",
         "its official grade is 0.",
         "(0 = no such rule)",
+        "when min_step_norm > 0, the miner's global_norm_cap is below it",
         "its advantage is not 0 and it has at least 1 output token",
         "counts its tokens + 1 (the end-of-turn token)",
         "A rollout with advantage 0 counts 0.",

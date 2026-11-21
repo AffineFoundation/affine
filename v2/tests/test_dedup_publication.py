@@ -86,6 +86,56 @@ def test_duplicate_and_null_publication_and_check_pair(tmp_path):
     assert publisher.check_pair(mining, text.encode(), params) == []
 
 
+def test_floor_free_publication_states_only_rules_that_are_on(tmp_path):
+    params, doc, text, mining = published_pair(tmp_path, min_signal_rollouts=1, min_step_norm=0.0)
+    section = flat(text.split("### Duplicate and null batches\n", 1)[1].split("### How to upload", 1)[0])
+    signal = next(line for line in section.split("- ") if line.startswith("Minimum signal:")).strip()
+    stored = next(line for line in section.split("- ") if line.startswith("Stored null update:")).strip()
+    assert signal == (
+        "Minimum signal: after `no_signal` rejects a file in which nothing trains, `min_rollouts` rejects a file with fewer "
+        "nonzero-advantage rollouts than the effective recipe `minibatches` (currently 1), a trainer requirement: each optimizer "
+        "step needs at least one active rollout. The rollouts also need at least one usable output token inside the training caps. "
+        "Without tokenizer checks no rollout is known to be dropped by the caps. This admission rejection is invalid and uncharged: "
+        "the seat keeps its place, and no training GPU is used. Upload a new file with enough signal rather than equal-reward filler, "
+        "whose zero-advantage rows do not count."
+    )
+    assert stored == (
+        "Stored null update: after training, a stored `step_norm` that is not finite is terminal `null_update`. It is charged, "
+        "cannot win or be paid, and is not a candidate or keeper in Stage B. There is no minimum norm."
+    )
+    for phrase in ("64", "0.02", "floor", "sub-floor", "cannot beat M except by luck", "Static null-update admission:"):
+        assert phrase not in section
+    assert "There is no minimum norm." in stored
+    assert "a trainer requirement: each optimizer step needs at least one active rollout" in signal
+    assert "Values below 0 are invalid" not in text and "stored update fell below the floor" not in text
+    assert "or its stored `step_norm` was not finite" in flat(text)
+    assert "Reusing a past winner's rollouts counts as a duplicate even from the same hotkey" in section
+    assert "Seed (`train_seed_scope` is `round`)" in flat(text)
+    policy = doc["contract"]["duplicate_policy"]
+    assert policy["min_signal_rollouts"] == "effective recipe.minibatches"
+    assert policy["min_step_norm"] == 0.0
+    assert policy["min_step_norm_rule"] == "no minimum norm; only a non-finite stored step_norm is null_update"
+    assert publisher.check_pair(mining, text.encode(), params) == []
+
+
+def test_floored_publication_retains_static_and_stored_floor_rules(tmp_path):
+    params, doc, text, mining = published_pair(tmp_path)
+    section = flat(text.split("### Duplicate and null batches\n", 1)[1].split("### How to upload", 1)[0])
+    for phrase in (
+        "max(64, the effective recipe `minibatches`, currently 1)",
+        "Static null-update admission: `null_update` rejects `train.global_norm_cap` below 0.02 (`min_step_norm`)",
+        "stored `step_norm` below 0.02, or one that is not finite",
+        "The floor applies to the stored norm after any global cap",
+        "Why a sub-floor update cannot beat M except by luck",
+    ):
+        assert phrase in section
+    assert "Values below 0.02 are invalid (`null_update`, section 5)" in flat(text)
+    assert doc["contract"]["duplicate_policy"]["min_step_norm_rule"] == (
+        "static global_norm_cap and stored step_norm must be at least min_step_norm"
+    )
+    assert publisher.check_pair(mining, text.encode(), params) == []
+
+
 def test_round_and_legacy_batch_seed_formulas(tmp_path):
     _, _, text, _ = published_pair(tmp_path)
     sentences = flat(text)

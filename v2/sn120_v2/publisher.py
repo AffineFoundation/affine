@@ -276,8 +276,15 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "priority": ["first_seen_unix", "queue_pos"],
             "dropped_status": DUPLICATE,
             "null_update_status": NULL_UPDATE,
-            "min_signal_rollouts": "max(min_signal_rollouts, effective recipe.minibatches)",
+            "min_signal_rollouts": (
+                "max(min_signal_rollouts, effective recipe.minibatches)"
+                if params.min_signal_rollouts > 1 else "effective recipe.minibatches"
+            ),
             "min_step_norm": params.min_step_norm,
+            "min_step_norm_rule": (
+                "static global_norm_cap and stored step_norm must be at least min_step_norm"
+                if params.min_step_norm > 0 else "no minimum norm; only a non-finite stored step_norm is null_update"
+            ),
             "public_cluster_member_fields": list(DUPLICATE_MEMBER_COLUMNS),
             "stages": DUPLICATE_STAGES,
         },
@@ -327,11 +334,15 @@ def _recipe_lines(params: Params) -> list[str]:
     cap, cap_bound = recipe.global_norm_cap, recipe.bound("global_norm_cap")
     cap_now = "This recipe has none: there is no cap." if cap is None else f"It is {show(cap)} now."
     cap_yours = (
-        f"`train.global_norm_cap` sets the cap of your LoRA, from {show(cap_bound.low)} to {show(cap_bound.high)}. Values below"
-        f" {show(params.min_step_norm)} are invalid (`{NULL_UPDATE}`, section 5) even when the generic lower bound is smaller."
+        f"`train.global_norm_cap` sets the cap of your LoRA, from {show(cap_bound.low)} to {show(cap_bound.high)}."
         if cap_bound is not None
         else "A file may not set a cap of its own now."
     )
+    if params.min_step_norm > 0 and cap_bound is not None:
+        cap_yours += (
+            f" Values below {show(params.min_step_norm)} are invalid (`{NULL_UPDATE}`, section 5) even when the generic lower"
+            " bound is smaller."
+        )
     fields = [f.name for f in dataclasses.fields(recipe) if f.name != "miner_bounds"]
     rows = [(f"`{name}`", getattr(recipe, name), RECIPE_NOTES.get(name, "see the training code")) for name in fields]
     settable = [(f"`train.{row['key']}`", row["default"], row["allowed"]) for row in miner_settable(recipe)]
@@ -600,24 +611,53 @@ def _duplicate_lines(params: Params) -> list[str]:
     settable_keys = {row["key"] for row in miner_settable(params.recipe)}
     signal_recipe = "`minibatches`" if "minibatches" in settable_keys else "minibatches"
     static_cap = "`train.global_norm_cap`" if "global_norm_cap" in settable_keys else "global_norm_cap"
+    if params.min_signal_rollouts > 1:
+        signal = [
+            f"- Minimum signal: after `{NO_SIGNAL}` rejects a file in which nothing trains, `{MIN_ROLLOUTS}` rejects a file with fewer",
+            f"  than max({params.min_signal_rollouts}, the effective recipe {signal_recipe}, currently {params.recipe.minibatches}) rollouts with a nonzero advantage",
+            "  and at least one usable output token inside the training caps. The formula uses `min_signal_rollouts` (above),",
+            "  not a hardcoded minimum. Without tokenizer checks no rollout is known to be dropped by the training caps. This",
+            "  admission rejection is invalid and uncharged: the seat keeps its place, and no training GPU is used. Upload a",
+            "  new file with enough signal rather than equal-reward filler, whose zero-advantage rows do not count.",
+        ]
+    else:
+        signal = [
+            f"- Minimum signal: after `{NO_SIGNAL}` rejects a file in which nothing trains, `{MIN_ROLLOUTS}` rejects a file with fewer",
+            f"  nonzero-advantage rollouts than the effective recipe {signal_recipe} (currently {params.recipe.minibatches}), a trainer",
+            "  requirement: each optimizer step needs at least one active rollout. The rollouts also need at least one usable",
+            "  output token inside the training caps. Without tokenizer checks no rollout is known to be dropped by the caps. This",
+            "  admission rejection is invalid and uncharged: the seat keeps its place, and no training GPU is used. Upload a",
+            "  new file with enough signal rather than equal-reward filler, whose zero-advantage rows do not count.",
+        ]
+    static_norm = [
+        f"- Static null-update admission: `{NULL_UPDATE}` rejects {static_cap} below {show(params.min_step_norm)} (`min_step_norm`)",
+        "  before any training GPU work. The file is invalid, uncharged and keeps its seat. A cap equal to the floor passes",
+        "  this static test, but does not guarantee that training reaches it.",
+    ] if params.min_step_norm > 0 else []
+    stored_norm = [
+        f"- Stored null update: after training, a stored `step_norm` below {show(params.min_step_norm)}, or one that is not finite, is terminal",
+        f"  `{NULL_UPDATE}`. It is charged, cannot win or be paid, and is not a candidate or keeper in Stage B. The floor applies to",
+        "  the stored norm after any global cap, not to the uncapped gradient or to `step_norm_before_cap`.",
+    ] if params.min_step_norm > 0 else [
+        f"- Stored null update: after training, a stored `step_norm` that is not finite is terminal `{NULL_UPDATE}`. It is charged,",
+        "  cannot win or be paid, and is not a candidate or keeper in Stage B. There is no minimum norm.",
+    ]
+    subfloor = [
+        "- Why a sub-floor update cannot beat M except by luck: the trainer's first-order step changes the head by at most",
+        "  its small stored norm. The scoring noise and a favorable task sample can then produce a positive result even",
+        "  when the update carries no reproducible improvement. Without the floor, many tiny steps could win by chance",
+        "  and turn the payout into a lottery. The floor makes a charged entry show a material model change; it is not a",
+        "  guarantee that a larger update improves M.",
+    ] if params.min_step_norm > 0 else []
     return [
         "### Duplicate and null batches",
         "",
         "This section covers both the file-check rules and the terminal outcomes `duplicate` and `null_update`. A",
         "frozen file can also fail another admission rule first; the rule table above gives that order.",
         "",
-        f"- Minimum signal: after `{NO_SIGNAL}` rejects a file in which nothing trains, `{MIN_ROLLOUTS}` rejects a file with fewer",
-        f"  than max({params.min_signal_rollouts}, the effective recipe {signal_recipe}, currently {params.recipe.minibatches}) rollouts with a nonzero advantage",
-        "  and at least one usable output token inside the training caps. The formula uses `min_signal_rollouts` (above),",
-        "  not a hardcoded minimum. Without tokenizer checks no rollout is known to be dropped by the training caps. This",
-        "  admission rejection is invalid and uncharged: the seat keeps its place, and no training GPU is used. Upload a",
-        "  new file with enough signal rather than equal-reward filler, whose zero-advantage rows do not count.",
-        f"- Static null-update admission: `{NULL_UPDATE}` rejects {static_cap} below {show(params.min_step_norm)} (`min_step_norm`)",
-        "  before any training GPU work. The file is invalid, uncharged and keeps its seat. A cap equal to the floor passes",
-        "  this static test, but does not guarantee that training reaches it.",
-        f"- Stored null update: after training, a stored `step_norm` below {show(params.min_step_norm)}, or one that is not finite, is terminal",
-        f"  `{NULL_UPDATE}`. It is charged, cannot win or be paid, and is not a candidate or keeper in Stage B. The floor applies to",
-        "  the stored norm after any global cap, not to the uncapped gradient or to `step_norm_before_cap`.",
+        *signal,
+        *static_norm,
+        *stored_norm,
         f"- Duplicate filtering is {enabled} (`dedup_enabled`). Stage A runs immediately after the files are frozen and before the",
         "  entropy read, training tickets or GPU work. Exact equal `batch_sha256` is a duplicate even when rollout evidence",
         "  is unavailable. Otherwise each rollout becomes a (prompt, output) pair: strip its ends, collapse each whitespace",
@@ -643,11 +683,7 @@ def _duplicate_lines(params: Params) -> list[str]:
         "  found before training as well as one found by Stage B. A duplicate never displaces its keeper merely by scoring",
         "  higher. Regenerated or rewritten rollouts are new evidence, not an exemption: judge them by the same hashes,",
         "  normalized sets and update cosine. Changing whitespace or rewards alone does not avoid normalized overlap.",
-        "- Why a sub-floor update cannot beat M except by luck: the trainer's first-order step changes the head by at most",
-        "  its small stored norm. The scoring noise and a favorable task sample can then produce a positive result even",
-        "  when the update carries no reproducible improvement. Without the floor, many tiny steps could win by chance",
-        "  and turn the payout into a lottery. The floor makes a charged entry show a material model change; it is not a",
-        "  guarantee that a larger update improves M.",
+        *subfloor,
         "- Public duplicate evidence never includes batch content, prompts, outputs, rewards or the normalized rollout",
         "  hashes. `duplicate_clusters` in the open/closed round objects of mining.json and in the round file has one",
         "  `keeper` and a `dropped` list for each cluster. Each member publishes `queue_pos`, `uid`, `hotkey`,",
@@ -754,7 +790,9 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"- `{SKIP}`: the trainer could not train the copy of your file, for example because a gradient or trained weight",
         "  was not finite. This training failure is uncharged and you keep your place. A non-finite stored `step_norm`",
         f"  that reaches judging is instead the charged `{NULL_UPDATE}` outcome described in section 5.",
-        f"- `{DUPLICATE}` and `{NULL_UPDATE}`: your frozen batch was a duplicate, or its stored update fell below the floor.",
+        f"- `{DUPLICATE}` and `{NULL_UPDATE}`: your frozen batch was a duplicate, or its stored update fell below the floor."
+        if params.min_step_norm > 0 else
+        f"- `{DUPLICATE}` and `{NULL_UPDATE}`: your frozen batch was a duplicate, or its stored `step_norm` was not finite.",
         "  These are charged terminal outcomes, not `skip`: the hotkey's turn is used, the entry cannot win or be paid,",
         "  and it does not return to the queue. The rules and evidence are in `Duplicate and null batches` (section 5).",
         f"- A round with the outcome `{ABANDONED}`: a winner was named, but its files could not be checked or applied.",
