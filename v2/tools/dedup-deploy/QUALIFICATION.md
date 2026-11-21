@@ -406,7 +406,22 @@ The fresh v8 run fixed the wrapper and archive assertion and passed.
 For the physical journal, both local journals and all mirrored store objects
 stay byte-identical, with no store writes before the fence refusal. The archive
 is checked for all 124 source files plus its staged manifest. This is not
-evidence of production execution.
+The exact committed-kit run at `70cd06f5262f340463b882f72d70490673fcba11`
+completed with exit 0 and the same nine rollback PASS lines. Its actual log is
+`/home/bb/scratch/dedup-physical-validator-committed-v1.log`. The committed-kit
+`restore_validator.sh` also produced the same deterministic archive and staged
+manifest, byte-for-byte. Its final operator artifact is:
+
+```text
+/home/bb/scratch/restore-validator-c5252865-kit70cd06f5.tar.gz
+SHA-256 31d2b376fc2ec18a5e49d840ab2c7be0011a35d1d0593ab1c657d83924b14591
+staged manifest SHA-256 232ca5b9de0b7a05c85d76f28afa3f963bcc03c0d1eff488a97a00ff7ccd258e
+```
+
+The final committed-kit SHA-256 inventory is
+`/home/bb/scratch/dedup-physical-validator-kit70cd06f5-file-hashes.json`.
+No production access, systemd change, website publication or chain-weight
+write occurred during staging or qualification.
 
 Native release `50afaca3` independently reads the same post-repin journal. Its
 `Params.from_dict` supplies effective legacy defaults for omitted fields and
