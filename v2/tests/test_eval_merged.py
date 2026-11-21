@@ -122,46 +122,47 @@ def _candidate_tiny(root: Path):
     return tiny_model(root)
 
 
-def _controller_fold_observer(shim: Path, observation: Path) -> None:
+def _controller_fold_observer(shim: Path, observation: Path, driver_state: Path) -> None:
     """Fake the incident GPU's per-PID CUDA context at the real fold boundary."""
     shim.mkdir()
     package = Path(__file__).parents[1]
     (shim / "sitecustomize.py").write_text(textwrap.dedent(f"""
         import json
         import os
-        from pathlib import Path
+        import runpy
         import sys
         sys.path.insert(0, {str(package)!r})
         from sn120_v2 import fold_kernel
 
-        state_path = Path(os.environ["SN120_TEST_DRIVER_STATE"])
-        driver = json.loads(state_path.read_text())
+        namespace = runpy.run_path({str(driver_state)!r})
+        state_path = namespace["state_path"]
+        inline_driver_lock = namespace["inline_driver_lock"]
         real_fold = fold_kernel.replay_fold
         def observe(*args, **kwargs):
             pid = str(os.getpid())
             # Map the surviving candidate to the incident's GPU 4 driver slot.
             # The real build and real SoloRunner path are otherwise unchanged.
             assert kwargs.get("device") == "cuda:4", kwargs
-            record = {{"pid": os.getpid(), "ppid": os.getppid(), "device": "cuda:4"}}
-            Path({str(observation)!r}).write_text(json.dumps(record))
-            driver[pid] = {{"ppid": os.getppid(), "cuda": {{"4": 1316}}}}
-            state_path.write_text(json.dumps(driver, sort_keys=True))
+            with inline_driver_lock:
+                namespace["observation"].write_text(json.dumps({{"pid": os.getpid(), "ppid": os.getppid(), "device": "cuda:4"}}))
+                driver = json.loads(state_path.read_text())
+                driver[pid] = {{"ppid": os.getppid(), "cuda": {{"4": 1316}}}}
+                state_path.write_text(json.dumps(driver, sort_keys=True))
             kwargs["device"] = "cpu"  # CPU stands in for the driver's arithmetic
             result = real_fold(*args, **kwargs)
             # A spawned builder exits and releases its context. The original
             # inline builder keeps the run PID's context for the GPU guard.
             if os.environ.get("SN120_TEST_OBSERVE_INLINE") != "1":
-                del driver[pid]
-                state_path.write_text(json.dumps(driver, sort_keys=True))
+                with inline_driver_lock:
+                    driver = json.loads(state_path.read_text())
+                    del driver[pid]
+                    state_path.write_text(json.dumps(driver, sort_keys=True))
             return result
         fold_kernel.replay_fold = observe
         """), encoding="utf-8")
     # The original inline builder executes in the controller/run process. This
     # is the same test-only driver substitution at the same real fold boundary.
     if os.environ.get("SN120_TEST_OBSERVE_INLINE") == "1":
-        import sn120_v2.fold_kernel
-        import runpy
-        sys.path.insert(0, str(package))
         runpy.run_path(str(shim / "sitecustomize.py"))
 
 
@@ -451,12 +452,21 @@ def test_real_controller_merged_lease_has_no_controller_cuda_context(tmp_path, b
     driver_path = tmp_path / "driver.json"
     driver_log = tmp_path / "driver-report.jsonl"
     driver_path.write_text("{}")
+    # Keep the lock shared by the same process's inline worker threads. Spawned
+    # children run one builder at a time and cannot share this Python lock.
+    (tmp_path / "driver-state.py").write_text(textwrap.dedent(f"""
+        import threading
+        from pathlib import Path
+        state_path = Path({str(driver_path)!r})
+        observation = Path({str(observation)!r})
+        inline_driver_lock = threading.Lock()
+        """), encoding="utf-8")
     monkeypatch.setenv("SN120_TEST_DRIVER_STATE", str(driver_path))
     monkeypatch.setenv("PYTHONPATH", str(observer))
     monkeypatch.setenv("SN120_HEAD_PUBLISH", "chain")
     monkeypatch.setenv("SN120_FOLD_THREADS", "1")
     monkeypatch.setenv("SN120_FOLD_TWICE", "0")
-    _controller_fold_observer(observer, observation)
+    _controller_fold_observer(observer, observation, tmp_path / "driver-state.py")
     controller_pid = os.getpid()
 
     lease_errors = []
