@@ -51,7 +51,7 @@ except ImportError:
 from ..canonical import canonical_json
 from ..errors import BatchRejected, InfraError
 from ..params import Recipe
-from .batch import END_OF_TURN, derail_keep, fit_tokens
+from .batch import END_OF_TURN, derail_keep, fit_tokens, render_prompt_ids
 
 LOGIT_CHUNK = 2048  # tokens per pass through the output layer: a memory knob, with no effect on the result
 OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps from recipe (default 1e-8), weight decay 0"
@@ -329,7 +329,7 @@ def minibatches_of(rows: Sequence[dict], minibatches: int, order: random.Random)
 
 
 def encode(tokenizer, rows: Sequence[dict], recipe: Recipe) -> tuple[list[dict], int]:
-    """Token ids of every row that trains, and the count of dropped rows. The prompt is one user message with the generation prompt."""
+    """Token ids of every row that trains, and the count of dropped rows. The prompt is exactly the scoring prompt."""
     eos = tokenizer.convert_tokens_to_ids(END_OF_TURN)
     if not isinstance(eos, int) or eos < 0 or eos == tokenizer.unk_token_id:
         raise InfraError(f"the tokenizer has no {END_OF_TURN} token")
@@ -337,8 +337,7 @@ def encode(tokenizer, rows: Sequence[dict], recipe: Recipe) -> tuple[list[dict],
     out, dropped = [], 0
     for row in rows:
         if row["prompt"] not in prompts:
-            text = tokenizer.apply_chat_template([{"role": "user", "content": row["prompt"]}], add_generation_prompt=True, tokenize=False)
-            prompts[row["prompt"]] = tokenizer.encode(text, add_special_tokens=False)
+            prompts[row["prompt"]] = render_prompt_ids(tokenizer, row["prompt"])
         prompt_ids = prompts[row["prompt"]]
         output = tokenizer.encode(row["output"], add_special_tokens=False)
         tokens, capped, cut = fit_tokens(len(prompt_ids), output, eos, recipe.train_max_output_tokens, recipe.train_max_context_tokens)

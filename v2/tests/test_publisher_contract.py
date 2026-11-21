@@ -88,6 +88,16 @@ def test_every_miner_bound_is_published_from_the_records(tmp_path):
     assert doc["contract"]["recipe_id"] == recipe.recipe_id and recipe.recipe_id in text
 
 
+def test_training_scoring_and_sampler_render_are_published_as_identical(tmp_path):
+    text = published(world(tmp_path).publisher.snapshots[-1])[1]
+    flat = " ".join(text.split())
+    assert "Training and scoring render a pool task identically" in flat
+    assert "user = `prompt` with a leading instruction + blank line removed" in flat
+    assert "enable_thinking=True" in flat and "add_generation_prompt=True" in flat
+    assert "Rollouts sampled under the old one-user-message render are now slightly off-policy for the trainer" in flat
+    assert "Scoring renders a task in another way than training" not in flat
+
+
 def test_the_pool_drop_list_and_non_pool_meaning_are_published(tmp_path):
     _, text, _ = published(world(tmp_path).publisher.snapshots[-1])
     flat = " ".join(text.split())
@@ -105,7 +115,8 @@ def test_every_number_follows_the_pinned_params(tmp_path):
     assert doc["contract"]["params_hash"] == made.params.params_hash
     assert "Caps: 123 prompts and 4567 rollouts" in text and "strictly above 1.25" in text and "last 7 distinct king" in text
     assert "after 100, 400 tasks" in text and "after 100 tasks." in text  # looks and the early-drop bar are computed
-    assert "Training reads at most 777 output tokens" in text and "A longer rollout is valid: the trainer" in text
+    flat = " ".join(text.split())
+    assert "Training reads at most 777 output tokens" in flat and "A longer rollout is valid: the trainer" in flat
     header = doc["contract"]["batch_file"]["upload_headers"]
     assert header == r2.PUT_HEADERS and "`Content-Type: application/octet-stream`" in " ".join(text.split())  # what the presigner signs
     assert f"rule code `{TIME_LIMIT}`" in text
