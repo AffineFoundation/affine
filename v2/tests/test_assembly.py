@@ -12,6 +12,7 @@ pytest.importorskip("math_verify")
 pytest.importorskip("sn120_v2.gpu.trainer")
 
 from sn120_v2 import assembly, controller, headchain, headfold, layout, smoke  # noqa: E402
+from sn120_v2.gpu.batch import MANDATE  # noqa: E402
 from sn120_v2.admission import STREAMS_ENV, StoreAdmission  # noqa: E402
 from sn120_v2.afterking import ORDER_ENV  # noqa: E402
 from sn120_v2.canonical import manifest_digest, sha256_hex  # noqa: E402
@@ -41,8 +42,8 @@ class FakeTokenizer:
     def encode(self, text, add_special_tokens=False):
         return text.split()
 
-    def apply_chat_template(self, messages, tokenize=True, add_generation_prompt=True):
-        return messages[0]["content"].split()
+    def apply_chat_template(self, messages, tokenize=True, add_generation_prompt=True, **kwargs):
+        return " ".join(message["content"] for message in messages)
 
 
 @pytest.fixture
@@ -270,7 +271,7 @@ def test_the_checker_counts_tokens_with_the_verified_tokenizer_files_of_the_head
     with pytest.raises(ConfigError):
         tokens.output_tokens("a b c")  # no head in the store yet
     start(tmp_path, box)
-    assert tokens.output_tokens("a b c") == 3 and tokens.prompt_tokens("one two") == 2
+    assert tokens.output_tokens("a b c") == 3 and tokens.prompt_tokens("one two") == len(MANDATE.split()) + 2
     directory = tmp_path / "tokenizer" / load(tmp_path / "state" / JOURNAL_FILE).head.base_hash
     assert box.loaded == [str(directory)] and sorted(path.name for path in directory.iterdir()) == ["config.json", "tokenizer.json"], "no weight file is fetched"
     key = layout.public_base_file(directory.name, "tokenizer.json")
