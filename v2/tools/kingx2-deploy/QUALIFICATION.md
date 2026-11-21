@@ -192,8 +192,29 @@ Final committed-kit rehearsal destinations:
 - Normal: `/home/bb/scratch/kingx2-r086-genfeed/final-normal/dry-run.log`.
 - Abort after open: `/home/bb/scratch/kingx2-r086-genfeed/final-abort/dry-run.log`.
 
-Each run clones the exact final branch head and compares all eight kit files to
-its Git archive before proceeding. The `qualified branch head ...` line in each
-fresh log identifies that exact commit; the required PASS lines are reported
-with the kit-head result after those runs finish. Earlier logs above are
-historical baseline evidence, not qualification of the corrected final kit.
+Each run clones its exact branch head and compares all eight kit files to its
+Git archive before proceeding. The `qualified branch head ...` line identifies
+that commit. The candidate normal run at `4b060e10` and candidate abort run at
+`e2232cd3` both passed; their preserved log copies are
+`kingx2-genfeed-rebase/candidate-normal-4b060e10.log` (SHA-256
+`697f76dfde40675959d50a11da866fa12c703985b7ca36853721d92c5abe3c9d`) and
+`candidate-abort-e2232cd3.log` (SHA-256
+`ef5a7f22c81a59d85653b893e1eb45672fcde2b6a9793f2324881570ab9480f9`).
+The intervening commits changed only this qualification document, not the
+implementation, executable kit, params or gate.
+
+The normal candidate passed competing-deploy refusal, the real r000086 gate,
+r000087 close with exactly two 2,000-character king null strings for every
+leased box and no lease failure, same-loop r000088 open and public health.
+It then passed ingestd/reserve/generator preservation, public active-byte
+tamper refusal, sealed-result preservation, an independent undecided
+params-first rollback and the decided-round guard. The abort candidate passed
+post-open rollback of only the undecided r000087, old params then old code,
+one old-code loop, watchdog re-arm and original ingestd/reserve/generator
+preservation. These are isolated synthetic results, not production health.
+
+A fresh normal/abort pair will rerun from the final evidence commit and replace
+the destination logs above. The external evidence collector requires both logs
+to name that exact final head, all eight kit files to compare byte-for-byte,
+the required PASS lines and no traceback or assertion failure before producing
+`final-evidence.json` and the final kit file hashes.
