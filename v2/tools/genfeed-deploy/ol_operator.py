@@ -242,6 +242,47 @@ def stage():
     log("STAGE DONE: prior index built from public release and atomically installed")
 
 
+def _matches_packaged_seed():
+    """A clean seed has exactly the packaged manifest's content-addressed files."""
+    try:
+        rows = [json.loads(line) for line in (LIVE / "MANIFEST.jsonl").read_bytes().splitlines()]
+        shards = [row for row in rows if "shard" in row]
+        return ({path.name for path in (LIVE / "shards").iterdir()} == {row["shard"] for row in shards}
+                and all(file_hash(LIVE / "shards" / row["shard"]) == row["sha256"] for row in shards)
+                and file_hash(LIVE / "withdrawn.jsonl") == rows[-1]["withdrawn"]["sha256"])
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+
+
+def preserve_dirty_live():
+    """Move a used LIVE aside before seeding; never write into the package."""
+    if LIVE == RESERVE or RESERVE in LIVE.parents or LIVE in RESERVE.parents:
+        raise SystemExit(f"refusing to manage packaged reserve as LIVE: {LIVE}")
+    allowed = {Path("MANIFEST.jsonl"), Path("withdrawn.jsonl"), Path(".ingest.lock"), Path("shards")}
+    unexpected = any(path.relative_to(LIVE) not in allowed and path.parent != LIVE / "shards" for path in LIVE.rglob("*"))
+    dirty = LIVE.exists() and (
+        not LIVE.is_dir()
+        or not (LIVE / "MANIFEST.jsonl").is_file()
+        or file_hash(LIVE / "MANIFEST.jsonl") != EXPECT["new_manifest_sha256"]
+        or not (LIVE / "shards").is_dir()
+        or not (LIVE / "withdrawn.jsonl").is_file()
+        or unexpected
+        or not _matches_packaged_seed()
+    )
+    if not dirty:
+        return None
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    backup = LIVE.with_name(LIVE.name + ".backup-" + stamp)
+    suffix = 0
+    while backup.exists():
+        suffix += 1
+        backup = LIVE.with_name(LIVE.name + f".backup-{stamp}-{suffix}")
+    LIVE.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(LIVE, backup)
+    log(f"leftover LIVE preserved at {backup}; seeding a fresh packaged reserve")
+    return backup
+
+
 def apply():
     state = preflight()
     if head() != EXPECT["old_commit"] or state["params_hash"] != EXPECT["old_hash"] or digest() != EXPECT["digest"]:
@@ -259,6 +300,7 @@ def apply():
     public = pub_get("public/pool/reserve/MANIFEST.jsonl")
     if not append_only_public(live_manifest, public):
         raise SystemExit("public reserve is not an append-only extension of the packaged reserve; refusing apply")
+    preserve_dirty_live()
     target = record_target(state)
     try:
         checkout(EXPECT["new_commit"])
@@ -294,10 +336,11 @@ def apply():
 def ingest_ready():
     """Ingest only the oldest complete epoch; ingestd handles later ones after health PASS."""
     if not LIVE.is_dir():
-        raise SystemExit("live reserve has not been seeded; run apply first")
+        raise SystemExit("INGEST READY FAIL: no complete epoch was ingested; live reserve has not been seeded; run apply first")
     env = dict(ENV, SN120_RESERVE_DIR=str(LIVE))
     ledger_path = LIVE / "generator-ingested.jsonl"
     completed = {json.loads(line)["epoch"] for line in ledger_path.read_bytes().splitlines()} if ledger_path.exists() else set()
+    ingested_epoch = None
     for path in sorted(INBOX.glob("accepted-*.jsonl")):
         epoch = path.stem.removeprefix("accepted-")
         if not re.fullmatch(r"[0-9]{8}T[0-9]{4}Z", epoch):
@@ -330,10 +373,22 @@ def ingest_ready():
                 continue
             raise SystemExit(f"ingest {epoch} failed exit {result.returncode}: {result.stderr[-1000:]}")
         log(f"ingest {epoch}: {result.stdout[-1800:]}")
+        try:
+            ledger = [json.loads(line) for line in ledger_path.read_bytes().splitlines() if json.loads(line).get("epoch") == epoch]
+            kept = ledger[-1]["ingested"]
+            if type(kept) is not int:
+                raise ValueError("ingested is not an integer")
+        except (OSError, ValueError, TypeError, KeyError, IndexError) as error:
+            raise SystemExit(f"INGEST READY FAIL: cannot verify the {epoch} ingestion ledger: {error}") from None
+        if kept <= 0:
+            raise SystemExit(f"INGEST READY FAIL: {epoch} kept 0 tasks; refusing to start the loop")
+        ingested_epoch = epoch
         # Backpressure at the deploy boundary: only the oldest complete epoch
         # goes into the first open. The daemon starts after open-check PASS.
         break
-    log("INGEST READY DONE: oldest complete epoch ingested; later epochs left for ingestd")
+    if ingested_epoch is None:
+        raise SystemExit("INGEST READY FAIL: no complete epoch was ingested; refusing to start the loop")
+    log(f"INGEST READY DONE: {ingested_epoch} ingested with {kept} kept; later epochs left for ingestd")
 
 
 def start_loop():

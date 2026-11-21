@@ -2,211 +2,175 @@
 
 Offline operator kit for the king-x2 / sqrt-Fisher cutover. This directory is
 an artifact to review and copy deliberately; building it does not deploy it.
-It contains no credentials and has no generator, generator-feed, ingest, or
-ingestd stage. Do not run `autodeploy` against production from this checkout.
+It contains no credentials. Do not run `autodeploy` against production from
+this checkout.
 
-## Files
+## Files and pins
 
-- `expect.json`: old/new commit, code digest, params and health pins.
-- `old-params.json`, `new-params.json`: byte-for-byte copies of the supplied
-  `/home/bb/scratch/kingx2-live-qualification/{old-params,final-new-params}.json`.
+- `expect.json`: old/new commit, code digest, params, gate and Generator paths.
+- `old-params.json`, `new-params.json`: the complete old live parameter set and
+  the same set with only `null_samples_per_task=2`,
+  `irt_draw_rule="sqrt_fisher"`, and the new `recipe.code_digest`.
 - `kx2_operator.py`: checkout, journal inspection, public checks and rollback.
-  It is named to avoid shadowing Python's stdlib `operator` module. Invoke it as
-  `python3 -I /root/sn120-run/kingx2-deploy/kx2_operator.py COMMAND`; isolated
-  mode excludes the kit directory from `sys.path` and ignores ambient
-  `PYTHONPATH`. Parameter changes call the existing
-  `python -I -m sn120_v2 set-params` CLI. It never edits the journal directly
-  and never fetches from R2 or a remote git repository. The work-directory
-  lookup reads the operator loop env file; no inspection command prints its
-  values. The all-lease sealed-result precheck is read-only and bounded.
-  Post-checkout apply and rollback verification run in fresh isolated Python
-  processes: an old-code operator cannot retain the old Params schema after
-  checkout.
-- `autodeploy`: the one-shot gate, apply, health and rollback orchestration.
-- `dry-run`: isolated synthetic replay on copied journal/public files and the
-  exact committed branch/kit. It defaults to
-  `/home/bb/scratch/kingx2-r084-final/kingx2-deploy-dry/dry-run.log`.
-- `QUALIFICATION.md`: offline replay, estimator, timing and test evidence,
-  including private-data and mutable-artifact limitations.
+  Invoke it as `python3 -I /root/sn120-run/kingx2-deploy/kx2_operator.py COMMAND`.
+  Isolated mode avoids stdlib `operator` shadowing and ambient `PYTHONPATH`.
+  Parameter changes call the existing `python -I -m sn120_v2 set-params` CLI;
+  the journal is never edited directly and no git/R2 fetch is performed.
+  Post-checkout apply runs in a fresh interpreter so the old Params schema is
+  not retained.
+- `autodeploy`: one-shot gate, apply, health and rollback orchestration.
+- `dry-run`: isolated synthetic rehearsal using copied journal/public objects,
+  an exact committed branch/kit, an external reserve and a real disposable
+  ingestd. It starts no production service, run loop, R2/chain operation or GPU
+  worker and reads no secrets.
+- `QUALIFICATION.md`: offline evidence and limitations.
 
-## Required sequencing: implementation commit pin
+The final implementation is `c525286580c84d795b3ca7cbdf2302e96fce31ba`, whose
+parent is the deployed `d368b2601f06458349cfe3e84adfbf691994fcb3`. The kit-only
+commits select that implementation without changing GPU code or params.
+`new_digest` independently pins the GPU code. Do not change the pinned SHA,
+fetch an unreviewed ref, or arm an altered kit. The implementation commit must
+already exist in the target repository.
 
-The final `expect.json` is pinned to the implementation commit by the separate
-kit-pin commit. Both commits have the required attribution. The implementation
-commit contains the code, tests and offline verifier; the following kit-only
-commit changes this documentation and the one `new_commit` value without
-changing the GPU code or params hashes. Qualification of the implementation
-therefore applies to the exact code selected by `new_commit`.
+Copy the reviewed kit outside the live checkout (normally
+`/root/sn120-run/kingx2-deploy`). Create `go` only after final review.
+`PENDING_IMPLEMENTATION_COMMIT` is refused.
 
-The `new_digest` independently pins the implementation's GPU code. Do not
-change the pinned SHA, fetch an unreviewed ref, or arm an altered kit.
-`autodeploy` and `kx2_operator.py apply` both reject a non-SHA or an absent commit.
-Copy the reviewed kit outside the live checkout (the default destination is
-`/root/sn120-run/kingx2-deploy`) and make sure the new commit object is already
-in the target repository. The kit is offline: it does not fetch. Create `go`
-only after final review. The equivalent template preparation step, before the
-pin exists, uses `"new_commit": "PENDING_IMPLEMENTATION_COMMIT"`; both tools
-refuse that placeholder.
+## Generator feed and competing deployments
 
-`GATE_WANT` is configurable; its default is read from `expect.json` and is
-`r000084`, the live open round at whose close the kit applies. Set it explicitly
-only to the exact old-code open round at the deployment boundary, for example:
+The old production baseline includes the live Generator consumer, ingestd and
+external reserve. This kit does **not** deploy genfeed again, stop/restart
+ingestd, seed/reseed/move/hash-copy the live reserve, or clear the inbox.
+Checkout changes code only.
 
-```
-GATE_WANT=r000084 bash /root/sn120-run/kingx2-deploy/autodeploy
-```
+`preflight` and `apply` require:
 
-The command above documents the interface, not authorization to execute it.
-The operator must independently confirm the current old HEAD, round, journal,
-loop and watchdog state before creating `go`.
+- `reserve-live.path` to contain exactly the expected absolute
+  `/root/sn120-run/reserve-live` path;
+- that existing reserve to pass read-only verification under its shared ingest
+  lock, with no preparation or mutation;
+- the existing generator inbox and prior index to exist; and
+- `ingestd.pid` to name a live, non-zombie `generator-ingestd.sh` from the
+  selected checkout, using the expected prior index.
 
-## Arming, disarming and rollback
+The daemon PID, full command and `/proc` start ticks are captured before apply.
+The fresh new-code child verifies that exact identity after checkout; rollback
+verifies it again after old params/code are restored. No stop is needed, so
+there is deliberately no ingestd restart path. `start-ingestd` is a preservation
+check, not a launch command. A missing, changed or unexpected daemon fails
+closed; it is never silently replaced.
 
-`autodeploy` waits for `/root/sn120-run/kingx2-deploy/go`. Every operator call
-uses one internally constructed command:
-`python3 -I /root/sn120-run/kingx2-deploy/kx2_operator.py ...`. `KINGX2_PY` may
-select the Python interpreter, but there is no `OP` override and the dry-run
-uses this identical command construction. Remove `go` after the run if
-retaining the kit. `touch /root/sn120-run/kingx2-deploy/disarm`
-cancels a wait before apply without changing code or params. A disarm after
-go-live requests a safe rollback rather than leaving an unverdicted deploy.
-The stop request is removed on PASS or verified recovery. A loop that fails
-to stop leaves it in place for manual remediation. The watchdog is re-armed
-only after PASS or a verified old-code recovery. If rollback or old-loop
-restart is blocked or cannot be verified, it remains disarmed for operator
-intervention rather than restarting an unrecovered state.
+The early `deployment-guard` scans `/proc` for genfeed `autodeploy.sh` or
+`ol_operator.py`, another king-x2 `autodeploy`, or another king-x2 operator
+outside its own ancestry. `autodeploy` runs it before any stop request and
+again at the gate immediately before stopping the old loop. A competing
+deployment therefore cannot be ignored until after the loop has been stopped.
+Dry-run exercises a real competing genfeed-named process and verifies no
+stop/code/params mutation.
 
-On the selected old-code open round it:
+## Gate, apply and health
 
-1. Confirms old HEAD, one running loop and no existing stop request.
-2. Touches `run-loop.stop-after-round`, waits for the loop to end, and checks
-   the authenticated journal close: outcome `null` or `applied`, positive
-   `n_tasks`, no `lease_failed` since that round's open, and no later open.
-3. Disarms the watchdog, checks out the new commit, and applies the complete
-   new params via `set-params`. It verifies new code/pinned params digests,
-   two null samples, sqrt-Fisher, 2,000 tasks and 10,000 active tasks.
-4. Calls `start-loop` exactly once and requires exactly one loop. The first
-   open must carry the new params hash, a 10,000-task active rotation and an
-   IRT snapshot whose config has `draw_rule=sqrt_fisher` and the expected
-   exploration share. Public rotation is checked against the complete journal
-   block and state content id, active-pool raw bytes against `active_sha`, and
-   the IRT snapshot against its content id and active task set. Public polling
-   waits for the close-produced round file as well as these objects, retrying
-   for 20 minutes; the round file is not expected to exist at the first-open
-   instant. Each fetch and subprocess is bounded by the remaining monotonic
-   retry window.
-5. Requires the same loop to close the first new-code round and open the next.
-   Both expected round IDs are read from the journal, not inferred by counting
-   unrelated lines in the run log.
-   The close must be `null` or `applied`, with `n_tasks=2000`, no lease
-   failure, the new params hash, and, for **every leased box**, exactly two
-   null outcome strings of exactly 2,000 characters each. Positive evaluation
-   wall seconds and local `eval`, `solo_eval`, `eval_stream` and `eval_cut`
-   phase timings are checked and logged with the configured timing limits before
-   a clear `PASS:` line.
-
-A failure after apply requests stop-after-round, then uses the existing
-`end-round` operator command only for an open, **undecided** round with no
-stored result. That supported no-decision path is required before restoring
-old params. `end-round` exit 3 means a sealed result exists: rollback refuses
-to discard it. An already decided round must be completed by normal `run`,
-not relabelled `no_decision`. In either case the kit preserves the journal,
-result evidence and new code/params, and does not claim old-loop recovery.
-The precheck checks **every** lease's exact sealed-result key, including a
-failed lease; a bounded read-only child constructs the store once. The
-existing `end-round` exit 3 remains a second guard against races or mirror
-differences. A store-access error fails closed and never authorizes a close.
-
-When no evidence-preservation guard blocks it, rollback restores **old params
-first and old code second**, verifies both old hashes, starts one old-code loop
-and re-arms the watchdog. Params-first is necessary because old code rejects
-the new parameter fields. Failure to stop or verify rollback is logged as such;
-it is never hidden as a successful recovery. This kit does not kill a stuck
-loop or perform manual remediation. Shell traps handle ordinary errors and
-catchable signals only; SIGKILL, OOM termination, power loss and host failure
-can leave the watchdog disarmed and require the operator's independent
-recovery procedure. This kit does not claim unattended recovery from those
-failures.
-
-Production defaults include `/root/sn120-run`, `/root/sn120/v2`, the NUL
-loop-env file and `https://affine.io`. Those are operator defaults only; this
-build and dry-run use none of them. No systemd command is issued. The hourly
-weight writer, UID mapping, burn behavior, chain and training lineage are not
-touched by this kit.
-
-## Isolated dry-run
-
-From this checkout:
+`GATE_WANT` defaults to `r000086` from `expect.json`. The documented interface
+is:
 
 ```
-D=/home/bb/scratch/kingx2-r084-final/kingx2-deploy-dry bash v2/tools/kingx2-deploy/dry-run
+GATE_WANT=r000086 bash /root/sn120-run/kingx2-deploy/autodeploy
 ```
 
-`D` must be a fresh directory beneath `/home/bb/scratch`; its complete log is
-`$D/dry-run.log`. A stale or armed directory is refused. The source kit must be
-committed: the harness refuses a dirty kit and clones the exact current branch
-head. It copies the kit from that commit's Git archive and compares every file
-to the committed source kit byte-for-byte. No scratch implementation commit or
-working-tree overlay is used. `expect.json.new_commit` remains exactly
-`7e768a1ff1e121fed891b6ed23817a5e9a08d8a3`; only the isolated public retry
-window is shortened. The harness also runs the Python 3.12 entry-point
-regression checks for `work-dir`, `loop-count`, `journal-close` and `facts`.
+This is not authorization to execute it. The operator must independently
+confirm the current old HEAD, round, journal, loop, Generator state and watchdog
+before creating `go`. The kit defaults are production paths, but this build and
+its rehearsals use only isolated scratch paths.
 
-Two additional environment-selected scenarios are independent runs. Each
-forces a failure immediately after its first new-code open rather than running
-the successful-cutover guards first. `KINGX2_DRY_ABORT_AFTER_OPEN=1` requires a
-nonzero autodeploy exit, an undecided no-decision close, old params/code,
-exactly one old-code loop and a re-armed watchdog.
-`KINGX2_DRY_STORE_RESULT_AFTER_OPEN=1` requires rollback refusal, unchanged
-sealed-result evidence and new params/code, no false old-loop recovery, and a
-watchdog that remains disarmed. `KINGX2_DRY_FAILED_LEASE=1` can be combined with
-the sealed-result scenario to prove that the all-lease precheck rejects evidence
-even after the lease is marked failed.
+`autodeploy` waits for `go`; `disarm` before apply cancels without changing code
+or params. After arming it:
 
-The harness clones the committed branch into the isolated scratch area and
-resets the copied deployment checkout to clean old code. A separate read-only
-copy of the exact implementation commit supports compatible-schema assertions;
-the actual apply checks out the pinned implementation itself. The isolated
-`dry_stack.py`, CLI wrapper and replay helpers live **outside** that checkout
-and are invoked with `python -I` and explicit paths. Nothing is added to or
-overlaid onto the implementation commit. Before launching the **real copied
-`autodeploy`**, the harness initially leaves `go` absent and verifies that no
-stop marker appears. It advances only the copied fixture with synthetic
-old-params closes through the r000084 gate, then starts the simulated-loop
-driver and creates the copied kit's `here/go`; from then on `autodeploy` itself
-performs wait/gate/preflight, stop, watchdog disarm, checkout, set-params,
-exactly-one-loop start, open/public checks, first-round health and watchdog
-re-arm. The new-code round is r000085 and its successor is r000086. Only the
-loop and its outcomes are simulated. The source checkout and its `expect.json`
-are not modified.
+1. Refuses competing deployments, an already-disarmed watchdog, a missing run
+   log, a passed gate, the wrong old HEAD, an existing stop request, or other
+   than exactly one loop.
+2. Rechecks the competing-deploy guard at the gate, touches
+   `run-loop.stop-after-round`, waits for the old loop to end, and verifies a
+   clean authenticated r000086 close (`null`/`applied`, positive `n_tasks`, no
+   lease failure since open and no later open).
+3. Disarms the watchdog, checks out the implementation and applies the complete
+   new params. It verifies code/pinned digests, two king samples, sqrt-Fisher,
+   2,000 tasks, 10,000 active tasks and unchanged genfeed `batch_cap=6`, plus
+   the exact pre-apply ingestd identity and external reserve.
+4. Starts exactly one new-code loop. r000087 must carry the new params, active
+   rotation and sqrt-Fisher IRT snapshot. Public rotation/state/active bytes,
+   snapshot identity and close-produced round report are checked with bounded
+   polling (default 20 minutes).
+5. Requires the same loop to close r000087 and open r000088. The close must be
+   `null`/`applied`, use the new params and 2,000 tasks, have no lease failure,
+   and contain exactly two 2,000-character king null strings for every leased
+   box. Positive evaluation wall time and local eval phase timing are logged
+   with configured limits before `PASS:`.
 
-After the copied `autodeploy` PASS, the harness also verifies that rollback
-preserves a sealed result. It then uses a separate hard-linked copy of the
-pre-evidence journal and object store for explicit no-decision params-first
-rollback, and verifies that the original sealed journal/result remain
-byte-identical. A separate decided round on that copied fixture must be
-finished normally rather than relabelled no-decision.
+The stop request is removed on PASS or verified recovery. The watchdog is
+re-armed only after PASS or verified old-code recovery. A stuck loop, failed
+rollback or failed restart is reported, not hidden as recovery.
 
-The copied public retired archive is rewound first to the copied r000082
-rotation's exact prefix, before either synthetic predecessor close, and then
-to the r000084 prefix before the gate close. This keeps each append-only
-archive update consistent with the copied journal; the source store is never
-edited. Post-rollback synthetic follow-ups load the retained new-schema journal
-with the compatible implementation schema, without claiming old code can parse
-it. This is final-committed-kit and pinned-implementation rehearsal evidence,
-not a claim that the production r000084 gate has already closed.
+## Evidence-preserving rollback
 
-The source journal under `/home/bb/scratch/kingx2-r082-live` and the
-materialized public store are copied. A separate operator journal is changed
-by the real set-params CLI and synthetic local-controller closes. Public
-reads use only the copied `LocalStore` tree. Loop state is a marker/pid file;
-**no real run loop, service, GPU worker, R2, chain or secret is started or
-read**. All sampled outcomes and LoRA objects are explicitly synthetic. The
-harness exercises gate close, apply, old-open refusal, new open/public checks,
-per-box 2 x 2,000 null health, eval timing and params-first rollback. It does
-not measure GPU eval performance or establish live production health.
+A failure after apply requests stop-after-round, then invokes the supported
+`end-round` command only for an open, **undecided** round with no stored result.
+The read-only precheck checks every lease's exact sealed-result key, including
+failed leases, and is bounded. `end-round` exit 3 remains a second guard against
+races or mirror differences. A sealed result is never deleted to force
+rollback; an already decided round must be finished normally by `run`. In these
+blocked cases the journal, evidence and new code/params remain and no false
+old-loop recovery is claimed.
 
-Useful read-only operator reports (with the dry environment exported) are
-`journal-close RID`, `open-check RID`, `public-check RID`, `health RID`, and
-`facts`. Live `preflight`, `apply`, `rollback`, and `start-loop` are operator
-actions, not inspection commands.
+When recovery is permitted, rollback restores **old params first and old code
+second**, verifies both old hashes and genfeed `batch_cap=6`, checks the
+external reserve and original ingestd identity, starts one old-code loop and
+re-arms the watchdog. Params-first is necessary because old code rejects the
+new fields. SIGKILL, OOM, power loss and host failure can still require the
+operator's independent recovery procedure.
+
+The hourly weight writer, UID mapping, transaction cursor, burn behavior,
+chain and training/optimizer lineage are not touched by this kit.
+
+## Isolated rehearsal
+
+From a clean committed kit:
+
+```
+D=/home/bb/scratch/kingx2-r086-genfeed/final-normal bash v2/tools/kingx2-deploy/dry-run
+KINGX2_DRY_ABORT_AFTER_OPEN=1 D=/home/bb/scratch/kingx2-r086-genfeed/final-abort bash v2/tools/kingx2-deploy/dry-run
+```
+
+`D` must be a fresh directory under `/home/bb/scratch`. The harness refuses a
+dirty source kit, clones the exact branch head, checks out old `d368b260`, and
+copies the kit from the committed branch archive. All eight files must compare
+byte-for-byte with the source. `new_commit` remains the pinned implementation;
+only the copied public retry window is shortened for the fixture. The old
+r000082-open journal advances through synthetic old-code closes to the r000086
+gate. The real copied `autodeploy` drives the remainder.
+
+The external reserve is a separate valid prefix, not a packaged-reserve backup.
+A real disposable `generator-ingestd.sh` is launched with genfeed's
+`setsid nohup bash` construction and an empty local inbox. Static selector,
+prior-index, generator-state, inbox, lock/log and reserve files are fingerprinted
+without treating normal future ingest appends as deploy mutations. The initial
+read-only shared-lock check creates the normal empty `.ingest.lock`; the fixture
+then fingerprints it along with every reserve file and requires all bytes to
+survive apply and rollback. The PID and proc start ticks must remain identical
+through apply and rollback. Only that
+verified disposable process is terminated by fixture cleanup.
+
+Normal rehearsal covers competing-deploy refusal, gate/apply, r000087 health,
+r000088 open, public active-byte tamper refusal, sealed-result preservation,
+separate undecided params-first rollback and the decided-round guard. The
+abort-after-open scenario requires an expected nonzero autodeploy result,
+undecided no-decision close, old params/code, one old loop, watchdog re-arm and
+Generator/ingestd preservation. `KINGX2_DRY_STORE_RESULT_AFTER_OPEN=1` instead
+requires rollback refusal and a disarmed watchdog;
+`KINGX2_DRY_FAILED_LEASE=1` additionally exercises a failed lease's sealed
+result.
+
+All outcomes/LoRAs are synthetic. No production health, GPU throughput, chain,
+R2 or live service behavior is claimed. Useful read-only reports (with isolated
+paths exported) are `journal-close RID`, `open-check RID`, `public-check RID`,
+`health RID`, `generator-check` and `facts`. Live `preflight`, `apply`,
+`rollback`, and `start-loop` are operator actions, not inspection commands.

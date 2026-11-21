@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""King-x2 deploy operator. No generator/ingestion behavior.
+"""King-x2 deploy operator preserving the live Generator feed.
 
 Only an operator may use this against a live checkout. Inspection never prints
 secrets. set-params, start-loop, the bounded evidence precheck and the
-work-directory lookup use the existing operator loop environment.
+work-directory lookup use the existing operator loop environment. The external
+reserve, ingestd and generator inbox are never stopped, moved or reseeded.
 """
 from __future__ import annotations
 
@@ -15,7 +16,6 @@ import os
 from pathlib import Path
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import time
@@ -34,6 +34,11 @@ WORK = Path(os.environ["KINGX2_WORK_DIR"]) if os.environ.get("KINGX2_WORK_DIR") 
 JOURNAL = STATE / "journal.jsonl"
 TARGET = HERE / "rollback-target.json"
 EXPECT = json.loads((HERE / "expect.json").read_text())
+RESERVE_PATH = Path(os.environ.get("KINGX2_RESERVE_PATH_FILE", EXPECT["reserve_path_file"]))
+LIVE = Path(os.environ.get("KINGX2_RESERVE_DIR", EXPECT["reserve_dir"]))
+INBOX = Path(os.environ.get("KINGX2_GENERATOR_INBOX", EXPECT["generator_inbox"]))
+INGESTD_PID = Path(os.environ.get("KINGX2_GENERATOR_PID", EXPECT["generator_ingestd_pid"]))
+PRIOR_INDEX = Path(os.environ.get("KINGX2_PRIOR_INDEX", EXPECT["prior_index"]))
 _package = V2 / "sn120_v2"
 _spec = importlib.util.spec_from_file_location("sn120_v2", _package / "__init__.py", submodule_search_locations=[str(_package)])
 assert _spec is not None and _spec.loader is not None
@@ -122,26 +127,130 @@ def loop_count() -> None:
 
 
 def checkout(commit: str) -> None:
+    """Switch code only. The external reserve belongs to the running ingestd."""
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise RuntimeError("refusing a non-SHA checkout")
-    reserve = V2 / "sn120_v2/envs/reserve"
-    saved = HERE / f"reserve-before-{commit[:12]}"
-    if saved.exists():
-        raise RuntimeError(f"reserve preservation directory already exists: {saved}")
-    shutil.copytree(reserve, saved)
-    from sn120_v2.envs.reserve import load_reserve
-    load_reserve(saved, allow_retired=True)
-    try:
-        sh(["git", "checkout", "-q", "--detach", commit], cwd=V2.parent)
-        # Preserve the complete external mutable cache, including untracked
-        # append-only shards, withdrawn rows and retired task mirrors.
-        shutil.copytree(saved, reserve, dirs_exist_ok=True)
-        load_reserve(reserve, allow_retired=True)
-    except BaseException:
-        shutil.copytree(saved, reserve, dirs_exist_ok=True)
-        raise
+    sh(["git", "checkout", "-q", "--detach", commit], cwd=V2.parent)
     if head() != commit:
         raise RuntimeError("checkout did not reach the requested commit")
+
+
+def ingestd_identity() -> dict[str, str | int | bool | None]:
+    """Bind the daemon identity before checkout and recheck it after rollback.
+
+    A live daemon may append to LIVE concurrently. Never hash, copy, move,
+    delete or reseed that mutable directory as a checkout preservation step.
+    """
+    result: dict[str, str | int | bool | None] = {"pidfile": str(INGESTD_PID), "running": False,
+                                                   "pid": None, "command": None, "start_ticks": None}
+    if not INGESTD_PID.is_file():
+        raise RuntimeError(f"ingestd pidfile is missing: {INGESTD_PID}")
+    value = INGESTD_PID.read_text().strip()
+    if not value.isdigit():
+        raise RuntimeError("ingestd pidfile does not contain one numeric pid")
+    pid = int(value)
+    result["pid"] = pid
+    # The dry fixture runs the real disposable ingestd, so it gets the same
+    # process identity checks as production; a numeric pidfile alone is not OK.
+    try:
+        proc = Path(f"/proc/{pid}")
+        args = [part.decode(errors="replace") for part in proc.joinpath("cmdline").read_bytes().split(b"\0") if part]
+        command = " ".join(args)
+        stat = proc.joinpath("stat").read_text().rsplit(") ", 1)[1].split()
+        cwd = Path(os.readlink(proc / "cwd")).resolve()
+    except FileNotFoundError:
+        raise RuntimeError(f"ingestd pid {pid} from {INGESTD_PID} is not running") from None
+    script = V2 / "systemd/generator-ingestd.sh"
+    scripts = [Path(arg) for arg in args if Path(arg).name == "generator-ingestd.sh"]
+    if len(scripts) != 1 or scripts[0].resolve() != script.resolve():
+        raise RuntimeError(f"pidfile names an unexpected process: {command[:240]}")
+    if len(stat) <= 19 or stat[0] == "Z":
+        raise RuntimeError("ingestd process is a zombie or has an invalid proc stat")
+    if cwd != V2.resolve():
+        raise RuntimeError("ingestd is not running from the selected v2 checkout")
+    if str(PRIOR_INDEX) not in args:
+        raise RuntimeError("ingestd is not using the expected generator prior index")
+    result.update(running=True, command=command, start_ticks=int(stat[19]))
+    return result
+
+
+def verify_ingestd_preserved(before: dict | None = None) -> dict:
+    after = ingestd_identity()
+    fields = ("pid", "command", "start_ticks")
+    if before is not None and any(before.get(field) != after[field] for field in fields):
+        raise RuntimeError("ingestd identity changed; refusing to replace or kill the live daemon")
+    return after
+
+
+def other_deploys() -> list[str]:
+    """Exclude this shell ancestry, including Python's own [python3] <defunct>."""
+    ancestry = {os.getpid()}
+    current = os.getpid()
+    for _ in range(64):
+        try:
+            fields = Path(f"/proc/{current}/stat").read_text().split()
+            current = int(fields[3])
+        except (FileNotFoundError, ValueError, IndexError):
+            break
+        if current <= 1 or current in ancestry:
+            break
+        ancestry.add(current)
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit() or int(entry.name) in ancestry:
+            continue
+        try:
+            raw = entry.joinpath("cmdline").read_bytes()
+            args = [part.decode(errors="replace") for part in raw.split(b"\0") if part]
+            state = entry.joinpath("stat").read_text().split()[2]
+        except (FileNotFoundError, PermissionError, ProcessLookupError, IndexError):
+            continue
+        if state == "Z":
+            continue
+        for arg in args:
+            path = Path(arg)
+            if ((path.name in ("autodeploy.sh", "ol_operator.py") and "genfeed-deploy" in path.parts)
+                    or (path.name in ("autodeploy", "kx2_operator.py") and "kingx2-deploy" in path.parts)):
+                found.append(f"{entry.name} {' '.join(args)[:360]}")
+                break
+    return sorted(found)
+
+
+def verify_live_reserve(*, ingestd_before: dict | None = None) -> dict:
+    """Resolve and verify the existing selector; no unlink, reseed or rewrite."""
+    if not RESERVE_PATH.is_file() or not LIVE.is_absolute():
+        raise RuntimeError("reserve-live.path or its absolute live directory is missing")
+    if RESERVE_PATH.read_text() != str(LIVE) + "\n":
+        raise RuntimeError("reserve-live.path does not select the expected existing live reserve")
+    if not LIVE.is_dir() or not INBOX.is_dir() or not PRIOR_INDEX.is_file():
+        raise RuntimeError("external live reserve, prior index or generator inbox is missing")
+    from sn120_v2.envs.reserve import ingest_lock, load_reserve
+    # Shared-lock verification is read-only. The verify CLI creates a lockfile
+    # for a missing directory; never use that on the production selector.
+    with ingest_lock(LIVE, exclusive=False):
+        reserve, _ = load_reserve(LIVE)
+    return {"path": str(RESERVE_PATH), "live": str(LIVE), "inbox": str(INBOX),
+            "verification": {"shards": len(reserve.shards), "manifest_sha256": reserve.manifest_sha},
+            "ingestd": verify_ingestd_preserved(ingestd_before)}
+
+
+def start_ingestd() -> None:
+    """Preserve the genfeed daemon. Never turn preservation into a restart."""
+    verify_ingestd_preserved()
+    log(f"ingestd preserved: live pid {INGESTD_PID.read_text().strip()}; no restart needed")
+
+
+def generator_check() -> None:
+    out = verify_live_reserve()
+    out["ok"] = True
+    emit(out)
+
+
+def deployment_guard() -> None:
+    found = other_deploys()
+    if found:
+        raise RuntimeError(f"another genfeed/king-x2 deploy is alive: {found}")
+    log("no competing genfeed/king-x2 deployment is alive")
 
 
 def load_env() -> dict[str, str]:
@@ -269,6 +378,8 @@ def verify_before() -> dict:
         raise RuntimeError(f"HEAD {head()} != old commit {EXPECT['old_commit']}")
     if digest() != EXPECT["old_digest"]:
         raise RuntimeError("old code digest mismatch")
+    if load(JOURNAL).params.batch_cap != 6:
+        raise RuntimeError("live genfeed batch_cap=6 differs from old params")
     if report["params_hash"] != EXPECT["old_params_hash"]:
         raise RuntimeError("old pinned params hash mismatch")
     if load(JOURNAL).params.recipe.code_digest != EXPECT["old_digest"]:
@@ -282,6 +393,9 @@ def verify_before() -> dict:
 
 
 def preflight() -> None:
+    if other_deploys():
+        raise RuntimeError(f"another genfeed/king-x2 deploy is alive: {other_deploys()}")
+    verify_live_reserve()
     if alive():
         raise RuntimeError(f"loop/run alive: {alive()}")
     dirty = sh(["git", "status", "--porcelain", "--untracked-files=all"]).stdout
@@ -294,6 +408,11 @@ def preflight() -> None:
 
 
 def apply() -> None:
+    if other_deploys():
+        raise RuntimeError(f"another genfeed/king-x2 deploy is alive: {other_deploys()}")
+    ingestd_before = verify_live_reserve()["ingestd"]
+    # The new-code child must prove that this exact daemon survived checkout.
+    (HERE / "ingestd-before.json").write_text(json.dumps(ingestd_before, sort_keys=True, indent=2) + "\n")
     report = verify_before()
     if alive():
         raise RuntimeError("apply refused: loop alive")
@@ -306,6 +425,7 @@ def apply() -> None:
     TARGET.write_text(json.dumps({"old_commit": EXPECT["old_commit"], "old_digest": EXPECT["old_digest"],
                                   "old_params_hash": EXPECT["old_params_hash"],
                                   "journal_records_before": report["journal_records"],
+                                  "ingestd": ingestd_before,
                                   "recorded_at": time.strftime("%FT%TZ", time.gmtime())}, indent=2) + "\n")
     checkout(new)
     try:
@@ -326,6 +446,10 @@ def apply_checked_out() -> None:
     new = EXPECT["new_commit"]
     if head() != new:
         raise RuntimeError("post-checkout HEAD is not the new commit")
+    target = json.loads(TARGET.read_text())
+    saved_ingestd = json.loads((HERE / "ingestd-before.json").read_text())
+    if target.get("ingestd") != saved_ingestd:
+        raise RuntimeError("apply ingestd identity target is absent or changed")
     try:
         if digest() != EXPECT["new_digest"]:
             raise RuntimeError("new code digest mismatch")
@@ -337,7 +461,10 @@ def apply_checked_out() -> None:
             raise RuntimeError("new null sample count or task count mismatch")
         if state.params.rotation_active_size != EXPECT["active_size"]:
             raise RuntimeError("new active size mismatch")
-        log(f"APPLY DONE: HEAD {head()} digest {digest()} params {state.params.params_hash}")
+        if state.params.batch_cap != 6:
+            raise RuntimeError("new params did not preserve genfeed batch_cap=6")
+        verify_live_reserve(ingestd_before=saved_ingestd)
+        log(f"APPLY DONE: HEAD {head()} digest {digest()} params {state.params.params_hash}; ingestd/reserve preserved")
     except BaseException:
         # New code can still parse both parameter sets. Never let old code try
         # to replay null_samples_per_task or sqrt_fisher first.
@@ -638,7 +765,10 @@ def rollback() -> None:
         raise RuntimeError("rollback verification failed")
     if load(JOURNAL).params.recipe.code_digest != EXPECT["old_digest"]:
         raise RuntimeError("rollback pinned digest mismatch")
-    log(f"ROLLBACK DONE -> {old_commit}; old params restored")
+    if load(JOURNAL).params.batch_cap != 6:
+        raise RuntimeError("rollback did not preserve genfeed batch_cap=6")
+    verify_live_reserve(ingestd_before=target.get("ingestd"))
+    log(f"ROLLBACK DONE -> {old_commit}; old params restored; ingestd/reserve preserved")
 
 
 def facts() -> None:
@@ -653,12 +783,15 @@ def main() -> int:
     if len(sys.argv) < 2:
         raise RuntimeError("missing operator command")
     command = sys.argv[1]
-    if command not in ("preflight", "apply", "apply-checked-out", "start-loop", "loop-count", "work-dir", "rollback", "facts") and len(sys.argv) < 3:
+    if command not in ("preflight", "apply", "apply-checked-out", "start-loop", "start-ingestd", "generator-check", "deployment-guard", "loop-count", "work-dir", "rollback", "facts") and len(sys.argv) < 3:
         raise RuntimeError(f"{command} needs a round id")
     if command == "preflight": preflight()
     elif command == "apply": apply()
     elif command == "apply-checked-out": apply_checked_out()
     elif command == "start-loop": start_loop()
+    elif command == "start-ingestd": start_ingestd()
+    elif command == "generator-check": generator_check()
+    elif command == "deployment-guard": deployment_guard()
     elif command == "loop-count": loop_count()
     elif command == "journal-close": emit(journal_close_summary(sys.argv[2], next_open_ok="--next-open-ok" in sys.argv))
     elif command == "work-dir": print(work_dir())

@@ -132,6 +132,7 @@ while [ ! -e "$H/go" ]; do
   sleep_poll 5
 done
 [ ! -e "$H/disarm" ] || { log "disarmed"; exit 0; }
+"${OP[@]}" deployment-guard >>"$L" 2>&1 || refuse "another deployment is alive; no stop request was made"
 [ ! -e "$WD/DISARM" ] || refuse "watchdog was already disarmed; inspect it before deploy"
 [ -f "$RUNLOG" ] || refuse "run log missing: $RUNLOG"
 [[ "$GATE_WANT" =~ ^r[0-9]{6}$ ]] || refuse "GATE_WANT must be rNNNNNN"
@@ -153,6 +154,7 @@ now=$(git rev-parse HEAD)
 [ "$(loop_count)" -eq 1 ] || refuse "more than one run loop is named by the pidfile"
 GATE=$(openrid)
 log "gate $GATE; old HEAD ${now:0:8}"
+"${OP[@]}" deployment-guard >>"$L" 2>&1 || refuse "another deployment is alive; refusing to stop the old-code loop"
 if ! stop_loop; then fail "could not stop old-code loop after $GATE"; fi
 if [ -e "$H/disarm" ]; then
   rm -f "$STOPF"; STOP_TOUCHED=0

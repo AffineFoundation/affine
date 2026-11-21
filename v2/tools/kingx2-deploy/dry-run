@@ -4,17 +4,17 @@
 # objects. No services, real loop, R2, chain or secrets.
 set -euo pipefail
 ROOT=${ROOT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}
-DRY_ROOT=${DRY_ROOT:-/home/bb/scratch/kingx2-r084-final}
+DRY_ROOT=${DRY_ROOT:-/home/bb/scratch/kingx2-r086-genfeed}
 D=${D:-$DRY_ROOT/kingx2-deploy-dry}
 SRC=${SRC:-/home/bb/scratch/kingx2-r082-live/sn120-run/state/journal.jsonl}
 STORE=${STORE:-/home/bb/scratch/kingx2-next-open-store-v11}
 KIT=${KIT:-$ROOT/v2/tools/kingx2-deploy}
-PY=${PY:-/tmp/sn120-v2-pool-runtime-tests/bin/python}
+PY=${PY:-/home/bb/scratch/kingx2-genfeed-rebase/testenv/bin/python}
 [ ! -e "$D" ] || { printf 'D must not exist; choose a fresh isolated directory\n' >&2; exit 64; }
 export PYTHONDONTWRITEBYTECODE=1
 case "$D" in /home/bb/scratch/*) ;; *) echo "D must stay under /home/bb/scratch" >&2; exit 64;; esac
 mkdir -p "$D"/{here,helpers,operator-state,work/logs,watchdog,public,reserve}
-case "$D" in /home/bb/scratch/*) ;; *) echo "D must stay under /home/bb/scratch" >&2; exit 64;; esac
+mkdir -p "$D/generator/inbox" "$D/live-reserve"
 [ ! -e "$D/go" ] || { echo 'refusing a reused armed dry fixture' >&2; exit 64; }
 [ ! -e "$D/here/go" ] || { echo 'refusing a reused armed dry fixture' >&2; exit 64; }
 exec > >(tee "$D/dry-run.log") 2>&1
@@ -27,32 +27,42 @@ HEAD=$(git -C "$ROOT" rev-parse HEAD)
 BRANCH=$(git -C "$ROOT" symbolic-ref --quiet --short HEAD) || { echo 'final rehearsal requires a named branch' >&2; exit 64; }
 git clone -q --no-checkout --branch "$BRANCH" "$ROOT" "$D/repo"
 [ "$(git -C "$D/repo" rev-parse HEAD)" = "$HEAD" ]
-git -C "$D/repo" checkout -q --detach 28c56f439c0c0fbf3554c8546cc86dbd88119125
-[ "$(git -C "$D/repo" cat-file -t 7e768a1ff1e121fed891b6ed23817a5e9a08d8a3)" = commit ]
-[ "$(git -C "$D/repo" rev-parse 7e768a1ff1e121fed891b6ed23817a5e9a08d8a3^)" = 28c56f439c0c0fbf3554c8546cc86dbd88119125 ]
+git -C "$D/repo" checkout -q --detach d368b2601f06458349cfe3e84adfbf691994fcb3
+[ "$(git -C "$D/repo" cat-file -t c525286580c84d795b3ca7cbdf2302e96fce31ba)" = commit ]
+[ "$(git -C "$D/repo" rev-parse c525286580c84d795b3ca7cbdf2302e96fce31ba^)" = d368b2601f06458349cfe3e84adfbf691994fcb3 ]
 IMPL="$D/implementation"
 mkdir "$IMPL"
-git -C "$D/repo" archive 7e768a1ff1e121fed891b6ed23817a5e9a08d8a3 v2 | tar -x -C "$IMPL"
+git -C "$D/repo" archive c525286580c84d795b3ca7cbdf2302e96fce31ba v2 | tar -x -C "$IMPL"
 [ -z "$(git -C "$D/repo" status --porcelain --untracked-files=all)" ]
 # The old-base working tree is deliberate. The real apply checks out the pinned
 # implementation itself; no overlay, scratch commit or new_commit substitution.
 cp -a "$STORE/public/." "$D/public/"
-# Advance only the copied r82-open fixture to the r84 gate with synthetic old-
+# Advance only the copied r82-open fixture to the r86 gate with synthetic old-
 # code closes. Rewind the copied public archive before the first close so it
 # cannot observe later public rows.
 cp "$SRC" "$D/operator-state/journal.jsonl"
 cp -a /home/bb/scratch/kingx2-r082-live/sn120/v2/sn120_v2/envs/reserve/. "$D/reserve/"
 $PY -I -c 'import json,pathlib,sys; sys.path.insert(0,sys.argv[2]); from sn120_v2.canonical import canonical_json; from sn120_v2.state import load; from sn120_v2.store import LocalStore; from sn120_v2.pool_runtime import load_rotation; root=pathlib.Path(sys.argv[1]); state=load(root/"operator-state/journal.jsonl"); assert state.round and state.round.round_id=="r000082"; store=LocalStore(root); current=list(load_rotation(store,state.rotation_state_sha).retired_archive); public=json.loads(store.get("public/pool/retired.json")); assert public[:len(current)]==current; store.put("public/pool/retired.json",canonical_json(current)); print("dry fixture initial retired prefix",len(current),"of",len(public))' "$D" "$D/repo/v2"
-# Keep a valid, internally consistent source prefix in the packaged reserve,
-# while the runtime uses a separate deliberately advanced mirror. Its selection
-# happens after the old-base reset, immediately before skip-worktree is marked.
+# Keep a valid, internally consistent source prefix in the external live reserve.
+# No checkout step copies, removes, reseeds or modifies this independent state.
 SOURCE_ROWS=$($PY -I -c 'import pathlib,sys; print(len(pathlib.Path(sys.argv[1]).read_text().splitlines()))' "$D/reserve/MANIFEST.jsonl")
 KEEP_ROWS=$((SOURCE_ROWS-1))
 [ "$KEEP_ROWS" -ge 2 ] || { echo 'reserve fixture needs at least one retained shard' >&2; exit 64; }
+cp -a "$D/reserve/." "$D/live-reserve/"
+printf '%s\n' "$D/live-reserve" > "$D/reserve-live.path"
+printf '{"schema":"disposable-dry-prior-index","problems":{}}\n' > "$D/generator/prior-index.json"
+printf '{"dry_fixture":"preserve generator state"}\n' > "$D/generator/state.json"
+printf '{"dry_fixture":"preserve pending inbox evidence"}\n' > "$D/generator/inbox/pending.json"
+cat > "$D/here/check-generator" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+"$KINGX2_PY" -I -c 'import json,os,pathlib,sys; root=pathlib.Path(sys.argv[1]); expected=json.loads(pathlib.Path(sys.argv[2]).read_text()); paths=[root/"reserve-live.path",*sorted((root/"generator").rglob("*")),root/"generator/ingestd.lock"]; paths=[p for p in paths if p.is_file() and "ingestd.pid" not in p.parts]; actual={str(p.relative_to(root)):__import__("hashlib").sha256(p.read_bytes()).hexdigest() for p in paths}; assert actual==expected,{"before":expected,"after":actual}; identity=json.loads((root/sys.argv[3]/"ingestd-before.json").read_text()); assert (root/"generator/ingestd.pid").read_text().strip()==str(identity["pid"]); proc=pathlib.Path("/proc")/str(identity["pid"]); stat=(proc/"stat").read_text().rsplit(") ",1)[1].split(); assert int(stat[19])==identity["start_ticks"] and stat[0]!="Z"; print("GENERATOR/INGESTD PRESERVED",len(actual),"files; pid",identity["pid"],"start_ticks",identity["start_ticks"])' "$KINGX2_GENERATOR_ROOT" "$KINGX2_GENERATOR_EXPECTED" "${KINGX2_IDENTITY_DIR:-here}"
+SH
+chmod +x "$D/here/check-generator"
 cat > "$D/here/check-reserve" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-"$KINGX2_PY" -I -c 'import hashlib,json,pathlib,sys; root=pathlib.Path(sys.argv[1]); expected=json.loads(pathlib.Path(sys.argv[2]).read_text()); actual={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob("*") if p.is_file() and "__pycache__" not in p.parts}; assert actual==expected, {"missing":sorted(set(expected)-set(actual)),"added":sorted(set(actual)-set(expected)),"changed":sorted(k for k in set(actual)&set(expected) if actual[k]!=expected[k])}; print("RESERVE BYTES PRESERVED",len(actual),"files")' "$KINGX2_V2/sn120_v2/envs/reserve" "$KINGX2_RESERVE_EXPECTED"
+"$KINGX2_PY" -I -c 'import hashlib,json,pathlib,sys; root=pathlib.Path(sys.argv[1]); expected=json.loads(pathlib.Path(sys.argv[2]).read_text()); actual={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob("*") if p.is_file() and "__pycache__" not in p.parts}; assert actual==expected, {"missing":sorted(set(expected)-set(actual)),"added":sorted(set(actual)-set(expected)),"changed":sorted(k for k in set(actual)&set(expected) if actual[k]!=expected[k])}; print("RESERVE BYTES PRESERVED",len(actual),"files")' "$KINGX2_RESERVE_DIR" "$KINGX2_RESERVE_EXPECTED"
 SH
 chmod +x "$D/here/check-reserve"
 export KINGX2_RESERVE_EXPECTED="$D/reserve-prefix.json"
@@ -145,7 +155,7 @@ state = pathlib.Path(sys.argv[3])
 reserve = pathlib.Path(sys.argv[4])
 if mode in ("advance-gate", "close-gate"):
     if mode == "advance-gate":
-        for expected in ("r000082", "r000083"):
+        for expected in ("r000082", "r000083", "r000084", "r000085"):
             current = controller(store, state, reserve)
             assert current.state.round is not None and current.state.round.round_id == expected
             print("closed synthetic predecessor", close_current(store, state, reserve))
@@ -154,7 +164,7 @@ if mode in ("advance-gate", "close-gate"):
             print("opened synthetic predecessor", tickets[0].round_id)
     if mode == "close-gate":
         current = controller(store, state, reserve)
-        assert current.state.round is not None and current.state.round.round_id == "r000084"
+        assert current.state.round is not None and current.state.round.round_id == "r000086"
         print("closed synthetic gate", close_current(store, state, reserve))
 elif mode == "open-guard":
     # The genuine end-round CLI records a lease failure and its retry backoff.
@@ -184,6 +194,7 @@ elif mode == "end-round":
     if os.environ.get("KINGX2_DRY_STORE_RESULT_AFTER_OPEN") == "1":
         raise SystemExit(3)
     subprocess.run([str(store.root / "here/check-reserve")], check=True)
+    subprocess.run([str(store.root / "here/check-generator")], check=True, env=dict(os.environ, KINGX2_IDENTITY_DIR="here"))
     # The original helper directory is stable even when this invocation targets
     # the independent undecided rollback fixture.
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -194,11 +205,11 @@ elif mode == "end-round":
         (store.root / "work/logs/stored-result-refused").write_text(f"{record.round_id}\n" if (record := load(state / "journal.jsonl").round) else "stored result\n")
     raise SystemExit(answer)
 elif mode == "store-result":
-    # A guard test only: copy the synthetic r84 result under the open lease.
+    # A guard test only: copy the synthetic r86 result under the open lease.
     # Nothing is judged or deleted; rollback must refuse to discard it.
     record = load(state / "journal.jsonl").round
     lease = record.leases[0]
-    source = layout.sealed_result("r000084", "r000084-l0")
+    source = layout.sealed_result("r000086", "r000086-l0")
     target = layout.sealed_result(record.round_id, lease.lease_id)
     assert not store.exists(target)
     store.put(target, store.get(source))
@@ -346,6 +357,11 @@ SH
 chmod +x "$D/here/public-check"
 export KINGX2_DRY=1 KINGX2_V2="$D/repo/v2" KINGX2_HERE="$D/here" KINGX2_STATE="$D/operator-state" KINGX2_PY="$PY"
 export KINGX2_PUBLIC_ROOT="$D" KINGX2_LOOP_PIDFILE="$D/state-loop.pid" KINGX2_PHASES="$D/work/logs/phases.jsonl" KINGX2_WORK_DIR="$D/work"
+export KINGX2_RESERVE_PATH_FILE="$D/reserve-live.path" KINGX2_RESERVE_DIR="$D/live-reserve"
+export KINGX2_GENERATOR_ROOT="$D" KINGX2_GENERATOR_INBOX="$D/generator/inbox" KINGX2_GENERATOR_PID="$D/generator/ingestd.pid" KINGX2_PRIOR_INDEX="$D/generator/prior-index.json"
+export KINGX2_GENERATOR_EXPECTED="$D/generator-before.json" KINGX2_IDENTITY_DIR=here
+export SN120_RESERVE_PATH_FILE="$D/reserve-live.path" SN120_GENERATOR_INBOX="$D/generator/inbox" SN120_GENERATOR_LOG="$D/generator/ingestd.log"
+export SN120_GENERATOR_LOCK="$D/generator/ingestd.lock" SN120_GENERATOR_POLL_S=120 SN120_PUBLIC_URL=http://127.0.0.1:9
 unset PYTHONPATH
 # This is the same fixed command construction as production autodeploy. There
 # is deliberately no OP environment variable or alternate entry-point command.
@@ -367,42 +383,108 @@ chmod +x "$D/here/open-check"
 # Copy the exact kit from the qualified branch head, not working-tree files.
 git -C "$D/repo" archive "$HEAD" v2/tools/kingx2-deploy | tar -x -C "$D/here" --strip-components=3
 $PY -I -c 'import hashlib,pathlib,sys; left=pathlib.Path(sys.argv[1]); right=pathlib.Path(sys.argv[2]); names={x.name for x in right.iterdir() if x.is_file()}; assert len(names)==8,names; changed=[n for n in names if not (left/n).is_file() or hashlib.sha256((left/n).read_bytes()).digest()!=hashlib.sha256((right/n).read_bytes()).digest()]; assert not changed,changed; print("committed kit byte comparison",len(names),"files identical")' "$D/here" "$KIT"
-printf 'qualified branch head %s; implementation %s\n' "$HEAD" 7e768a1ff1e121fed891b6ed23817a5e9a08d8a3
+printf 'qualified branch head %s; implementation %s\n' "$HEAD" c525286580c84d795b3ca7cbdf2302e96fce31ba
 printf '== Python 3.12 stdlib-shadowing regression: renamed entry point plus -I ==\n'
-$PY -I -c 'import json,operator,pathlib,sys; assert sys.version_info[:2]==(3,12),sys.version; assert operator.__file__.startswith("/usr/lib/python3.12/"),operator.__file__; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert d["new_commit"]=="7e768a1ff1e121fed891b6ed23817a5e9a08d8a3"; print("Python",sys.version.split()[0],"stdlib operator",operator.__file__)' "$D/here/expect.json"
+$PY -I -c 'import json,operator,pathlib,sys; assert sys.version_info[:2]==(3,12),sys.version; assert operator.__file__.startswith("/usr/lib/python3.12/"),operator.__file__; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert d["new_commit"]=="c525286580c84d795b3ca7cbdf2302e96fce31ba"; print("Python",sys.version.split()[0],"stdlib operator",operator.__file__)' "$D/here/expect.json"
 export KINGX2_DRY=1 KINGX2_V2="$D/repo/v2" KINGX2_HERE="$D/here" KINGX2_STATE="$D/operator-state" KINGX2_PY="$PY"
 export KINGX2_PUBLIC_ROOT="$D" KINGX2_LOOP_PIDFILE="$D/state-loop.pid" KINGX2_PHASES="$D/work/logs/phases.jsonl" KINGX2_WORK_DIR="$D/work"
 "${OP[@]}" work-dir
 "${OP[@]}" loop-count
 "${OP[@]}" journal-close r000082 > "$D/entrypoint-journal-close.json"
 "${OP[@]}" facts
-$PY -I -c 'import json,pathlib,sys; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert d["new_commit"]=="7e768a1ff1e121fed891b6ed23817a5e9a08d8a3" and d["gate_round"]=="r000084"; d["public_retry_seconds"]=120; pathlib.Path(sys.argv[1]).write_text(json.dumps(d,indent=2,sort_keys=True)+"\n"); print("implementation pin preserved; only isolated public retry shortened")' "$D/here/expect.json"
+$PY -I -c 'import json,pathlib,sys; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert d["new_commit"]=="c525286580c84d795b3ca7cbdf2302e96fce31ba" and d["gate_round"]=="r000086"; d["public_retry_seconds"]=120; pathlib.Path(sys.argv[1]).write_text(json.dumps(d,indent=2,sort_keys=True)+"\n"); print("implementation pin preserved; only isolated public retry shortened")' "$D/here/expect.json"
 printf '== copied operator command dispatch must use its round argument ==\n'
 $PY -I "$D/helpers/replay.py" advance-gate "$D" "$D/operator-state" "$D/reserve"
-$PY -I -c 'import json,pathlib,sys; sys.path.insert(0,sys.argv[2]); from sn120_v2.canonical import canonical_json; from sn120_v2.state import load; from sn120_v2.store import LocalStore; from sn120_v2.pool_runtime import load_rotation; root=pathlib.Path(sys.argv[1]); state=load(root/"operator-state/journal.jsonl"); assert state.round and state.round.round_id=="r000084"; store=LocalStore(root); current=list(load_rotation(store,state.rotation_state_sha).retired_archive); public=json.loads(store.get("public/pool/retired.json")); assert public[:len(current)]==current; store.put("public/pool/retired.json",canonical_json(current)); print("dry fixture retired prefix",len(current),"of",len(public))' "$D" "$D/repo/v2"
-"${OP[@]}" journal-open r000085 > "$D/dispatch-journal-open.json"
-$PY -I -c 'import json,sys; row=json.load(open(sys.argv[1])); assert row["expected"]=="r000085" and row["round"]=="r000084", row; print("dispatch journal-open",row["expected"],"observed",row["round"])' "$D/dispatch-journal-open.json"
-"${OP[@]}" journal-close r000084 > "$D/dispatch-journal-close.json"
-$PY -I -c 'import json,sys; row=json.load(open(sys.argv[1])); assert row["round"]=="r000084", row' "$D/dispatch-journal-close.json"
-git -C "$D/repo" reset --hard -q 28c56f439c0c0fbf3554c8546cc86dbd88119125
-# Reset restores the full tracked manifest; select the mutable prefix only now.
-$PY -I -c 'import json,pathlib,sys; root=pathlib.Path(sys.argv[1]); rows=(root/"MANIFEST.jsonl").read_text().splitlines(keepends=True); selected=rows[:-2]+rows[-1:]; assert len(selected)>1 and "shard" in json.loads(selected[-2]); (root/"MANIFEST.jsonl").write_text("".join(selected)); listed={json.loads(row)["shard"] for row in selected[:-1]}; [path.unlink() for path in (root/"shards").iterdir() if path.is_file() and path.name not in listed]' "$D/repo/v2/sn120_v2/envs/reserve"
-$PY -I -c 'import pathlib,sys; from hashlib import sha256; root=pathlib.Path(sys.argv[1]); rows={str(p.relative_to(root)):sha256(p.read_bytes()).hexdigest() for p in root.rglob("*") if p.is_file() and "__pycache__" not in p.parts}; pathlib.Path(sys.argv[2]).write_text(__import__("json").dumps(rows,sort_keys=True)); print("reserve preservation fixture",len(rows),"files, source prefix retained")' "$D/repo/v2/sn120_v2/envs/reserve" "$D/reserve-prefix.json"
-# The real production checkout contains ignored mutable reserve files that
-# survive checkout. Mark every tracked baseline reserve file skip-worktree in
-# this SCRATCH checkout only: git then accepts the selected prefix as a clean
-# worktree and does not restore the omitted baseline files during checkout.
-# The implementation commit's tree remains the exact base plus implementation;
-# the real operator must still save, restore and verify the mutable bytes.
-$PY -I -c 'import json,pathlib,subprocess,sys; root=pathlib.Path(sys.argv[1]); repo=pathlib.Path(sys.argv[2]); expected=set(json.loads(pathlib.Path(sys.argv[3]).read_text())); tracked=subprocess.check_output(["git","-C",str(repo),"ls-files","-z","--",str(root)],text=True).split("\0"); paths=[p for p in tracked if p]; subprocess.run(["git","-C",str(repo),"update-index","--skip-worktree","--",*paths],check=True); [p.unlink() for p in sorted(root.rglob("*")) if p.is_file() and "__pycache__" not in p.parts and str(p.relative_to(root)) not in expected]; present={str(p.relative_to(root)) for p in root.rglob("*") if p.is_file() and "__pycache__" not in p.parts}; assert present==expected, {"missing":sorted(expected-present),"added":sorted(present-expected)}; [p.unlink() for p in root.glob("**/*.pyc")]; print("mutable reserve cache",len(expected),"files; scratch skip-worktree baseline files",len(paths))' "$D/repo/v2/sn120_v2/envs/reserve" "$D/repo" "$D/reserve-prefix.json"
-printf 'v2/sn120_v2/envs/reserve/\n' >> "$D/repo/.git/info/exclude"
+$PY -I -c 'import json,pathlib,sys; sys.path.insert(0,sys.argv[2]); from sn120_v2.canonical import canonical_json; from sn120_v2.state import load; from sn120_v2.store import LocalStore; from sn120_v2.pool_runtime import load_rotation; root=pathlib.Path(sys.argv[1]); state=load(root/"operator-state/journal.jsonl"); assert state.round and state.round.round_id=="r000086"; store=LocalStore(root); current=list(load_rotation(store,state.rotation_state_sha).retired_archive); public=json.loads(store.get("public/pool/retired.json")); assert public[:len(current)]==current; store.put("public/pool/retired.json",canonical_json(current)); print("dry fixture retired prefix",len(current),"of",len(public))' "$D" "$D/repo/v2"
+"${OP[@]}" journal-open r000087 > "$D/dispatch-journal-open.json"
+$PY -I -c 'import json,sys; row=json.load(open(sys.argv[1])); assert row["expected"]=="r000087" and row["round"]=="r000086", row; print("dispatch journal-open",row["expected"],"observed",row["round"])' "$D/dispatch-journal-open.json"
+"${OP[@]}" journal-close r000085 > "$D/dispatch-journal-close.json"
+$PY -I -c 'import json,sys; row=json.load(open(sys.argv[1])); assert row["round"]=="r000085", row' "$D/dispatch-journal-close.json"
+git -C "$D/repo" reset --hard -q d368b2601f06458349cfe3e84adfbf691994fcb3
+# Select a valid external-reserve prefix. This is outside the deployment
+# checkout, so checkout cannot replace its manifest or remove later shards.
+$PY -I -c 'import json,pathlib,sys; root=pathlib.Path(sys.argv[1]); rows=(root/"MANIFEST.jsonl").read_text().splitlines(keepends=True); selected=rows[:-2]+rows[-1:]; assert len(selected)>1 and "shard" in json.loads(selected[-2]); (root/"MANIFEST.jsonl").write_text("".join(selected)); listed={json.loads(row)["shard"] for row in selected[:-1]}; [path.unlink() for path in (root/"shards").iterdir() if path.is_file() and path.name not in listed]' "$D/live-reserve"
+$PY -I -c 'import pathlib,sys; from hashlib import sha256; root=pathlib.Path(sys.argv[1]); rows={str(p.relative_to(root)):sha256(p.read_bytes()).hexdigest() for p in root.rglob("*") if p.is_file() and "__pycache__" not in p.parts}; pathlib.Path(sys.argv[2]).write_text(__import__("json").dumps(rows,sort_keys=True)); print("external reserve preservation fixture",len(rows),"files")' "$D/live-reserve" "$D/reserve-prefix.json"
+$D/here/check-reserve
+# Start one real disposable ingestd using genfeed's setsid/nohup construction.
+# The empty inbox means it cannot fetch or ingest anything during the rehearsal.
+mkdir -p "$D/work/competitor/genfeed-deploy"
+printf '#!/usr/bin/env bash\nsleep 1200\n' > "$D/work/competitor/genfeed-deploy/autodeploy.sh"
+cleanup(){
+    if [ -f "$D/competitor.pid" ]; then kill -TERM "$(cat "$D/competitor.pid")" 2>/dev/null || true; fi
+    if [ -f "$D/driver.pid" ]; then kill "$(cat "$D/driver.pid")" 2>/dev/null || true; fi
+    rm -f "$D/state-loop.pid" "$D/work/logs/run-loop.stop-after-round"
+    if [ -f "$D/generator/ingestd.pid" ]; then
+        pid=$(cat "$D/generator/ingestd.pid")
+        if [ -r "/proc/$pid/cmdline" ] && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q "$D/repo/v2/systemd/generator-ingestd.sh"; then
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    fi
+}
+trap cleanup EXIT
+INGESTD_SCRIPT="$D/repo/v2/systemd/generator-ingestd.sh"
+$PY -I - "$D/repo/v2" "$INGESTD_SCRIPT" "$D/generator/prior-index.json" "$D/generator/ingestd.log" "$D/generator/ingestd.pid" <<'PY'
+import os, shlex, subprocess, sys
+v2, script, index, logfile, pidfile = sys.argv[1:]
+# This is ol_operator.start_ingestd's exact shell and detached-launch shape.
+command = (f"exec setsid nohup bash {shlex.quote(script)} {shlex.quote(sys.executable)} "
+           f"{shlex.quote(index)} >> {shlex.quote(logfile)} 2>&1 < /dev/null & "
+           f"echo $! > {shlex.quote(pidfile)}")
+with open("/dev/null", "rb") as null:
+    subprocess.Popen(["bash", "-c", command], cwd=v2, env=os.environ,
+                     stdin=null, start_new_session=True).wait(timeout=15)
+PY
+for _ in $(seq 1 100); do [ -s "$D/generator/ingestd.pid" ] && break; sleep .05; done
+[ -s "$D/generator/ingestd.pid" ]
+INGESTD=$(cat "$D/generator/ingestd.pid")
+[ "$INGESTD" -gt 1 ]
+kill -0 "$INGESTD"
+"${OP[@]}" generator-check > "$D/ingestd-launch-check.json"
+$PY -I -c 'import json,sys; row=json.load(open(sys.argv[1])); assert row["ok"] and row["ingestd"]["running"]; print("disposable ingestd launch identity verified",row["ingestd"]["pid"],row["ingestd"]["start_ticks"])' "$D/ingestd-launch-check.json"
+# The initial shared-lock verification creates the normal empty .ingest.lock
+# coordination file. Refresh the strict baseline after that known side effect;
+# every later check then requires the lock and all reserve bytes to survive.
+$PY -I -c 'import pathlib,sys; from hashlib import sha256; root=pathlib.Path(sys.argv[1]); rows={str(p.relative_to(root)):sha256(p.read_bytes()).hexdigest() for p in root.rglob("*") if p.is_file() and "__pycache__" not in p.parts}; assert rows.get(".ingest.lock")==sha256(b"").hexdigest(),rows; pathlib.Path(sys.argv[2]).write_text(__import__("json").dumps(rows,sort_keys=True)); print("external reserve baseline after initial shared-lock verification",len(rows),"files")' "$D/live-reserve" "$D/reserve-prefix.json"
+$D/here/check-reserve
+# Launch a disposable stand-in for the already-live genfeed autodeploy. The
+# copied operator must refuse it before changing code, params or the run loop.
+bash "$D/work/competitor/genfeed-deploy/autodeploy.sh" > "$D/competing-deploy.log" 2>&1 &
+COMPETITOR=$!
+printf '%s\n' "$COMPETITOR" > "$D/competitor.pid"
+printf '== competing genfeed deploy must refuse before any mutation ==\n'
+if "${OP[@]}" deployment-guard > "$D/competing-guard.log" 2>&1; then echo 'competing genfeed autodeploy was not detected' >&2; exit 1; fi
+grep 'another genfeed/king-x2 deploy is alive' "$D/competing-guard.log"
+printf 'open: round r000086 is open\n' > "$D/work/logs/run.log"
+# Start already armed: this scenario must exit at the competing-deployment
+# guard, before the gate's old-loop stop request. The normal run below tests
+# the separate no-go wait independently.
+H="$D/here" V2DIR="$D/repo/v2" WD="$D/watchdog" bash -c 'touch "$H/go"; exec bash "$H/autodeploy"' > "$D/competing-autodeploy-outer.log" 2>&1 &
+COMPETING_AUTODEPLOY=$!
+for _ in $(seq 1 100); do grep -q 'another deployment is alive' "$D/competing-autodeploy-outer.log" 2>/dev/null && break; sleep .05; done
+if wait "$COMPETING_AUTODEPLOY"; then
+    echo 'armed autodeploy accepted a competing deploy' >&2; exit 1
+fi
+grep 'REFUSED: another deployment is alive; no stop request was made' "$D/competing-autodeploy-outer.log"
+[ ! -e "$D/work/logs/run-loop.stop-after-round" ]
+[ "$(git -C "$D/repo" rev-parse HEAD)" = d368b2601f06458349cfe3e84adfbf691994fcb3 ]
+kill -TERM "$COMPETITOR"
+wait "$COMPETITOR" 2>/dev/null || true
+rm -f "$D/competitor.pid"
+rm -f "$D/here/go"
+[ ! -e "$D/here/go" ]
+printf '%s DRY COMPETING-DEPLOY GUARD PASS: genfeed autodeploy refused before stop/code/params changes\n' "$(date -u +%FT%TZ)"
+# Hash only static generator state: ingestd's own log is expected to change on
+# its final disposable-process shutdown after all preservation assertions pass.
+$PY -I -c 'import hashlib,json,pathlib,sys; root=pathlib.Path(sys.argv[1]); paths=[root/"reserve-live.path",root/"generator/prior-index.json",root/"generator/state.json",root/"generator/inbox/pending.json",root/"generator/ingestd.lock",root/"generator/ingestd.log"]; paths=[p for p in paths if p.is_file()]; rows={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}; pathlib.Path(sys.argv[2]).write_text(json.dumps(rows,sort_keys=True)); print("generator static state",len(rows),"files fingerprinted")' "$D" "$D/generator-before.json"
+"${OP[@]}" generator-check > "$D/generator-check.json"
+$PY -I -c 'import json,pathlib,sys; row=json.load(open(sys.argv[1])); assert row["ok"] and row["ingestd"]["running"] and row["ingestd"]["pid"]==int(pathlib.Path(sys.argv[2]).read_text()); pathlib.Path(sys.argv[3]).write_text(json.dumps(row["ingestd"],sort_keys=True,indent=2)+"\n"); print("real disposable ingestd identity",row["ingestd"]["pid"],row["ingestd"]["start_ticks"])' "$D/generator-check.json" "$D/generator/ingestd.pid" "$D/here/ingestd-before.json"
+"${OP[@]}" start-ingestd
+$D/here/check-generator
 # All helper modules live outside the checkout; no dry_stack.py exists there.
 [ ! -e "$D/repo/v2/dry_stack.py" ]
 export H="$D/here" V2DIR="$D/repo/v2" RUNLOG="$D/work/logs/run.log" STOPF="$D/work/logs/run-loop.stop-after-round" WD="$D/watchdog"
 export S=0.002 POLL=1 STOP_WAIT=120 FIRST_OPEN_WAIT=180 HEALTH_WAIT=180
 unset GATE_WANT
-cleanup(){ [ ! -f "$D/driver.pid" ] || kill "$(cat "$D/driver.pid")" 2>/dev/null || true; rm -f "$D/state-loop.pid" "$D/work/logs/run-loop.stop-after-round"; }
-trap cleanup EXIT
 cleanup_children(){ for child in "$DEPLOY" "$DRIVER"; do pkill -TERM -P "$child" 2>/dev/null || true; kill -TERM "$child" 2>/dev/null || true; done; }
 trap 'cleanup_children; trap - INT TERM HUP; cleanup; exit 130' INT TERM HUP
 printf '== real autodeploy must wait for go before touching the fixture ==\n'
@@ -411,11 +493,11 @@ bash "${TRACE[@]}" "$D/here/autodeploy" > "$D/autodeploy-outer.log" 2>&1 &
 DEPLOY=$!
 sleep 2
 [ ! -e "$D/work/logs/run-loop.stop-after-round" ]
-printf '== synthetic old-params r84 gate close on separate operator journal ==\n'
+printf '== synthetic old-params r86 gate close on separate operator journal ==\n'
 $PY -I "$D/helpers/replay.py" close-gate "$D" "$D/operator-state" "$D/reserve"
-"${OP[@]}" journal-open r000085 > "$D/dispatch-open-pending.json"
+"${OP[@]}" journal-open r000087 > "$D/dispatch-open-pending.json"
 $PY -I -c 'import json,sys; row=json.load(open(sys.argv[1])); assert row["round"] is None and not row["ok"] and any("waiting for expected next open" in why for why in row["why"]), row; print("dispatch pending-open wait",row["expected"],"after",row["last_closed"])' "$D/dispatch-open-pending.json"
-printf 'open: round r000084 is open\n' > "$D/work/logs/run.log"
+printf 'open: round r000086 is open\n' > "$D/work/logs/run.log"
 $PY -I "$D/helpers/replay.py" drive "$D" "$D/operator-state" "$D/reserve" > "$D/driver.log" 2>&1 &
 DRIVER=$!
 printf '%s\n' "$DRIVER" > "$D/state-loop.pid"
@@ -442,24 +524,27 @@ if [ "${KINGX2_DRY_ABORT_AFTER_OPEN:-0}" = 1 ] || [ "${KINGX2_DRY_STORE_RESULT_A
         grep 'has sealed result(s) on lease(s)' "$D/here/autodeploy.log"
         grep 'ROLLBACK FAILED: old commit/params not verified; no loop started under unrecovered code; watchdog remains disarmed' "$D/here/autodeploy.log"
         [ ! -e "$D/state-loop.pid" ] || { echo 'sealed-result refusal must not start a false old loop' >&2; exit 1; }
-        [ "$(git -C "$D/repo" rev-parse HEAD)" = 7e768a1ff1e121fed891b6ed23817a5e9a08d8a3 ]
+        [ "$(git -C "$D/repo" rev-parse HEAD)" = c525286580c84d795b3ca7cbdf2302e96fce31ba ]
         [ "$($PY -I -c 'import sys; sys.path.insert(0,sys.argv[1]); from sn120_v2.state import load; print(load(sys.argv[2]).params.params_hash)' "$D/repo/v2" "$D/operator-state/journal.jsonl")" = "$($PY -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["new_params_hash"])' "$KIT/expect.json")" ]
-        [ -f "$D/private/rounds/r000085/r000085-l0/result.json" ]
+        [ -f "$D/private/rounds/r000087/r000087-l0/result.json" ]
         if [ "${KINGX2_DRY_FAILED_LEASE:-0}" = 1 ]; then
-            $PY -I -c 'import sys; sys.path.insert(0,sys.argv[1]); from sn120_v2.state import load; state=load(sys.argv[2]); assert state.round is not None and state.round.round_id=="r000085"; assert state.round.leases[0].status=="failed"; print("failed lease remains open with its sealed result")' "$D/repo/v2" "$D/operator-state/journal.jsonl"
+            $PY -I -c 'import sys; sys.path.insert(0,sys.argv[1]); from sn120_v2.state import load; state=load(sys.argv[2]); assert state.round is not None and state.round.round_id=="r000087"; assert state.round.leases[0].status=="failed"; print("failed lease remains open with its sealed result")' "$D/repo/v2" "$D/operator-state/journal.jsonl"
         fi
         printf '%s DRY STORED-RESULT AUTODEPLOY PASS: rollback refused, evidence/code/params preserved, no false recovery\n' "$(date -u +%FT%TZ)"
         [ -e "$D/watchdog/DISARM" ]
         grep 'watchdog remains DISARMED: recovery is blocked or unverified' "$D/here/autodeploy.log"
     else
-        grep 'ended undecided r000085 with no_decision; no stored result was discarded' "$D/here/autodeploy.log"
+        grep 'ended undecided r000087 with no_decision; no stored result was discarded' "$D/here/autodeploy.log"
         grep 'old-code loop started after rollback' "$D/here/autodeploy.log"
-        [ "$(git -C "$D/repo" rev-parse HEAD)" = 28c56f439c0c0fbf3554c8546cc86dbd88119125 ]
+        [ "$(git -C "$D/repo" rev-parse HEAD)" = d368b2601f06458349cfe3e84adfbf691994fcb3 ]
         # Old code cannot replay the journal's historical new-params record,
         # even though rollback has restored old params. Check both fields with
         # the compatible implementation schema, then verify old code's hash.
-        [ "$($PY -I -c 'import sys; sys.path.insert(0,sys.argv[1]); from sn120_v2.state import load; s=load(sys.argv[2]); assert s.round is None and s.rounds[-1].round_id == "r000085" and s.rounds[-1].outcome == "no_decision"; print(s.params.params_hash)' "$IMPL/v2" "$D/operator-state/journal.jsonl")" = 94f931588114f335814231409938f39f2056893708bc798e90f1f7676920a35c ]
-        [ "$(find "$D/private/rounds/r000085" -name result.json 2>/dev/null | wc -l)" = 0 ]
+        [ "$($PY -I -c 'import sys; sys.path.insert(0,sys.argv[1]); from sn120_v2.state import load; s=load(sys.argv[2]); assert s.round is None and s.rounds[-1].round_id == "r000087" and s.rounds[-1].outcome == "no_decision"; print(s.params.params_hash)' "$IMPL/v2" "$D/operator-state/journal.jsonl")" = 94f931588114f335814231409938f39f2056893708bc798e90f1f7676920a35c ]
+        [ "$(find "$D/private/rounds/r000087" -name result.json 2>/dev/null | wc -l)" = 0 ]
+        $D/here/check-reserve
+        $D/here/check-generator
+        printf '%s DRY ROLLBACK GENERATOR PRESERVATION PASS: same ingestd and reserve-live/generator state after old params/code restore\n' "$(date -u +%FT%TZ)"
         [ "$("${OP[@]}" loop-count)" = 1 ]
         printf '%s DRY POST-OPEN ROLLBACK PASS: no_decision only, old params then old code, one old loop\n' "$(date -u +%FT%TZ)"
     fi
@@ -476,7 +561,8 @@ fi
 [ "$RC" = 0 ] || { printf 'autodeploy failed rc=%s\n' "$RC"; exit "$RC"; }
 grep '^.* PASS: king-x2 ' "$D/here/autodeploy.log"
 $D/here/check-reserve
-printf '== public active-pool content mismatch must fail closed ==\n'
+$D/here/check-generator
+printf '%s DRY GENERATOR PRESERVATION PASS: same ingestd pid/start, reserve selector/state/inbox intact through apply\n' "$(date -u +%FT%TZ)"
 RID=$($PY -I -c 'import json,sys; from pathlib import Path; files=list(Path(sys.argv[1]).glob("health-r[0-9][0-9][0-9][0-9][0-9][0-9].json")); assert len(files)==1,files; row=json.loads(files[0].read_text()); assert row["ok"],row; print(row["round"])' "$D/here")
 ACTIVE_KEY=$($PY -I -c 'import json,sys; sys.path.insert(0,sys.argv[2]); from sn120_v2.journal import read_journal; rows=read_journal(sys.argv[1]); row=next(row for row in rows if row.kind=="round_opened" and row.data["round"]["round_id"]==sys.argv[3]); print("public/pool/active/"+row.data["round"]["rotation"]["active_sha"]+".json")' "$D/operator-state/journal.jsonl" "$D/repo/v2" "$RID")
 cp "$D/$ACTIVE_KEY" "$D/active-before.json"
@@ -502,13 +588,15 @@ cp -al "$D/private" "$U/private"
 cp -al "$D/reserve" "$U/reserve"
 mkdir -p "$U/state" "$U/here" "$U/work/logs"
 cp -al "$D/here/check-reserve" "$U/here/check-reserve"
+cp -al "$D/here/check-generator" "$U/here/check-generator"
+cp -al "$D/here/ingestd-before.json" "$U/here/ingestd-before.json"
 cp "$SNAP/journal.jsonl" "$U/state/journal.jsonl"
 cp "$D/here/expect.json" "$D/here/old-params.json" "$D/here/new-params.json" "$U/here/"
 printf '== rollback must preserve a stored result and its new-code journal ==\n'
 rm -f "$D/state-loop.pid" "$D/work/logs/run-loop.stop-after-round" "$D/work/logs/stored-result-refused"
 $PY -I "$D/helpers/replay.py" store-result "$D" "$D/operator-state" "$D/reserve"
 BEFORE=$(sha256sum "$D/operator-state/journal.jsonl" "$D/repo/v2/sn120_v2/params.py")
-SEALED="$D/private/rounds/r000086/r000086-l0/result.json"
+SEALED="$D/private/rounds/r000088/r000088-l0/result.json"
 [ -f "$SEALED" ] || { echo 'stored-result fixture has no sealed result' >&2; exit 1; }
 BEFORE_RESULT=$(sha256sum "$SEALED")
 if "${OP[@]}" rollback > "$D/stored-result-rollback.log" 2>&1; then echo 'rollback must not discard a sealed result' >&2; exit 1; fi
@@ -525,19 +613,20 @@ fi
 printf '%s DRY STORED-RESULT GUARD PASS: refused; journal, params, new code and sealed evidence unchanged\n' "$(date -u +%FT%TZ)"
 printf '== explicit rollback on a separate genuinely undecided fixture ==\n'
 # Keep the successful sealed-evidence journal and object tree immutable. This
-# independent copy starts before the guard stores its result, with r000086 open
+# independent copy starts before the guard stores its result, with r000088 open
 # and undecided. All store writes use atomic replacement, so hard-linked source
 # objects remain unchanged; rollback cannot see the sealed fixture's evidence.
 # Its own HERE avoids rollback-target and reserve-backup name collisions.
-[ ! -e "$U/private/rounds/r000086/r000086-l0/result.json" ]
+[ ! -e "$U/private/rounds/r000088/r000088-l0/result.json" ]
 SEALED_JOURNAL=$(sha256sum "$D/operator-state/journal.jsonl")
-UOP=(env "KINGX2_HERE=$U/here" "KINGX2_STATE=$U/state" "KINGX2_PUBLIC_ROOT=$U" "KINGX2_DRY_SET_PARAMS=$PY -I $D/helpers/cli.py set-params --state-dir $U/state --stack dry_stack:stack --params" "KINGX2_DRY_END_ROUND=$PY -I $D/helpers/replay.py end-round $U $U/state $D/reserve" "$PY" -I "$D/here/kx2_operator.py")
+UOP=(env "KINGX2_HERE=$U/here" "KINGX2_STATE=$U/state" "KINGX2_PUBLIC_ROOT=$U" "KINGX2_IDENTITY_DIR=undecided/here" "KINGX2_DRY_SET_PARAMS=$PY -I $D/helpers/cli.py set-params --state-dir $U/state --stack dry_stack:stack --params" "KINGX2_DRY_END_ROUND=$PY -I $D/helpers/replay.py end-round $U $U/state $D/reserve" "$PY" -I "$D/here/kx2_operator.py")
 "${UOP[@]}" rollback
-[ "$(git -C "$D/repo" rev-parse HEAD)" = 28c56f439c0c0fbf3554c8546cc86dbd88119125 ]
+[ "$(git -C "$D/repo" rev-parse HEAD)" = d368b2601f06458349cfe3e84adfbf691994fcb3 ]
 $D/here/check-reserve
-# The journal contains historical new-params fields even after restoring old
+$D/here/check-generator
+printf '%s DRY EXPLICIT-ROLLBACK GENERATOR PRESERVATION PASS: external reserve/generator unchanged\n' "$(date -u +%FT%TZ)"
 # params/code. Replay it with the compatible implementation schema, not old code.
-[ "$($PY -I -c 'import sys; sys.path.insert(0,sys.argv[1]); from sn120_v2.state import load; s=load(sys.argv[2]); assert s.round is None and s.rounds[-1].round_id=="r000086" and s.rounds[-1].outcome=="no_decision"; print(s.params.params_hash)' "$IMPL/v2" "$U/state/journal.jsonl")" = 94f931588114f335814231409938f39f2056893708bc798e90f1f7676920a35c ]
+[ "$($PY -I -c 'import sys; sys.path.insert(0,sys.argv[1]); from sn120_v2.state import load; s=load(sys.argv[2]); assert s.round is None and s.rounds[-1].round_id=="r000088" and s.rounds[-1].outcome=="no_decision"; print(s.params.params_hash)' "$IMPL/v2" "$U/state/journal.jsonl")" = 94f931588114f335814231409938f39f2056893708bc798e90f1f7676920a35c ]
 [ ! -e "$D/watchdog/DISARM" ]
 [ "$SEALED_JOURNAL" = "$(sha256sum "$D/operator-state/journal.jsonl")" ] || { echo 'the separate rollback must not alter the preserved journal' >&2; exit 1; }
 [ "$BEFORE_RESULT" = "$(sha256sum "$SEALED")" ]

@@ -1,9 +1,13 @@
 # Offline qualification — DEPLOY KIT (do not run against prod)
 
 This note records offline evidence, not deployment authorization or production
-health. The source base is `28c56f439c0c0fbf3554c8546cc86dbd88119125`.
+health. The deployed source base is
+`d368b2601f06458349cfe3e84adfbf691994fcb3`; the selected implementation is
+`c525286580c84d795b3ca7cbdf2302e96fce31ba`, its direct child. PR 307's kit head
+is `8716b7da`.
+
 No production service, chain write, R2 operation or secret access is part of
-these checks.
+these checks. All deployment tests use local fixtures only.
 
 ## Implementation identities
 
@@ -28,20 +32,58 @@ rule was Fisher and the king inherited the LoRA sample count. LoRA
 `samples_per_task=1`, 2,000 tasks,
 six-LoRA batch cap and 10,000-task rotation are unchanged.
 
+The complete genfeed consumer, `reserve/generator.py` and ingestd script are
+byte-identical between d368b260 and the selected implementation. The shared
+controller retains `open_and_publish`; the new `set_params` rebuild retains
+the stored IRT snapshot and live pool params. The `genfeed-deploy` directory is
+identical to PR 307 head 8716b7da on the final rebased branch.
+The rebased branch additionally includes the five files changed by PR 307 kit
+head 8716b7da exactly: `test_generator_deploy.py` and the four updated
+`genfeed-deploy` files. Those kit/test-only additions do not alter the GPU
+manifest or selected params.
+
+## Generator live-v2 verification
+
+Fresh isolated report: `/home/bb/scratch/kingx2-genfeed-rebase/genfeed-four-epochs-final.log`.
+The rebased consumer ingested the supplied live-v2 `.done` inputs offline:
+
+| Epoch | Rows | Kept | Schema rejects |
+| --- | ---: | ---: | ---: |
+| 20261120T0400Z | 885 | 318 | 0 |
+| 20261120T0800Z | 1,231 | 554 | 0 |
+| 20261120T1200Z | 679 | 408 | 0 |
+| 20261120T1600Z | 533 | 430 | 0 |
+| **Total supplied** | **3,328** | **1,710** | **0** |
+
+King revisions were `56bae61bb4fde8dc786567e1e833ff5d53f5203f537a32ff2d2ee1fbdfc2e810`
+for 0400Z/0800Z and `1433153044e242bf28583fe3d30c8e6ca8752ef19fa808b85e8bed4a4c4373e9`
+for 1200Z/1600Z. The input files' supplied SHA-256 values were checked before
+use; the new isolated reserve manifests have different byte identities from
+the other thread's run and are reported as this run's outputs, not claimed to
+be byte-identical to that run.
+
+**2000Z is not verified.** The other thread searched this host and could not
+supply a real 2000Z accepted JSONL plus `.done`/results artifact or substantiate
+the proposed `194` count. No expected-194 assertion is used or claimed. This is
+an explicit coverage limitation of the genfeed verification, not a fabricated
+pass.
+
 ## Replay and synthetic evidence
 
-- Historical report: `/home/bb/scratch/kingx2-live-history-v30/history.json`.
-  All 81 draws, public entry fields, public score fields and round metadata
-  matched; 33 public winner decisions and the fully reconstructible r027 IRT
-  update matched. Sixty-nine rounds lack private scored-LoRA outcomes needed
-  for a complete IRT recomputation. No standalone `round_scores` artifacts
-  exist; the score fields in `round.json` were compared instead. This is not
-  complete private decision/IRT recomputation.
-- Synthetic round: `/home/bb/scratch/kingx2-live-qualification-synthetic-final-v7/synthetic.json`.
+- Historical report: `/home/bb/scratch/kingx2-genfeed-rebase/tests-agent/history-final/history.json`
+  (log: `history-final.log`). The old r000001-r000081 snapshot passed the
+  available-input identity checker: all 81 public draws, public entry fields,
+  public score fields and round metadata matched, along with 33 public winner
+  decisions, 14 rotations and the fully reconstructible r027 IRT update.
+  Sixty-nine rounds lack private scored-LoRA outcomes needed for complete IRT
+  recomputation. No standalone score artifacts exist; score fields in
+  `round.json` were compared instead. This is not complete private decision/IRT
+  recomputation.
+- Synthetic round: `/home/bb/scratch/kingx2-genfeed-rebase/tests-agent/synthetic-run/synthetic.json`.
   Two king strings and one LoRA string give delta 0.75, SE
   0.14433756729740643, cap denominators 8/4 and an SE ratio 0.8628490455699164,
   near sqrt(0.75) = 0.8660254037844386 for comparable independent noise.
-- Next open: `/home/bb/scratch/kingx2-live-qualification-v25/next-open.json`.
+- Next open: `/home/bb/scratch/kingx2-genfeed-rebase/tests-agent/next-open-run/next-open.json`.
   The old/new opens have the same 10,000-task active set and rotation, the new
   params hash and sqrt-Fisher snapshot, and different intended draws.
 - Timing projection: `/home/bb/scratch/kingx2-timing-final.json`. Adding one
@@ -61,47 +103,75 @@ waived; the authenticated current generation was used for replay.
 
 ## Test and rehearsal logs
 
-- Exact-base suite: `/home/bb/scratch/kingx2-full-base-final.log`.
-- Branch suite: `/home/bb/scratch/kingx2-full-branch-final-v6.log` (completed
-  100%; exit 1 with only the two exact-base failures: the grader-lifecycle
-  missing-`capture` failure and the public-snapshot hash mismatch). No
-  branch-specific failure remains. The project's duplicate quiet flags omit an
-  aggregate pass count; the final named-failure list is the recorded result.
-  A branch-only contract-test assumption about default optional fields was
-  corrected without changing production bytes; the test now also requires
-  selected `null_samples_per_task=2` to be published.
-- Focused feature/import tests: `/home/bb/scratch/kingx2-final-focused-v8.log`
-  (**155 passed**, including the corrected publisher contract).
-- Successful complete isolated rehearsal: `/home/bb/scratch/kingx2-r082-live/kingx2-deploy-final-v30/dry-run.log`.
-  Cutover, first-round health, public tamper, sealed-result preservation,
-  independent undecided rollback and the decided-round guard all passed.
-- Forced abort: `/home/bb/scratch/kingx2-r082-live/kingx2-deploy-abort-final-v23/dry-run.log`.
-- Sealed-result guard: `/home/bb/scratch/kingx2-r082-live/kingx2-deploy-sealed-final-v22/dry-run.log`.
-- Failed-lease sealed-result guard: `/home/bb/scratch/kingx2-r082-live/kingx2-deploy-failed-lease-final-v23/dry-run.log`.
-- Pre-go disarm: `/home/bb/scratch/kingx2-r082-live/kingx2-disarm-final-v5/disarm-check.log`.
+- Exact-base full suite: `/home/bb/scratch/kingx2-genfeed-rebase/tests-agent/full-base.log`.
+- Selected-implementation full suite:
+  `/home/bb/scratch/kingx2-genfeed-rebase/tests-agent/full-impl.log`.
+  Implementation: **29 failed, 1559 passed, 1 skipped, 2 errors** (1,591
+  collected; 2,193.37s). Exact base: **29 failed, 1538 passed, 1 skipped,
+  2 errors** (1570 collected; 2,192.44s). Both suites exited nonzero. The
+  completed comparator report is
+  `/home/bb/scratch/kingx2-genfeed-rebase/tests-agent/full-suite-comparison.json`.
+  It captures all 29 named failures and two named setup errors on each side:
+  **zero implementation-only failures, zero base-only failures and zero
+  differing named-failure reasons**. The implementation collects one additional
+  restored genfeed-deploy test file; that file separately passes below.
+
+  The shared failures are one `test_grader_lifecycle` lazy-pool/round-close
+  failure, one `test_public_queue_files` snapshot-key byte-identity failure,
+  seven `test_pull_chain` historical-chain/link failures, eleven
+  `test_site_build` site/frozen-history failures and nine `test_site_pull`
+  layout/store/frozen-history failures. Their exact parametrized test IDs and
+  summary reasons are enumerated in the JSON comparator. The two shared setup
+  errors are
+  `test_adam_eps_reaches_both_training_paths_and_default_matches_the_old_optimizer[1]`
+  and `[3]`: both test fixtures attempt a historical `git show` outside a Git
+  worktree. This is a shared isolated-test-environment limitation, not evidence
+  that those trainer tests passed.
+- Focused feature/import tests: `/home/bb/scratch/kingx2-genfeed-rebase/tests-agent/focused.log`
+  (**175 passed in 150.98s**).
+- Restored PR 307 kit plus consumer regression tests:
+  `/home/bb/scratch/kingx2-genfeed-rebase/genfeed-focused.log`
+  (`tests/test_generator_deploy.py` and `tests/test_generator_feed.py`, exit 0,
+  fifteen passing tests).
+- Genfeed-aware deployment development fixture:
+  `/home/bb/scratch/kingx2-r086-genfeed/dev-normal-v3/dry-run.log`.
+  This uses a real detached ingestd from the selected copied checkout, a valid
+  external reserve and a real competing genfeed-named process. This development run reached the real autodeploy's r000087/r000088 health
+  PASS, then stopped at its strict reserve-byte comparison because the initial
+  read-only shared-lock verification had created the normal empty
+  `.ingest.lock` coordination file. No manifest, shard or generator state bytes
+  changed. The final harness takes its baseline immediately after that initial
+  verification and requires the empty lock and every reserve byte to remain
+  unchanged thereafter. The development run is not a complete qualification
+  PASS. Final PASS lines below come only from later committed-kit runs.
 
 The corrected entry point is `kx2_operator.py`, invoked with `python3 -I` to
 avoid stdlib `operator` shadowing and ambient import paths. `autodeploy` alone
 constructs that command; the rehearsal has no `OP` override. The gate default is
-read from `expect.json` and is `r000084`. The current committed-kit rehearsal
-uses implementation `7e768a1ff1e121fed891b6ed23817a5e9a08d8a3` directly: no
-scratch commit, working-tree overlay or `new_commit` substitution. Its helper
-modules live outside the deployment checkout and use explicit isolated imports.
+read from `expect.json` and is `r000086`. The committed-kit rehearsal uses
+implementation `c525286580c84d795b3ca7cbdf2302e96fce31ba` directly: no scratch
+commit, working-tree overlay or `new_commit` substitution. Helper modules live
+outside the deployment checkout and use explicit isolated imports.
 
 The rehearsal copies journal/public objects and simulates only the loop and its
-outcomes. It rewinds the copied append-only retired archive to the authenticated
-r000082 prefix before advancing through r000084 with synthetic old-code closes,
-then rewinds to r000084 before the gate close. It checks the new-code r000085
-close and r000086 open. Helper imports remain anchored outside the copied
-checkout, including for the independent rollback store. Compatible-schema
-synthetic follow-ups use the pinned implementation to read the journal's
-historical new-schema records after old params/code have been restored. It does
-not run a GPU workload, contact production or establish production health.
+outcomes. It advances the copied r000082-open journal through the r000086 gate
+with synthetic old-code closes, then checks the new-code r000087 close and
+r000088 open. The live reserve is an independent, valid local prefix selected by
+`reserve-live.path`; checkout never copies or reseeds it. The disposable ingestd
+uses genfeed's exact detached launch construction and the selected checkout's
+working directory. PID, full command and proc start ticks are checked through
+apply and rollback. The initial shared-lock read creates the normal empty
+`.ingest.lock`; the fixture fingerprints it before apply and requires it to
+survive. Generator selector, state, prior index, pending inbox and reserve
+files are fingerprinted independently of mutable future ingest appends.
+Compatible-schema synthetic follow-ups use the pinned implementation to read
+historical new-schema journal records after old params/code are restored. No
+GPU workload, production connection or production health claim is involved.
 
 Final committed-kit rehearsal destinations:
 
-- Normal: `/home/bb/scratch/kingx2-r084-final/final-normal/dry-run.log`.
-- Abort after open: `/home/bb/scratch/kingx2-r084-final/final-abort/dry-run.log`.
+- Normal: `/home/bb/scratch/kingx2-r086-genfeed/final-normal/dry-run.log`.
+- Abort after open: `/home/bb/scratch/kingx2-r086-genfeed/final-abort/dry-run.log`.
 
 Each run clones the exact final branch head and compares all eight kit files to
 its Git archive before proceeding. The `qualified branch head ...` line in each
