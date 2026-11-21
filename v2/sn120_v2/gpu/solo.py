@@ -432,9 +432,22 @@ class SoloRunner(LocalRunner):
                 if gpu in training_gpus:
                     return
                 previous = warm_futures.get(gpu)
+                if not params.eval_merged:
+                    if previous is not None and previous.done():
+                        try:
+                            previous.result()
+                        except Exception:  # the worker's ordinary startup retries a failed warm start
+                            pass
+                        else:
+                            return
+                    try:
+                        self.evaluator._serve_one(ticket.head, params, len(ticket.entries), gpu)
+                    except Exception:  # the worker below performs the normal startup retry
+                        pass
+                    return
                 if previous is not None and not previous.done():
                     return
-                model = scheduler.model_for_gpu(gpu) if params.eval_merged else NULL_MODEL
+                model = scheduler.model_for_gpu(gpu)
                 # A failed early start is retried here, not fatal to the round.
                 warm_futures[gpu] = warm_pool.submit(self.evaluator._serve_one, ticket.head, params, len(ticket.entries), gpu, model=model, base_dir=scheduler.merged_dir(model) if model != NULL_MODEL else None)
 
