@@ -768,6 +768,7 @@ class Controller:
     def _finish(self, now: int) -> None:
         record = self.state.round
         pairs, winner = self._leases(record, "done"), record.decision.winner
+        tested = next((entry for _, result in pairs for entry in result.entries if winner is not None and entry.queue_pos == winner.queue_pos), None)
         made = None
         if winner is not None and not record.applied:
             if self.overlap is not None:  # the chain read of the next open starts here, beside the fold
@@ -780,7 +781,7 @@ class Controller:
                 if record.apply_attempts + 1 >= self.params.apply_max_attempts:
                     return self._close(ABANDONED, pairs, now, f"apply failed {self.params.apply_max_attempts} times: {exc}")
                 return self._log(APPLY_DEFERRED, {"round_id": record.round_id, "reason": str(exc)}, now)
-        if fold_due(self.state.head, self.params) and not self.fold_if_due(now, in_round=True, made=made):
+        if fold_due(self.state.head, self.params) and not self.fold_if_due(now, in_round=True, made=made, tested=tested):
             return
         charged = any(entry.charged for entry in record.decision.entries)
         self._close(APPLIED if winner else (NULL if charged else NO_DECISION), pairs, now)
@@ -794,6 +795,9 @@ class Controller:
         ticket, result = next(pair for pair in pairs if any(e.queue_pos == winner.queue_pos for e in pair[0].entries))
         seat = next(e for e in ticket.entries if e.queue_pos == winner.queue_pos)
         artifact = next(e for e in result.entries if e.queue_pos == winner.queue_pos).lora
+        from .gpu.merged import assert_tested_result
+
+        assert_tested_result(ticket.params, next(e for e in result.entries if e.queue_pos == winner.queue_pos))
 
         def to_public() -> None:
             with timed(f"king of {record.round_id}: the winner's LoRA to public/"):
@@ -818,14 +822,14 @@ class Controller:
             head = stacked()
         else:
             head = stacked()
-            made = self._fold_beside(record, head, artifact, to_public, now)
+            made = self._fold_beside(record, head, artifact, to_public, now, tested=next(e for e in result.entries if e.queue_pos == winner.queue_pos))
         parent = self.state.manifest
         manifest = HeadManifest(head, parent.base_files, parent.master_files, parent.lora_files | {artifact.lora_hash: artifact.files})
         king = King(seat.reg.uid, seat.reg.hotkey, record.round_id, head.version_id, now, winner.score.z)
         self._log(HEAD_APPLIED, {"round_id": record.round_id, "manifest": manifest.to_dict(), "king": king.to_dict()}, now)
         return made
 
-    def _fold_beside(self, record: RoundRecord, head: HeadVersion, artifact: LoRAArtifact, to_public: Callable[[], None], now: int) -> FoldArtifact | None:
+    def _fold_beside(self, record: RoundRecord, head: HeadVersion, artifact: LoRAArtifact, to_public: Callable[[], None], now: int, tested=None) -> FoldArtifact | None:
         """``overlap``: fold ``head`` here while a second thread puts the winner's files in ``public/``.
 
         ``head`` is not in the journal yet. The fold reads the winner's LoRA from ``pending/``; its hash is
@@ -845,7 +849,8 @@ class Controller:
             if ahead is not None and pinned and fold_due(head, self.params) and now >= self._retry_at:
                 try:
                     with timed(f"fold of {head.version_id[:12]}: the box, beside the winner's files (the sum, the upload to pending/ and its check)"):
-                        made = ahead(head, self.params, layout.pending_fold_ahead_prefix(record.round_id), {artifact.lora_hash: artifact.prefix})
+                        kwargs = {"tested": tested} if self.params.eval_merged else {}
+                        made = ahead(head, self.params, layout.pending_fold_ahead_prefix(record.round_id), {artifact.lora_hash: artifact.prefix}, **kwargs)
                 except (InfraError, VerifyError, HeadMismatchError) as exc:
                     self.last_error, self._retry_at = f"fold failed: {exc}", now + self.params.apply_retry_s
         finally:
@@ -858,7 +863,7 @@ class Controller:
             raise
         return made
 
-    def fold_if_due(self, now: int, in_round: bool = False, made: FoldArtifact | None = None) -> bool:
+    def fold_if_due(self, now: int, in_round: bool = False, made: FoldArtifact | None = None, tested=None) -> bool:
         """Fold the stacked LoRAs into a new base when a fold is due. Returns True when the head is folded.
 
         ``made``: the fold of this head is done already (``_fold_beside``). Its staged files are under the round's prefix.
@@ -874,7 +879,7 @@ class Controller:
                 fold = made
             else:
                 with timed(f"fold of {head.version_id[:12]}: the box (the sum, the upload to pending/ and its check)"):
-                    fold = self.folder.fold(head, self.params, layout.pending_fold_prefix(head.version_id))
+                    fold = self.folder.fold(head, self.params, layout.pending_fold_prefix(head.version_id), **({"tested": tested} if self.params.eval_merged else {}))
             with timed(f"fold of {head.version_id[:12]}: the promotion of the base and the master, all steps"):
                 self.head.promote(self.store, fold)
             folded = fold_head(head, fold, now)

@@ -93,6 +93,11 @@ LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt
 # and the publisher runs with the standard library alone. Each is typed here; a test compares it with its source.
 OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps from recipe (default 1e-8), weight decay 0"  # gpu/train_job.py
 GRADER_VERSION = "math-verify-0.9.0+lenient-v1"  # envs/math_grader.py
+MERGED_EXPLANATION = (
+    "Each candidate is tested as the merged model round_bf16(fp32 king master + your LoRA update), "
+    "built with the same arithmetic as the install fold; the model that is tested is bit-for-bit the model that is installed. "
+    "Before this change the LoRA was applied at serving time on top of the rounded bf16 king, which rounded most of a small update away."
+)
 # How often the box tries a training or a chunk of the scoring that fails for a reason of its own.
 # The fixed cost of one update of a training (the Adam step, the sum of the gradients of the model copies, the copy of
 # the weights back to them), in seconds. An estimate for a LoRA of rank 64. No run has measured it.
@@ -248,7 +253,7 @@ def object_keys() -> dict[str, str]:
 def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, Any]:
     """The fixed rules in machine-readable form. Everything is derived from ``params`` and the two public addresses."""
     recipe = params.recipe
-    return {
+    doc = {
         "params_hash": params.params_hash,
         "recipe_id": params.recipe_id,
         "miner_settable": miner_settable(recipe),
@@ -278,6 +283,10 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "null_update_status": NULL_UPDATE,
             "min_signal_rollouts": "min_signal_rollouts; no implicit effective recipe.minibatches floor",
             "min_step_norm": params.min_step_norm,
+            "min_step_norm_rule": (
+                "static global_norm_cap and stored step_norm must be at least min_step_norm"
+                if params.min_step_norm > 0 else "no minimum norm; only a non-finite stored step_norm is null_update"
+            ),
             "public_cluster_member_fields": list(DUPLICATE_MEMBER_COLUMNS),
             "stages": DUPLICATE_STAGES,
         },
@@ -292,6 +301,15 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
         "code": REPO + "/tree/v2/v2",
         **({"pool_rotation_doc": REPO + "/blob/v2/v2/POOL_ROTATION.md"} if params.rotation_enabled else {}),
     }
+    if params.eval_merged:
+        doc["candidate_evaluation"] = {
+            "merged": True,
+            "model": "round_bf16(fp32 king master + your LoRA update)",
+            "tested_equals_installed": True,
+            "arithmetic": "the install fold kernel named in the head chain; the final base manifest hash is checked before install",
+            "explanation": MERGED_EXPLANATION,
+        }
+    return doc
 
 
 def refuse_private(value: Any, where: str = "snapshot") -> None:
@@ -327,16 +345,18 @@ def _recipe_lines(params: Params) -> list[str]:
     cap, cap_bound = recipe.global_norm_cap, recipe.bound("global_norm_cap")
     cap_now = "This recipe has none: there is no cap." if cap is None else f"It is {show(cap)} now."
     cap_yours = (
-        f"`train.global_norm_cap` sets the cap of your LoRA, from {show(cap_bound.low)} to {show(cap_bound.high)}. Values below"
-        f" {show(params.min_step_norm)} are invalid (`{NULL_UPDATE}`, section 5) even when the generic lower bound is smaller."
-        if cap_bound is not None and params.min_step_norm > cap_bound.low
-        else (
-            f"`train.global_norm_cap` sets the cap of your LoRA, from {show(cap_bound.low)} to {show(cap_bound.high)}. "
-            f"The separate minimum stored norm is {show(params.min_step_norm)}, so every valid cap passes static admission."
-            if cap_bound is not None
-            else "A file may not set a cap of its own now."
-        )
+        f"`train.global_norm_cap` sets the cap of your LoRA, from {show(cap_bound.low)} to {show(cap_bound.high)}."
+        if cap_bound is not None
+        else "A file may not set a cap of its own now."
     )
+    if cap_bound is not None:
+        if params.min_step_norm > 0:
+            cap_yours += (
+                f" Values below {show(params.min_step_norm)} are invalid (`{NULL_UPDATE}`, section 5) even when the generic lower"
+                " bound is smaller."
+            )
+        else:
+            cap_yours += " There is no minimum norm, so every valid nonnegative cap passes this static floor check."
     fields = [f.name for f in dataclasses.fields(recipe) if f.name != "miner_bounds"]
     rows = [(f"`{name}`", getattr(recipe, name), RECIPE_NOTES.get(name, "see the training code")) for name in fields]
     settable = [(f"`train.{row['key']}`", row["default"], row["allowed"]) for row in miner_settable(recipe)]
@@ -603,28 +623,45 @@ def _cluster_lines(record: Any, label: str) -> list[str]:
 def _duplicate_lines(params: Params) -> list[str]:
     enabled = "on" if params.dedup_enabled else "off"
     settable_keys = {row["key"] for row in miner_settable(params.recipe)}
+    signal_recipe = "`minibatches`" if "minibatches" in settable_keys else "minibatches"
     static_cap = "`train.global_norm_cap`" if "global_norm_cap" in settable_keys else "global_norm_cap"
-    no_norm_floor = params.min_step_norm == 0.0
+    signal = [
+        f"- Minimum signal: after `{NO_SIGNAL}` rejects a file in which nothing trains, `{MIN_ROLLOUTS}` rejects a file with fewer",
+        f"  than {params.min_signal_rollouts} rollouts with a nonzero advantage and at least one usable output token inside the training caps.",
+        f"  The configured minimum signal is {params.min_signal_rollouts}; {signal_recipe} adds no admission floor. With fewer active rows than",
+        "  requested minibatches, training makes fewer nonempty minibatches rather than rejecting the file. Without tokenizer checks no rollout",
+        "  is known to be dropped by the training caps. This admission rejection is invalid and uncharged: the seat keeps its place, and no",
+        "  training GPU is used. Upload a new file with enough signal rather than equal-reward filler, whose zero-advantage rows do not count.",
+    ]
+    static_norm = [
+        f"- Static null-update admission: `{NULL_UPDATE}` rejects {static_cap} below {show(params.min_step_norm)} (`min_step_norm`)",
+        "  before any training GPU work. The file is invalid, uncharged and keeps its seat. A cap equal to the floor passes",
+        "  this static test, but does not guarantee that training reaches it.",
+    ] if params.min_step_norm > 0 else []
+    stored_norm = [
+        f"- Stored null update: after training, a stored `step_norm` below {show(params.min_step_norm)}, or one that is not finite, is terminal",
+        f"  `{NULL_UPDATE}`. It is charged, cannot win or be paid, and is not a candidate or keeper in Stage B. The floor applies to",
+        "  the stored norm after any global cap, not to the uncapped gradient or to `step_norm_before_cap`.",
+    ] if params.min_step_norm > 0 else [
+        f"- Stored null update: after training, a stored `step_norm` that is not finite is terminal `{NULL_UPDATE}`. It is charged,",
+        "  cannot win or be paid, and is not a candidate or keeper in Stage B. There is no minimum norm.",
+    ]
+    subfloor = [
+        "- Why a sub-floor update cannot beat M except by luck: the trainer's first-order step changes the head by at most",
+        "  its small stored norm. The scoring noise and a favorable task sample can then produce a positive result even",
+        "  when the update carries no reproducible improvement. Without the floor, many tiny steps could win by chance",
+        "  and turn the payout into a lottery. The floor makes a charged entry show a material model change; it is not a",
+        "  guarantee that a larger update improves M.",
+    ] if params.min_step_norm > 0 else []
     return [
         "### Duplicate and null batches",
         "",
         "This section covers both the file-check rules and the terminal outcomes `duplicate` and `null_update`. A",
         "frozen file can also fail another admission rule first; the rule table above gives that order.",
         "",
-        f"- Minimum signal: after `{NO_SIGNAL}` rejects a file in which nothing trains, `{MIN_ROLLOUTS}` rejects a file with fewer",
-        f"  than {params.min_signal_rollouts} rollouts with a nonzero advantage and at least one usable output token inside the training caps.",
-        f"  The configured minimum signal is {params.min_signal_rollouts}; `recipe.minibatches` adds no admission floor. With fewer active rows than",
-        "  requested minibatches, training makes fewer nonempty minibatches rather than rejecting the file. Without tokenizer checks no rollout is",
-        "  known to be dropped by the training caps. This admission rejection is invalid and uncharged: the seat keeps its place, and no training",
-        "  GPU is used. Upload a new file with enough signal rather than equal-reward filler, whose zero-advantage rows do not count.",
-        f"- Static null-update admission: `{NULL_UPDATE}` rejects {static_cap} below {show(params.min_step_norm)} (`min_step_norm`)",
-        "  before any training GPU work. The file is invalid, uncharged and keeps its seat. A cap equal to the floor passes",
-        "  this static test, but does not guarantee that training reaches it.",
-        f"- Stored null update: after training, a stored `step_norm` below {show(params.min_step_norm)}, or one that is not finite, is terminal",
-        f"  `{NULL_UPDATE}`. It is charged, cannot win or be paid, and is not a candidate or keeper in Stage B. The floor applies to",
-        "  the stored norm after any global cap, not to the uncapped gradient or to `step_norm_before_cap`.",
-        *(["- No norm floor is active: because the floor is 0, every valid nonnegative cap and every finite stored norm passes these two floor checks.",
-           "  A non-finite stored norm remains a charged `null_update`."] if no_norm_floor else []),
+        *signal,
+        *static_norm,
+        *stored_norm,
         f"- Duplicate filtering is {enabled} (`dedup_enabled`). Stage A runs immediately after the files are frozen and before the",
         "  entropy read, training tickets or GPU work. Exact equal `batch_sha256` is a duplicate even when rollout evidence",
         "  is unavailable. Otherwise each rollout becomes a (prompt, output) pair: strip its ends, collapse each whitespace",
@@ -650,13 +687,7 @@ def _duplicate_lines(params: Params) -> list[str]:
         "  found before training as well as one found by Stage B. A duplicate never displaces its keeper merely by scoring",
         "  higher. Regenerated or rewritten rollouts are new evidence, not an exemption: judge them by the same hashes,",
         "  normalized sets and update cosine. Changing whitespace or rewards alone does not avoid normalized overlap.",
-        *(["- Finite zero and small stored updates are not rejected by a minimum-norm floor: this release deliberately leaves that filter off.",
-           "  Scoring still compares every update with M under the win rule below."] if no_norm_floor else [
-           "- Why a sub-floor update cannot beat M except by luck: the trainer's first-order step changes the head by at most",
-           "  its small stored norm. The scoring noise and a favorable task sample can then produce a positive result even",
-           "  when the update carries no reproducible improvement. Without the floor, many tiny steps could win by chance",
-           "  and turn the payout into a lottery. The floor makes a charged entry show a material model change; it is not a",
-           "  guarantee that a larger update improves M."]),
+        *subfloor,
         "- Public duplicate evidence never includes batch content, prompts, outputs, rewards or the normalized rollout",
         "  hashes. `duplicate_clusters` in the open/closed round objects of mining.json and in the round file has one",
         "  `keeper` and a `dropped` list for each cluster. Each member publishes `queue_pos`, `uid`, `hotkey`,",
@@ -763,7 +794,9 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"- `{SKIP}`: the trainer could not train the copy of your file, for example because a gradient or trained weight",
         "  was not finite. This training failure is uncharged and you keep your place. A non-finite stored `step_norm`",
         f"  that reaches judging is instead the charged `{NULL_UPDATE}` outcome described in section 5.",
-        f"- `{DUPLICATE}` and `{NULL_UPDATE}`: your frozen batch was a duplicate, or its stored update fell below the floor.",
+        f"- `{DUPLICATE}` and `{NULL_UPDATE}`: your frozen batch was a duplicate, or its stored update fell below the floor."
+        if params.min_step_norm > 0 else
+        f"- `{DUPLICATE}` and `{NULL_UPDATE}`: your frozen batch was a duplicate, or its stored `step_norm` was not finite.",
         "  These are charged terminal outcomes, not `skip`: the hotkey's turn is used, the entry cannot win or be paid,",
         "  and it does not return to the queue. The rules and evidence are in `Duplicate and null batches` (section 5).",
         f"- A round with the outcome `{ABANDONED}`: a winner was named, but its files could not be checked or applied.",
@@ -1062,7 +1095,8 @@ def _server_command(params: Params) -> list[str]:
     The address of the server is left out: it is local to the box and changes no score.
     """
     argv = server_argv("<directory of the base files>", 0, params, params.max_num_seqs)
-    argv[argv.index("--max-loras") + 1] = LORA_TABLE  # a value of the round, not of the parameters: gpu.evaluator.lora_table
+    if not params.eval_merged:
+        argv[argv.index("--max-loras") + 1] = LORA_TABLE  # a value of the round, not of the parameters: gpu.evaluator.lora_table
     start = argv.index("-m")
     options: list[list[str]] = []
     for word in argv[start + 2 :]:
@@ -1099,18 +1133,30 @@ def _scoring_lines(params: Params) -> list[str]:
     return [
         "### The scoring procedure",
         "",
+        *([
+            f"- Merged-candidate evaluation: {MERGED_EXPLANATION}",
+            "  Each candidate has its own vLLM server for its merged base; null keeps the bf16 king base. A GPU serves one model at a time",
+            "  and may switch after its in-flight work finishes. No runtime LoRA is loaded. The candidate's result records the merged base",
+            "  manifest hash and install kernel; promotion refuses a fold whose base manifest differs.",
+        ] if params.eval_merged else []),
         "This is everything that the box does to score a round, in the order in which it does it. The code is in four",
         "files: `sn120_v2/worker.py` (chunks, looks and the clock), `sn120_v2/gpu/evaluator.py` (servers, requests and",
         "outcome codes), `sn120_v2/envs/math_grader.py` (the grader) and `sn120_v2/judging.py` (the estimator and the",
         "rules). Section 10 has the command that runs this code on your machine.",
         "",
         f"- Servers: an idle GPU may prewarm its normal vLLM server for null. A GPU never starts vLLM while its training job",
-        "  is active; after training exits it starts or reuses that same default-argv server. Each server",
-        f"  holds the base of head M under the model name `{NULL_MODEL}`. The box loads each LoRA of the round into every",
-        "  server with `/v1/load_lora_adapter`, with its `lora_hash` as the model name. The servers run with the",
-        "  variable `VLLM_ALLOW_RUNTIME_LORA_UPDATING` set (vLLM needs it for that route) and with `HF_HUB_OFFLINE` set.",
-        "  The vLLM version is the one that the `gpu` extra of `v2/pyproject.toml` names. `--max-loras` is the number of",
-        "  batches of the round, trained or not: it is the same for every chunk of the round. The command of one server,",
+        *([
+            "  is active; after training exits it serves the candidate it trained, or null if it trained no candidate. Each merged",
+            f"  model is served under its candidate's `lora_hash`; null is `{NULL_MODEL}`. The servers run with `HF_HUB_OFFLINE` set.",
+            "  The vLLM version is the one that the `gpu` extra of `v2/pyproject.toml` names. The command of one merged server,",
+        ] if params.eval_merged else [
+            "  is active; after training exits it starts or reuses that same default-argv server. Each server",
+            f"  holds the base of head M under the model name `{NULL_MODEL}`. The box loads each LoRA of the round into every",
+            "  server with `/v1/load_lora_adapter`, with its `lora_hash` as the model name. The servers run with the",
+            "  variable `VLLM_ALLOW_RUNTIME_LORA_UPDATING` set (vLLM needs it for that route) and with `HF_HUB_OFFLINE` set.",
+            "  The vLLM version is the one that the `gpu` extra of `v2/pyproject.toml` names. `--max-loras` is the number of",
+            "  batches of the round, trained or not: it is the same for every chunk of the round. The command of one server,",
+        ]),
         "  without its local address:",
         "",
         "```",

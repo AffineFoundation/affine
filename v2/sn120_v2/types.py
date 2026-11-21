@@ -399,6 +399,9 @@ class EntryResult(Record):
     outcomes: tuple[str, ...] = ()  # one string per sample index over the round's task order
     eliminated_at_look: int | None = None
     attempts: int = 1
+    LEFT_OUT_AT_DEFAULT = ("tested_base_hash", "tested_fold_kernel")
+    tested_base_hash: str = ""
+    tested_fold_kernel: str = ""
 
     def __post_init__(self) -> None:
         _need(self.status in (SCORED, NO_DECISION, SKIP, NOT_TRAINED, NOT_SCORED), f"unknown entry status {self.status!r}")

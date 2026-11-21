@@ -73,7 +73,7 @@ TIME_LIMIT = "grader_time_limit"  # the rule code of a row that the official gra
 FAULT = "grader_fault"  # the rule code of a row that makes the official grader fail, while the grader itself works
 NO_SIGNAL = "no_signal"  # the rule code of a file in which no rollout can change the model
 MIN_ROLLOUTS = "min_rollouts"  # too few rollouts have a nonzero advantage
-NULL_UPDATE = "null_update"  # the configured cap cannot reach the minimum stored update norm
+NULL_UPDATE = "null_update"  # when enabled, the configured cap cannot reach the minimum stored update norm
 TRAIN_COST = "train_cost"  # the rule code of a file that costs more training than one seat may use
 TOKENIZER_FAULT = "tokenizer_fault"  # the rule code of a text that makes the tokenizer fail, while the tokenizer itself works
 CHECK_FAULT = "check_fault"  # the rule code of a file that makes the checker itself fail, while the checker still passes a known-good file
@@ -153,7 +153,7 @@ RULES: dict[str, str] = {
     "answer_repeat": "one final answer is in too many rollouts",
     NO_SIGNAL: "no rollout has a reward that differs from the mean reward of its training group, so nothing trains",
     MIN_ROLLOUTS: "too few rollouts have a nonzero advantage; the floor is min_signal_rollouts",
-    NULL_UPDATE: "the miner's global_norm_cap is below min_step_norm, so the stored update cannot be large enough to judge",
+    NULL_UPDATE: "when min_step_norm > 0, the miner's global_norm_cap is below it, so the stored update cannot be large enough to judge",
     TRAIN_COST: "steps times the tokens that the trainer runs through the model is above the training cost cap",
     TIME_LIMIT: f"the official grader cannot grade a rollout inside its time limit; {_AGAIN}",
     FAULT: f"a rollout makes the official grader fail; {_AGAIN}",
