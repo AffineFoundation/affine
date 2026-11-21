@@ -33,6 +33,9 @@ def main() -> int:
     old_v2 = args.old_v2.resolve(strict=True)
     expect = json.loads((kit / "expect.json").read_text())
     old_pin, new_pin = expect["old_params_hash"], os.environ.get("DEDUP_REVIEWED_PARAMS_HASH", expect["new_params_hash"])
+    new_params_path = os.environ.get("DEDUP_REVIEWED_PARAMS", str(kit / "new-params.json"))
+    new_params = json.loads(Path(new_params_path).read_text())
+    assert new_params.get("crown_gate") == "field_median"
     stage = fixture_root / "physical-validator-stage"
     tarball = fixture_root / "physical-validator-stage.tar.gz"
     restore = subprocess.run(
@@ -121,7 +124,7 @@ history=[r for r in rows if r.kind=="params_set" and r.data["params"].get("dedup
 assert history and {digest_params(r.data["params"]) for r in history}=={historical_pin,new_pin}
 assert all(r.data["params"]["eval_merged"] is True for r in history)
 field_history=[r.data["params"] for r in history if r.data["params"].get("crown_gate")=="field_median"]
-assert field_history and all(p["z_field_bar"] in (0.0,1.0) for p in field_history)
+assert field_history and all(p["z_bar"]==float(sys.argv[7]) and p["z_field_bar"]==float(sys.argv[8]) for p in field_history)
 assert {Params.from_dict(r.data["params"]).params_hash for r in history}=={old_pin}
 state=load(root/"journal.jsonl")
 assert state.params.params_hash==old_pin and state.params.z_bar==1.0 and state.round is None
@@ -135,7 +138,8 @@ assert TrainReport.from_dict(report).step_norm_nonfinite=="nan"
 print(json.dumps({"kings":len(state.kings),"king_hotkeys":{str(k.uid):k.hotkey for k in state.kings}}))
 ''')
     details = subprocess.run([args.python, str(detail), str(stage), str(root), str(store), old_pin,
-                              "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c", new_pin],
+                              "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c", new_pin,
+                              str(new_params["z_bar"]), str(new_params["z_field_bar"])],
                              cwd=fixture, env=environment | {"PYTHONPATH": str(stage)}, capture_output=True, text=True, timeout=90)
     if details.returncode:
         raise AssertionError(details.stderr + details.stdout)

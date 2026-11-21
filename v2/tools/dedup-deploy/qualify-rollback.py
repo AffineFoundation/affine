@@ -316,7 +316,9 @@ print(json.dumps({"native_release_read":True,"compatibility_overlay":False,
                   "kings":len(view.kings),"weights_dry_run":result["status"],
                   "journal_unchanged":True,"chain_submissions":chain.submissions},sort_keys=True))
 ''')
-    native_env = {"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1", "DEDUP_REVIEWED_PARAMS_HASH": selected.params_hash}
+    native_env = {"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1",
+                  "DEDUP_REVIEWED_PARAMS": str(new_params_path),
+                  "DEDUP_REVIEWED_PARAMS_HASH": selected.params_hash}
     completed = subprocess.run([args.python, "-I", str(native), str(new_v2), str(repin), OLD_PIN, HISTORICAL_PIN, NEW_PIN, str(fixture / "store"), str(selected.z_bar), str(selected.z_field_bar)],
                                cwd=output, env=native_env, capture_output=True, text=True, timeout=90)
     if completed.returncode:
