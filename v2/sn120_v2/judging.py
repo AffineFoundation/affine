@@ -209,7 +209,10 @@ def score_entry(
         reasons.append(f"scored on {n} tasks, not on the full draw")
     if n < params.min_scored_tasks:
         reasons.append(f"scored on {n} tasks; the rule needs {params.min_scored_tasks}")
-    if not z > params.z_bar:
+    if params.crown_gate == "argmax_symmetric":
+        if not delta > TIE_TOLERANCE:
+            reasons.append(f"delta {delta:.6g} does not beat the king by more than {TIE_TOLERANCE:g}")
+    elif not z > params.z_bar:
         reasons.append(f"z {z:.3f} is not above {params.z_bar:g}")
     rollouts = n * len(lora_outcomes)
     if not cap_hit_ok(code_count(lora_outcomes, CAP, n), code_count(null_outcomes, CAP, n), rollouts, params, null_rollouts=n * len(null_outcomes)):
@@ -248,7 +251,9 @@ def upper_final_z(score: Score, look: int, n_total: int, params: Params) -> floa
 
 
 def drop_at_look(score: Score, look: int, n_total: int, params: Params) -> bool:
-    """True when a LoRA can no longer reach the win bar. Only an early look can drop, and it never names a winner."""
+    """True when a LoRA can no longer reach the win bar. Argmax always scores the full shared prefix."""
+    if params.crown_gate == "argmax_symmetric":
+        return False
     sizes = params.look_sizes(n_total)
     if not 0 <= look < len(sizes) - 1 or score.n_tasks != sizes[look]:
         return False
@@ -320,7 +325,9 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
         if look is None:
             _need(scored == n, f"{what}: not dropped, so it must be scored on every task")
             continue
-        _need(0 <= look < len(look_sizes) - 1, f"{what}: can only be dropped at an early look")
+        _need(params.crown_gate != "argmax_symmetric" and 0 <= look < len(look_sizes) - 1,
+              f"{what}: argmax_symmetric has no early drops" if params.crown_gate == "argmax_symmetric"
+              else f"{what}: can only be dropped at an early look")
         _need(scored == look_sizes[look], f"{what}: dropped at look {look} but scored on {scored} tasks")
         partial = score_entry(draw.weights, result.null_outcomes, entry.outcomes, params)
         _need(drop_at_look(partial, look, n, params), f"{what}: the drop rule does not hold at look {look}")
@@ -446,7 +453,9 @@ def decide(
             reason = "" if status == WINNER else "; ".join(score.reasons) or "another LoRA had a higher delta"
         entries.append(_entry_decision(seat, entry, status, reason, score))
 
-    if winner is not None and params.crown_gate == "field_median":
+    if winner is not None and params.crown_gate == "argmax_symmetric":
+        why = f"entry {winner} had the highest mean pass rate, above the king"
+    elif winner is not None and params.crown_gate == "field_median":
         why = (f"entry {winner} beat M by more than {params.z_bar:g} SE and the field's "
                f"per-task median by more than {params.z_field_bar:g} SE")
     elif winner is not None:
@@ -455,6 +464,8 @@ def decide(
         why = "no decision: " + "; ".join(problems)
     elif not candidates:
         why = "no entry was scored"
+    elif params.crown_gate == "argmax_symmetric":
+        why = "king had the highest mean pass rate"
     else:
         why = f"null round: no LoRA beat M by more than {params.z_bar:g} standard error"
         if params.crown_gate == "field_median":

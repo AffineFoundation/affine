@@ -361,7 +361,7 @@ class Params(Record):
         _need(bool(self.looks) and self.looks[-1] == 1.0, "looks must end at 1.0")
         _need(all(0 < a < b for a, b in zip(self.looks, self.looks[1:])) and self.looks[0] > 0, "looks must rise from above 0")
         _need(math.isfinite(self.z_bar) and self.z_bar >= 0, "z_bar must be zero or more")
-        _need(self.crown_gate in ("king", "field_median"), "crown_gate must be 'king' or 'field_median'")
+        _need(self.crown_gate in ("king", "field_median", "argmax_symmetric"), "crown_gate must be 'king', 'field_median' or 'argmax_symmetric'")
         _need(math.isfinite(self.z_field_bar), "z_field_bar must be finite")
         _need(self.train_seed_scope in SEED_SCOPES, "train_seed_scope must be 'round' or 'batch'")
         _need(_unit(self.dedup_rollout_overlap) and self.dedup_rollout_overlap > 0, "dedup_rollout_overlap must be in (0, 1]")

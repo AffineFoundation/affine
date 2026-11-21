@@ -1217,13 +1217,28 @@ def _scoring_lines(params: Params) -> list[str]:
         "- Estimator, in full: n is the number of tasks that the LoRA answered. They are the first n tasks of the draw.",
         f"  The pass rate of a model on a task is the share of its samples with `{PASS}`. The sums of the estimator above run",
         "  over these n tasks, with the weights w_t of the draw. When se is 0, z is 0.",
+        *(["- Argmax mode has no early drops: every candidate is scored on the full draw, or the shared stop-limit prefix."]
+          if params.crown_gate == "argmax_symmetric" else [
         "- Drop rule, in full: after each look but the last, the box computes z of each open LoRA on the tasks so far.",
         "  Look k has scored the share t_k of the draw. a_k = spent(t_k) - spent(t_(k-1)), with spent(t) = `drop_alpha` *",
         "  ln(1 + (e - 1) * t), and spent = 0 before the first look. c_k is the normal quantile of 1 - a_k. The LoRA is",
         "  dropped when (z + c_k) / sqrt(t_k) <= `z_bar`. No LoRA is dropped at a look with fewer than",
         f"  {params.min_scored_tasks} tasks (`min_scored_tasks`), or when its se is 0. A dropped LoRA answers no later chunk. When no LoRA is",
         "  open, the scoring ends.",
+        ]),
         *([
+            *([
+                "- Argmax-symmetric win rule, in full: duplicates are removed first by the existing dedup, and the round uses one",
+                "  round-wide training seed.",
+                *_no_floor_lines(params),
+                "  Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays",
+                "  if it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are",
+                "  retired. `z_bar` and `z_field_bar` are ignored. Early drops are disabled, so every candidate is scored on the full",
+                "  draw or shared stop-limit prefix. The cap-hit (`cap_hit_floor`/`cap_hit_margin`), full-draw, cover and",
+                "  `min_scored_tasks` checks are anti-gaming pre-filters, not z gates. Here mean pass rate is the HT-weighted mean of",
+                "  per-task pass rates using the draw's sampling weights; each king task rate is the mean of its null runs, and",
+                f"  `{CAP}` counts as not-pass. Threshold calibration is provisional.",
+            ] if params.crown_gate == "argmax_symmetric" else [
             "- Field-median win rule, in full: duplicates are removed first by the existing dedup, and the round uses one",
             "  round-wide training seed.",
             *_no_floor_lines(params),
@@ -1234,11 +1249,13 @@ def _scoring_lines(params: Params) -> list[str]:
             "  or 0 when `field_se` is 0. Crown only when `field_z` > `z_field_bar` AND paired z",
             f"  against the king > `z_bar`. The highest delta among eligible LoRAs wins; otherwise the king stays. The old z {show(RETIRED_KING_Z_BAR)}",
             "  king-only bar is retired. The thresholds are provisional and will be recalibrated.",
-        ] if params.crown_gate == "field_median" else []),
+            ]),
+        ] if params.crown_gate != "king" else []),
         "- Win rule, in full. A LoRA is eligible when all of these are true. It has an outcome for every task of the",
         "  draw, or, when the stop time ended the scoring, for every task that null M has an outcome for; a LoRA that",
         "  was dropped at a look does not. n is at least `min_scored_tasks`.",
-        *(["  z > `z_bar` AND `field_z` > `z_field_bar`."] if params.crown_gate == "field_median" else ["  z > `z_bar`."]),
+        *(["  its delta above the king must be greater than the tie tolerance."] if params.crown_gate == "argmax_symmetric"
+          else ["  z > `z_bar` AND `field_z` > `z_field_bar`."] if params.crown_gate == "field_median" else ["  z > `z_bar`."]),
         "  (its count of",
         *([
             f"  `{CAP}`) / (n x LoRA sample count) <= max(`cap_hit_floor`, (the count of `{CAP}` of null M on the same n tasks) / (n x king sample count) +",
@@ -1275,11 +1292,24 @@ def _no_floor_lines(params: Params) -> list[str]:
 
 
 def _win_rule_lines(params: Params) -> list[str]:
-    if params.crown_gate != "field_median":
+    if params.crown_gate == "king":
         return [
             f"- Win rule: z is strictly above {show(params.z_bar)} (beat M by more than that many standard errors), on at least",
             f"  {params.min_scored_tasks} tasks, with no correction for the number of LoRAs. The cap-hit rate of the LoRA may",
             f"  not be above max({show(params.cap_hit_floor)}, null M cap-hit rate + {show(params.cap_hit_margin)}).",
+        ]
+    if params.crown_gate == "argmax_symmetric":
+        return [
+            "- Win rule (`crown_gate` = `argmax_symmetric`): duplicates are removed first (the existing dedup), and the round has one",
+            "  round-wide training seed.",
+            *_no_floor_lines(params),
+            "- Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays if",
+            "  it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are retired.",
+            "  `z_bar` and `z_field_bar` are ignored. Early drops are disabled: every candidate is scored on the full draw, or the",
+            "  shared stop-limit prefix. The cap-hit (`cap_hit_floor`/`cap_hit_margin`), cover, full-draw and `min_scored_tasks` checks",
+            "  are anti-gaming pre-filters, not z gates. Here mean pass rate is the HT-weighted mean of per-task pass rates using",
+            f"  the draw's sampling weights; each king task rate is the mean of its null runs, and `{CAP}` counts as not-pass.",
+            "  Between eligible candidates, the highest delta wins and a tie goes to the earlier queue position.",
         ]
     return [
         "- Win rule (`crown_gate` = `field_median`): duplicates are removed first (the existing dedup), and the round has one",

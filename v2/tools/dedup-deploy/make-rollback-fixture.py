@@ -175,7 +175,7 @@ def main() -> int:
     world.runner.clock = world.clock
     assert full.dedup_enabled and full.train_seed_scope == "round" and full.min_step_norm == 0.0
     assert full.min_signal_rollouts == 1 and full.z_bar == production["z_bar"] and full.eval_merged
-    assert full.crown_gate == "field_median" and full.z_field_bar == production["z_field_bar"]
+    assert full.crown_gate in ("field_median", "argmax_symmetric") and full.z_field_bar == production["z_field_bar"]
     # Stage A plus no-result survivor accounting: three seats, one charged copy,
     # two uncharged genuine seats returned to the queue after a failed lease.
     for uid, quality in ((1, 0.9), (2, 0.0), (3, 0.0)):

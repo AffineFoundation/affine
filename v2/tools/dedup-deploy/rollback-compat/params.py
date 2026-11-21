@@ -36,14 +36,15 @@ DEDUP_FIELDS = {
     "min_step_norm": 0.0,
     "eval_merged": True,
 }
-FIELD_GATE_FIELDS = {"crown_gate": "field_median"}
-RELEASE_FIELDS = DEDUP_FIELDS | FIELD_GATE_FIELDS | {"z_field_bar": 1.0, "z_bar": 1.5}
+FIELD_GATE_FIELDS = {"crown_gate": ("field_median", "argmax_symmetric")}
+RELEASE_FIELDS = DEDUP_FIELDS | {"crown_gate": "field_median"} | {"z_field_bar": 1.0, "z_bar": 1.5}
 HISTORICAL_NEW_PARAMS_HASH = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 REVIEWED_NEW_PARAMS_HASH = "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
 FIELD_GATE_PARAMS_HASH = "642cff7a80a51ca30606ff775e96693fa2de6d546703d9c2c30703519a72b8ed"
 K1F1_PARAMS_HASH = "471b74f4a306efbb1e9444069ea832b5e02d68ec410f5ffebb06353f2deb9c5a"
 KING_LED_PARAMS_HASH = "848707723628c85dc13f8c93e39d132432fcb5851076165490ac01693176236e"
 K025F025_PARAMS_HASH = "ab2c7084bc94a7ce1ac6138498447aeaecadc117ae66e43131dfc1c0d5aa268d"
+ARGMAX_PARAMS_HASH = "ab4e228c961058a29ed062bc67f6da6881cf3c13396eb03730d54badb4f261c0"
 OLD_FIELD_GATE_PARAMS_HASHES = (
     "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4",
     "346b99a875be5a9d5e2467bf846f20d124229397b67935c6563f1e7c2409b8b1",
@@ -52,6 +53,7 @@ OLD_FIELD_GATE_PARAMS_HASHES = (
 )
 FIELD_GATE_PARAMS_HASHES = (
     FIELD_GATE_PARAMS_HASH, K1F1_PARAMS_HASH, KING_LED_PARAMS_HASH, K025F025_PARAMS_HASH,
+    ARGMAX_PARAMS_HASH,
 )
 REVIEWED_NEW_PARAMS_HASHES = frozenset((
     HISTORICAL_NEW_PARAMS_HASH, REVIEWED_NEW_PARAMS_HASH, *FIELD_GATE_PARAMS_HASHES,
@@ -64,9 +66,10 @@ OLD_FIELD_GATE_CODE_DIGEST = "2f7fd4ecaa8fa26800d8a3f54063d6286d614e309fcdffd9af
 REVIEWED_NEW_CODE_DIGESTS = dict.fromkeys(REVIEWED_NEW_PARAMS_HASHES, REVIEWED_NEW_CODE_DIGEST) | {
     HISTORICAL_NEW_PARAMS_HASH: HISTORICAL_NEW_CODE_DIGEST,
     REVIEWED_NEW_PARAMS_HASH: OLD_FIELD_GATE_CODE_DIGEST,
-    "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4": REVIEWED_NEW_CODE_DIGEST,
     **dict.fromkeys(OLD_FIELD_GATE_PARAMS_HASHES, OLD_FIELD_GATE_CODE_DIGEST),
 }
+# Train-render code was already live for the k0/f1 field-led pin.
+REVIEWED_NEW_CODE_DIGESTS["17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4"] = REVIEWED_NEW_CODE_DIGEST
 REVIEWED_OLD_CODE_DIGEST = "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47"
 
 # Identity of the launch model. The base hash is the manifest digest of the
@@ -415,10 +418,12 @@ class Params(Record):
             if params_hash not in REVIEWED_NEW_PARAMS_HASHES:
                 raise ConfigError("historical params are not a reviewed dedup or field-gate pin")
             is_field_gate = params_hash in FIELD_GATE_PARAMS_HASHES + OLD_FIELD_GATE_PARAMS_HASHES
-            expected = RELEASE_FIELDS | ({"z_field_bar": data["z_field_bar"], "z_bar": data["z_bar"]} if is_field_gate else {})
+            expected = RELEASE_FIELDS | ({"crown_gate": data["crown_gate"], "z_field_bar": data["z_field_bar"], "z_bar": data["z_bar"]} if is_field_gate else {})
             present = set(RELEASE_FIELDS) if is_field_gate else set(DEDUP_FIELDS) | {"z_bar"}
             if {name: data[name] for name in present} != {name: expected[name] for name in present}:
                 raise ConfigError("rollback compatibility accepts only the reviewed dedup or field-gate parameter values")
+            if is_field_gate and data["crown_gate"] not in FIELD_GATE_FIELDS["crown_gate"]:
+                raise ConfigError("rollback compatibility accepts only reviewed field-gate modes")
             if not is_field_gate and any(name in data for name in FIELD_GATE_FIELDS):
                 raise ConfigError("rollback compatibility accepts only the reviewed dedup parameter values")
             if data.get("recipe", {}).get("code_digest") != REVIEWED_NEW_CODE_DIGESTS[params_hash]:

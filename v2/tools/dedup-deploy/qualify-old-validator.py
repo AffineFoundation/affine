@@ -35,7 +35,7 @@ def main() -> int:
     old_pin, new_pin = expect["old_params_hash"], os.environ.get("DEDUP_REVIEWED_PARAMS_HASH", expect["new_params_hash"])
     new_params_path = os.environ.get("DEDUP_REVIEWED_PARAMS", str(kit / "new-params.json"))
     new_params = json.loads(Path(new_params_path).read_text())
-    assert new_params.get("crown_gate") == "field_median"
+    assert new_params.get("crown_gate") in ("field_median", "argmax_symmetric")
     stage = fixture_root / "physical-validator-stage"
     tarball = fixture_root / "physical-validator-stage.tar.gz"
     restore = subprocess.run(
@@ -123,7 +123,7 @@ rows=read_journal(root/"journal.jsonl")
 history=[r for r in rows if r.kind=="params_set" and r.data["params"].get("dedup_enabled")]
 assert history and {digest_params(r.data["params"]) for r in history}=={historical_pin,new_pin}
 assert all(r.data["params"]["eval_merged"] is True for r in history)
-field_history=[r.data["params"] for r in history if r.data["params"].get("crown_gate")=="field_median"]
+field_history=[r.data["params"] for r in history if r.data["params"].get("crown_gate") in ("field_median","argmax_symmetric")]
 assert field_history and all(p["z_bar"]==float(sys.argv[7]) and p["z_field_bar"]==float(sys.argv[8]) for p in field_history)
 assert {Params.from_dict(r.data["params"]).params_hash for r in history}=={old_pin}
 state=load(root/"journal.jsonl")

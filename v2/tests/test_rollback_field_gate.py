@@ -26,7 +26,10 @@ OLD_PIN = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"
 DEDUP_PIN = "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
 HISTORICAL_PIN = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 FIELD_PINS = {
-    "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4": "field_gate_params.json",
+    "ab4e228c961058a29ed062bc67f6da6881cf3c13396eb03730d54badb4f261c0": "field_gate_params_argmax.json",
+    "642cff7a80a51ca30606ff775e96693fa2de6d546703d9c2c30703519a72b8ed": "field_gate_params_k05f0.json",
+    "ab2c7084bc94a7ce1ac6138498447aeaecadc117ae66e43131dfc1c0d5aa268d": "field_gate_params_k025f025.json",
+    "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4": "field_gate_params_k0f1.json",
     "471b74f4a306efbb1e9444069ea832b5e02d68ec410f5ffebb06353f2deb9c5a": "field_gate_params_k1f1.json",
     "848707723628c85dc13f8c93e39d132432fcb5851076165490ac01693176236e": "field_gate_params_king_led.json",
 }
@@ -158,9 +161,10 @@ def test_every_reviewed_field_pin_restores_the_same_legacy_params(tmp_path):
     from sn120_v2.params import Params as CompatParams
     # Pre-render field-gate records keep their exact old worker identity.
     for pin, name in {**OLD_FIELD_PINS, **FIELD_PINS}.items():
-        data = json.loads((ROOT / "ops" / name).read_text())
-        if pin in OLD_FIELD_PINS:
-            data["recipe"]["code_digest"] = "2f7fd4ecaa8fa26800d8a3f54063d6286d614e309fcdffd9af59bfffeb7824fa"
+        data = json.loads(_git("ops/field_gate_params.json", "1da63bef") if pin == "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4"
+                            else _git(f"ops/{name}", "04fbe857a28eddf94decb128b7a4d455a91fbfcd") if pin in OLD_FIELD_PINS
+                            else (ROOT / "ops" / name).read_text())
+        # Exact historical records above already carry their reviewed worker digest.
         assert Params.from_dict(data).params_hash == pin
         old = CompatParams.from_dict(data)
         assert old.params_hash == OLD_PIN and old.z_bar == 1.0

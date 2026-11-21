@@ -276,14 +276,14 @@ from sn120_v2.state import load
 from sn120_v2.store import LocalStore
 from sn120_v2.types import TrainReport
 from sn120_v2.weights_writer import main,read_view
-root=pathlib.Path(sys.argv[2]); old_pin=sys.argv[3]; historical_pin=sys.argv[4]; new_pin=sys.argv[5]; new_z_bar=float(sys.argv[7]); selected_z_field_bar=float(sys.argv[8])
+root=pathlib.Path(sys.argv[2]); old_pin=sys.argv[3]; historical_pin=sys.argv[4]; new_pin=sys.argv[5]; selected_crown_gate=sys.argv[9]; new_z_bar=float(sys.argv[7]); selected_z_field_bar=float(sys.argv[8])
 before=(root/"journal.jsonl").read_bytes()
 rows=read_journal(root/"journal.jsonl")
-new_params=next(r.data["params"] for r in rows if r.kind=="params_set" and r.data["params"].get("crown_gate")=="field_median")
+new_params=next(r.data["params"] for r in rows if r.kind=="params_set" and r.data["params"].get("crown_gate") in ("field_median","argmax_symmetric"))
 history=[r for r in rows if r.kind=="params_set" and r.data["params"].get("dedup_enabled")]
 assert history and all(r.data["params"]["eval_merged"] is True for r in history)
 assert [r.data["params"]["z_bar"] for r in history]==[new_z_bar,1.5,new_z_bar]
-assert new_params["crown_gate"]=="field_median" and new_params["z_field_bar"]==selected_z_field_bar
+assert new_params["crown_gate"]==selected_crown_gate and new_params["z_field_bar"]==selected_z_field_bar
 from sn120_v2.params import Params
 assert {Params.from_dict(r.data["params"]).params_hash for r in history}=={historical_pin,new_pin}
 assert rows[-1].kind=="params_set" and not rows[-1].data["params"].get("dedup_enabled",False)
@@ -319,7 +319,7 @@ print(json.dumps({"native_release_read":True,"compatibility_overlay":False,
     native_env = {"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1",
                   "DEDUP_REVIEWED_PARAMS": str(new_params_path),
                   "DEDUP_REVIEWED_PARAMS_HASH": selected.params_hash}
-    completed = subprocess.run([args.python, "-I", str(native), str(new_v2), str(repin), OLD_PIN, HISTORICAL_PIN, NEW_PIN, str(fixture / "store"), str(selected.z_bar), str(selected.z_field_bar)],
+    completed = subprocess.run([args.python, "-I", str(native), str(new_v2), str(repin), OLD_PIN, HISTORICAL_PIN, NEW_PIN, str(fixture / "store"), str(selected.z_bar), str(selected.z_field_bar), selected.crown_gate],
                                cwd=output, env=native_env, capture_output=True, text=True, timeout=90)
     if completed.returncode:
         raise AssertionError(completed.stderr + completed.stdout)
