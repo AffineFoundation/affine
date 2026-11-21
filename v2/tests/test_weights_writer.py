@@ -293,7 +293,9 @@ def test_a_chain_that_does_not_answer_is_a_deferred_run_and_not_a_crash(journal_
 @pytest.fixture
 def host(tmp_path, monkeypatch):
     """A weights host with no journal of its own, and a box whose journal has a copy in the store. UID 1 is the king."""
-    world = SimWorld(tmp_path / "box", sim_params())
+    # Keep this simulation's legacy behavior and make its explicit parameter identity reproducible in an override.
+    params = Params.from_dict(sim_params().to_dict() | Params.LEGACY_VALUES)
+    world = SimWorld(tmp_path / "box", params)
     world.controller.journal.mirror = Mirror(world.store)
     with open(world.root / JOURNAL_FILE, "rb") as handle:
         Mirror(world.store).catch_up(handle, backfill=True)
@@ -363,7 +365,8 @@ def test_the_parameters_come_from_the_journal_and_the_params_flag_is_only_a_chec
     calls = []
     monkeypatch.setattr(SubtensorClient, "connect", lambda *settings: calls.append(settings) or host.chain)
     same, other = tmp_path / "same.json", tmp_path / "other.json"
-    same.write_bytes(sim_params().to_json())
+    # Explicit new overrides opt into the new production values; write the legacy values of this simulation.
+    same.write_text(json.dumps(host.world.params.to_dict()))
     other.write_bytes(replace(sim_params(), kings_window=3).to_json())
     assert sim_params() != Params()  # the journal pins other parameters than the defaults of the command
     assert main(host.argv + ["--dry-run", "--params", str(other)], lambda: host.world.store) == 2 and calls == []

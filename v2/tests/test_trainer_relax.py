@@ -491,7 +491,15 @@ def test_a_value_outside_a_new_bound_is_refused(key, value, build):
 @pytest.mark.parametrize("key,value", [(key, value) for key, values in TAKEN.items() for value in values])
 def test_a_value_inside_a_new_bound_is_taken_and_never_clamped(key, value, build):
     assert getattr(Recipe().for_miner({key: value}), key) == value
-    batch = check_batch(file(train={key: value}), HOTKEY, build.params())
+    if key == "minibatches" and value == 8000:
+        # 8000 updates need 8000 active rows: 2000 groups of two right and two distinct wrong answers.
+        right = lambda n, k: {"output": f"{THINK}{k} \\boxed{{{2 * n}}}", "reward": 1}  # noqa: E731
+        wrong = lambda n, offset: {"output": f"{THINK}0 \\boxed{{{-(n + offset)}}}", "reward": 0}  # noqa: E731
+        groups = [{"prompt": f"double {n}", "rollouts": [right(n, 0), right(n, 1), wrong(n, 1), wrong(n, 2)]} for n in range(2000)]
+        raw = json.dumps({"version": "affine-batch-v3", "hotkey": HOTKEY, "groups": groups, "train": {key: value}}).encode()
+    else:
+        raw = file(train={key: value})
+    batch = check_batch(raw, HOTKEY, build.params())
     assert batch.train == {key: value} and getattr(build.params().recipe.for_miner(batch.train), key) == value
 
 
