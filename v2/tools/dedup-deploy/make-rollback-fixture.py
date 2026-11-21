@@ -154,7 +154,7 @@ def main() -> int:
     # The journal carries the exact reviewed production pin. The isolated CPU
     # fixture adapts worker evidence only; it never changes that historical pin.
     full = Params.from_dict(production)
-    assert full.params_hash == "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
+    assert full.params_hash == "4c83d52f7489f8eae22e550e226edc17fb6f2f0d9f6dce5a4d333369e5b1a3be"
     historical = dataclasses.replace(full, recipe=dataclasses.replace(
         full.recipe, code_digest="28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"))
     assert historical.params_hash == "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"

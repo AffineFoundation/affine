@@ -5,7 +5,58 @@ production deployment, production health, or authorization to arm a round.
 Final committed-kit rehearsal results are recorded only from actual output;
 no development completion line is promoted to a final PASS.
 
-## Current approved release
+## r000093 incident-repair addendum
+
+The current production-source commit is
+`71d287f61338596ee24ad1dca654f8cf2cafe6e7`. Its final GPU digest is
+`07e946950889a1dfc9d8e59ce6b98fd955e2729b6ecf3b25912bf5660f556fda`;
+its canonical params hash is
+`4c83d52f7489f8eae22e550e226edc17fb6f2f0d9f6dce5a4d333369e5b1a3be`;
+the pretty `new-params.json` file SHA-256 is
+`4183e5976910628dd162946600d756b43dc0a262320fa6dec414ad524f5f5309`.
+The copied-fixture gate is `r000093`, first health round `r000094`, and second
+open `r000095`. These identities supersede the historical launch pins below;
+they do not rewrite those records or imply a production deployment.
+
+Merged candidate construction already used a spawned child. The additional
+audit found full-mode crowned-install arithmetic inline in `LoraFolder.fold`;
+it now uses `headfold.in_children`. Chain install folding already uses that
+runner in production. The audit also covered controller apply/promotion,
+`fold_checked`/`run_fold`, merged identity assertions, base/master/LoRA hashing
+and resident caching, winner publication, `HeadKeeper`, `ReadBack`, vLLM
+null/candidate/king setup, and `LoraTrainer`/`train_job.py`. Parent-side proof
+and hashing operations are file/string work; training and vLLM remain child
+processes. No aggregate GPU-free check or controller-PID exclusion was weakened.
+
+The final real-controller fake-driver selection passed **70 tests** in
+`test_eval_merged.py`, `test_gpu_box.py`, and the specified fp32-master fold
+test. Full and chain modes each crown and install a candidate in two rounds,
+assign queue position four to fake GPU 4, observe child-side fold arithmetic,
+assert no controller PID in the fake CUDA state, and successfully lease the
+next round. The exact `50afaca3` detached-source negative control passed its
+**2 required reproduction cases**, reaching `GPUs [4] are still in use;
+evaluation must not start` after the real inline candidate build. These are
+CPU/fake-driver results, **not physical-GPU qualification**. The final kit's
+14 frozen-input tests also passed. `llms.txt` remains byte-identical to
+`50afaca3`.
+
+The updated working-tree rollback fixture completed with exit 0 and emitted
+**12 rollback/restore PASS lines** in
+`/home/bb/scratch/dedup-r093-final-rollback-71d287f6-v1.log`. They cover the
+exact r000092 infrastructure-failed `no_decision` close, negative refusal
+controls, the historical and repaired params identities, native release
+readability, and bounded old-code recovery. The physical validator package
+reported `would set`, weights `{"1": 0.5, "7": 0.5}`, zero chain submissions,
+unchanged journal bytes, final params `bba7a409…`, `z_bar=1.0`, and no runtime
+import shim. All three exact new params/code pairs remain accepted; unknown
+pairs remain refused.
+
+At the time this addendum was committed, the complete-suite terminal result
+and clean committed-kit normal/abort-after-open PASS rehearsals were still
+required. Earlier committed-kit PASS lines below belong to their explicitly
+named historical releases and are not evidence for this r000093 repair.
+
+## Historical approved release
 
 The approved design enables dedup, `train_seed_scope=round`, charged null
 updates and merged-candidate evaluation, raises the crown threshold to

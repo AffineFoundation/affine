@@ -4,7 +4,28 @@ This is an **operator-only release kit**, not a deployment. It does not grant
 permission to arm a round, change weights, or access production. Building and
 qualifying this kit makes no production change.
 
-## Approved release and rehearsal boundary
+## Current r000093 release
+
+This r000093 incident-repair addendum supersedes the historical release and
+round pins below. The production source is
+`71d287f61338596ee24ad1dca654f8cf2cafe6e7`, with GPU digest
+`07e946950889a1dfc9d8e59ce6b98fd955e2729b6ecf3b25912bf5660f556fda`,
+canonical params hash
+`4c83d52f7489f8eae22e550e226edc17fb6f2f0d9f6dce5a4d333369e5b1a3be`,
+and `new-params.json` file SHA-256
+`4183e5976910628dd162946600d756b43dc0a262320fa6dec414ad524f5f5309`.
+The offline gate is `r000093`, with first health round `r000094` and second
+open `r000095`.
+
+The compatibility overlay accepts exactly the historical `d5979c30…` /
+`28f1fb8b…`, repaired `8caddd9c…` / `2f7fd4ec…`, and current
+`4c83d52f…` / `07e94695…` pairs, including the exact infrastructure-failed
+r000092 close. It still restores old `c5252865` / `50276206…` /
+`bba7a409…`; unknown pairs remain refused. Qualification uses fake
+GPU drivers and isolated journals, not a physical-GPU or production test.
+No deployment, chain write, merge, or `main` change is included.
+
+## Historical release and rehearsal boundary
 
 The approved release enables dedup, round-scoped training seeds, charged
 null updates and **merged-candidate evaluation**, raises the crown threshold to
