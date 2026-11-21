@@ -447,6 +447,25 @@ def load_params(path: str | Path) -> Params:
     return from_jsonable(Params, data, "Params")
 
 
+def require_complete_params(data: Mapping[str, Any]) -> Params:
+    """Decode the complete operator file required by new-code ``set-params``.
+
+    Partial bootstrap/test overrides still use ``load_params``. A live parameter
+    transition must state every dedup/seed field so an omitted legacy field can
+    never activate its new-code default.
+    """
+    if not isinstance(data, Mapping):
+        raise ConfigError("a params override file must hold a JSON object")
+    missing = set(Params.LEGACY_FIELDS) - set(data)
+    if missing:
+        raise ConfigError(
+            "new-code set-params requires every dedup/seed field explicitly; "
+            f"missing {', '.join(sorted(missing))}. Use the complete dedup file, "
+            "and never apply the legacy king-x2 file with new code"
+        )
+    return from_jsonable(Params, data, "Params")
+
+
 def require_env(name: str, environ: Mapping[str, str] | None = None) -> str:
     """Read a required environment variable. A missing value is an error, never a default path."""
     value = (os.environ if environ is None else environ).get(name, "")

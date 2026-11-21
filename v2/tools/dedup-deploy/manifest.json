@@ -1,0 +1,14 @@
+{
+  "files": {
+    "rollback-compat/__init__.py": "8168ef96a2c7860323cfc17514d4f51403188079321a673c8042e02f452e04c1",
+    "rollback-compat/canonical.py": "4618f09f4b5f11768b9d204afc3bdb35cdcf6acfff0f7f4401477104bce9cec3",
+    "rollback-compat/controller.py": "f236ca4bc53208030db2794654d68b410fb6be99cc098628c046dac0d2777815",
+    "rollback-compat/dedup_compat.py": "881ea8b4b6f32b6a29a7f135d6adf55c1a88bfad7c480e5c5d879f0d3b7751cc",
+    "rollback-compat/params.py": "0fdbc68a261f15df345d69fe517356c5aa63db0009960909f7b3116947fd12b3",
+    "rollback-compat/state.py": "46c6ca7dd93af02dfe1ccbf1b53251f8685d93760be04fc2793df6e4bde07819",
+    "rollback-compat/types.py": "25ebe6ec7ac957fba78e1428ccd45e8186cfe4c996cca70947be0ad2a43db8da"
+  },
+  "old_commit": "c525286580c84d795b3ca7cbdf2302e96fce31ba",
+  "old_gpu_digest": "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47",
+  "schema": 1
+}

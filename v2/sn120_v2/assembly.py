@@ -65,7 +65,7 @@ from .params import Params, require_env
 from .publisher import StorePublisher
 from .r2 import R2Store
 from .seams import ObjectStore
-from .store import get_record
+from .store import LocalStore, get_record
 from .types import ChainSnapshot, HeadManifest
 from .worker import LocalRunner
 
@@ -156,12 +156,17 @@ def setting(name: str, meaning: str) -> str:
 
 
 def stack(context: StackContext) -> Stack:
-    store = R2Store.from_env()
-    state = context.load(store)  # brings the local journal up to date from the store, and pins context.params
+    # Explicit operator isolation must select the store before R2.from_env or
+    # context.load can pull the durable journal. set-params never opens a pool
+    # runtime; its sampler falls back to its own task table when the copied
+    # state does not include public IRT objects.
+    isolated = context.command in ("set-params", "end-round") and os.environ.get("SN120_V2_ISOLATED") == "1"
+    store = LocalStore(context.state_dir / "isolated-store") if isolated else R2Store.from_env()
+    state = context.load(None if isolated else store)  # pinned params come only from this local journal copy
     params = context.params
     pool = load_pool()
     pool_runtime = None
-    if params.rotation_enabled and context.command != "set-params":
+    if params.rotation_enabled and not isolated and context.command != "set-params":
         from .pool_runtime import PoolRuntime
         pool_runtime = PoolRuntime(store, params, state)
     if context.command != "set-params":
@@ -179,7 +184,9 @@ def stack(context: StackContext) -> Stack:
         setting(STREAMS_ENV, "the check of the waiting files reads " + ("one file after the other" if streams == SERIAL_STREAMS else f"{streams} files at one time")),
         setting(ORDER_ENV, "after a king, " + ("only the fold is before the next open (the order 'overlap')" if order == OVERLAP else "each step waits for the one before it (the order 'serial')")),
     )
-    sampler = IRTSampler(pool_runtime.active_ids if pool_runtime else pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))
+    copied_snapshot = state.snapshot_id and store.exists(layout.irt_snapshot(state.snapshot_id))
+    sampler = IRTSampler(pool_runtime.active_ids if pool_runtime else pool.task_ids, params,
+                         snapshot=stored_irt_snapshot(store, state) if copied_snapshot or not isolated else None)
     public_url = require_env("SN120_PUBLIC_URL")
     links_url = os.environ.get("SN120_LINKS_URL", "").strip()
     publisher = StorePublisher(store, "" if public_url == NONE else public_url, "" if links_url == NONE else links_url)
@@ -213,4 +220,4 @@ def stack(context: StackContext) -> Stack:
             keeper = HeadKeeper(store, box.work_dir, writer, checkpoint_every(), settings, proven=head.proven)
             head = dataclasses.replace(head, prepare=keeper.prepare, after_round=keeper.after_round, checkpoint=keeper.checkpoint)
     overlap = order == OVERLAP and context.command == "run"
-    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True, head=head, rollout_publisher=rollout_publisher, settings=shown, overlap=overlap, entropy_now=entropy_now, pool=pool_runtime)
+    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=not isolated, head=head, rollout_publisher=rollout_publisher, settings=shown, overlap=overlap, entropy_now=entropy_now, pool=pool_runtime)

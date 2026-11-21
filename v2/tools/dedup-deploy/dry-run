@@ -1,0 +1,593 @@
+#!/usr/bin/env bash
+# Offline deployment rehearsal. Never uses production services, R2 or secrets.
+# r000089 is an offline gate only: dedup is NOT armed for the live r000089.
+set -euo pipefail
+ROOT=${ROOT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}
+DRY_ROOT=${DRY_ROOT:-/home/bb/scratch/dedup-r089-genfeed}
+D=${D:-$DRY_ROOT/dedup-deploy-dry}
+SRC=${SRC:-/home/bb/scratch/kingx2-public-open-fix-d4f38380-normal/operator-state/journal.jsonl}
+STORE=${STORE:-/home/bb/scratch/kingx2-public-open-fix-d4f38380-normal}
+RESERVE_SRC=${RESERVE_SRC:-$STORE/reserve}
+KIT=${KIT:-$ROOT/v2/tools/dedup-deploy}
+PY=${PY:-/home/bb/scratch/kingx2-genfeed-rebase/testenv/bin/python}
+DEV=${DEDUP_DRY_DEVELOPMENT:-0}
+[ ! -e "$D" ] || { printf 'D must be a fresh isolated directory\n' >&2; exit 64; }
+case "$D" in /home/bb/scratch/*) ;; *) printf 'D must stay under /home/bb/scratch\n' >&2; exit 64;; esac
+mkdir -p "$D"/{here,helpers,operator-state,work/logs,watchdog,public,site,reserve,private}
+mkdir -p "$D/generator/inbox" "$D/live-reserve"
+exec > >(tee "$D/dry-run.log") 2>&1
+export PYTHONDONTWRITEBYTECODE=1
+printf '%s DRY ONLY: r000089 is not armed; no production access or writes\n' "$(date -u +%FT%TZ)"
+for path in "$SRC" "$STORE/public/pool/rotation/r000086.json" "$KIT/expect.json"; do [ -f "$path" ] || { echo "missing $path" >&2; exit 64; }; done
+HEAD=$(git -C "$ROOT" rev-parse HEAD)
+if [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=all -- v2/tools/dedup-deploy)" ]; then
+    [ "$DEV" = 1 ] || { echo 'kit has uncommitted changes; commit before final rehearsal' >&2; exit 64; }
+    echo 'DEVELOPMENT ONLY: working-tree kit; no final qualification PASS will be emitted'
+fi
+BRANCH=$(git -C "$ROOT" symbolic-ref --quiet --short HEAD)
+git clone -q --no-checkout --branch "$BRANCH" "$ROOT" "$D/repo"
+git -C "$D/repo" checkout -q --detach c525286580c84d795b3ca7cbdf2302e96fce31ba
+git -C "$D/repo" merge-base --is-ancestor c525286580c84d795b3ca7cbdf2302e96fce31ba e96566341dfa463d0a2f1853f038dac9877b2c9a
+# Pre-apply admission validation must never import from the still-old checkout.
+mkdir -p "$D/new-release"
+git -C "$D/repo" archive e96566341dfa463d0a2f1853f038dac9877b2c9a v2/sn120_v2 | tar -x -C "$D/new-release"
+[ "$(git -C "$D/repo" rev-parse HEAD)" = c525286580c84d795b3ca7cbdf2302e96fce31ba ]
+[ "$(git -C "$ROOT" rev-parse e96566341dfa463d0a2f1853f038dac9877b2c9a:v2/sn120_v2/admission.py)" = "$(git -C "$ROOT" hash-object "$D/new-release/v2/sn120_v2/admission.py")" ]
+if [ "$DEV" = 1 ]; then cp -a "$KIT/." "$D/here/"; else git -C "$D/repo" archive "$HEAD" v2/tools/dedup-deploy | tar -x -C "$D/here" --strip-components=3; fi
+$PY -I -c 'import hashlib,pathlib,sys; a,b=map(pathlib.Path,sys.argv[1:]); left={str(p.relative_to(a)):hashlib.sha256(p.read_bytes()).hexdigest() for p in a.rglob("*") if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("set-params-")}; right={str(p.relative_to(b)):hashlib.sha256(p.read_bytes()).hexdigest() for p in b.rglob("*") if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("set-params-")}; assert left==right,{"missing":sorted(set(right)-set(left)),"added":sorted(set(left)-set(right)),"changed":sorted(k for k in set(left)&set(right) if left[k]!=right[k])}; print("complete recursive kit comparison:",len(right),"files identical")' "$D/here" "$KIT"
+cp "$SRC" "$D/operator-state/journal.jsonl"
+# The open copied lease needs its original ticket and frozen bytes. Current
+# miner objects are synthesized locally; none are fetched from production.
+cp -a "$STORE/private/." "$D/private/"
+cp -a "$STORE/public/." "$D/public/"
+cp -a "$RESERVE_SRC/." "$D/reserve/"
+printf 'dry private pool state must never reach the public site\n' > "$D/private/pool-state"
+printf '%s\n' "$D/live-reserve" > "$D/reserve-live.path"
+printf '{"schema":"disposable-dry-prior-index","problems":{}}\n' > "$D/generator/prior-index.json"
+printf '{"dry_fixture":"preserve generator state"}\n' > "$D/generator/state.json"
+printf '{"dry_fixture":"preserve pending inbox evidence"}\n' > "$D/generator/inbox/pending.json"
+SOURCE_ROWS=$($PY -I -c 'import pathlib,sys; print(len(pathlib.Path(sys.argv[1]).read_text().splitlines()))' "$D/reserve/MANIFEST.jsonl")
+[ "$SOURCE_ROWS" -ge 3 ]
+cp -a "$D/reserve/." "$D/live-reserve/"
+$PY -I -c 'import json,pathlib,sys; root=pathlib.Path(sys.argv[1]); rows=(root/"MANIFEST.jsonl").read_text().splitlines(keepends=True); selected=rows[:-2]+rows[-1:]; (root/"MANIFEST.jsonl").write_text("".join(selected)); listed={json.loads(row)["shard"] for row in selected[:-1]}; [p.unlink() for p in (root/"shards").iterdir() if p.is_file() and p.name not in listed]' "$D/live-reserve"
+
+cat > "$D/helpers/dry_stack.py" <<'PY'
+"""Real controller/admission/worker seams over an isolated affine fixture."""
+import dataclasses, hashlib, json, os, pathlib, struct, time
+from sn120_v2 import layout
+from sn120_v2.admission import StoreAdmission
+from sn120_v2.canonical import canonical_json, manifest_digest, sha256_hex
+from sn120_v2.controller import HeadPublish, Stack, stored_irt_snapshot
+from sn120_v2.irt import IRTSampler
+from sn120_v2.pool_runtime import PoolRuntime
+from sn120_v2.sim import SimEvaluator, SimFolder, SimTrainer
+from sn120_v2.store import LocalStore, promote_fold
+from sn120_v2.worker import LocalRunner
+
+class PublicMirrorStore(LocalStore):
+    def _mirror(self, key):
+        if key.startswith("public/") and not key.startswith("public/pool/state"):
+            LocalStore(os.environ["DEDUP_PUBLIC_ROOT"]).put(key, super().get(key))
+    def put(self, key, raw):
+        answer = super().put(key, raw); self._mirror(key); return answer
+    def copy(self, source, target):
+        answer = super().copy(source, target); self._mirror(target); return answer
+
+class AffineEvaluator(SimEvaluator):
+    """Keep the real image contract while supplying local deterministic scores."""
+    def __init__(self, store, image):
+        super().__init__(store)
+        self.image = image
+    def evaluate(self, request):
+        return dataclasses.replace(super().evaluate(request), image_digest=self.image)
+
+class AffineTrainer(SimTrainer):
+    def train(self, request):
+        from sn120_v2.types import LoRAArtifact, TrainReport
+        entry, params = request.entry, request.params
+        recipe = params.recipe.for_miner(entry.batch.train)
+        quality = json.loads((pathlib.Path(os.environ["DEDUP_DRY_QUALITY"])).read_text()).get(entry.batch.batch_sha256, 0.0)
+        report = TrainReport(request.seed, recipe.steps, 0.5, 0.1, 1000, 0.1, "cpu", params.recipe.image_digests[0])
+        if request.round_id == os.environ.get("DEDUP_FIRST_HEALTH","r000090") and entry.queue_pos == int(os.environ.get("DEDUP_DRY_STORED_NULL_POS","3")):
+            report = dataclasses.replace(report,step_norm=0.0,norm_before_cap=0.0)
+        config = canonical_json({"quality":quality,"cap_rate":0.0,"rank":recipe.rank})
+        header = json.dumps({"layer.lora_A.weight":{"dtype":"F32","shape":[recipe.rank,1],"data_offsets":[0,4*recipe.rank]},
+                             "layer.lora_B.weight":{"dtype":"F32","shape":[1,recipe.rank],"data_offsets":[4*recipe.rank,8*recipe.rank]}},separators=(",",":")).encode()
+        weights = struct.pack("<Q",len(header))+header+struct.pack(f"<{2*recipe.rank}f",*([0.2]*recipe.rank+[0.0]*recipe.rank))
+        blobs = {"adapter_model.safetensors":weights,"adapter_config.json":config,
+                 "train_report.json":canonical_json(__import__("sn120_v2.canonical",fromlist=["to_jsonable"]).to_jsonable(report))}
+        for name,raw in blobs.items(): self.store.put(f"{request.out_prefix}/{name}",raw)
+        files = {name:sha256_hex(raw) for name,raw in blobs.items()}
+        return LoRAArtifact(manifest_digest(files),files,{name:len(raw) for name,raw in blobs.items()},request.out_prefix,
+                            request.head.version_id,entry.batch.batch_sha256,params.recipe_id,recipe.rank,recipe.alpha,recipe.target_modules,report)
+
+class Runner:
+    def __init__(self,store):
+        self.store=store
+    def _runner(self,ticket):
+        # Simulated wall time stays inside the ticket, but each phase consumes
+        # the real evaluation-budget clock rather than passing at a constant time.
+        image=ticket.params.recipe.image_digests[0]
+        ticks=iter((ticket.issued_at+1,ticket.issued_at+2,*range(ticket.issued_at+3,ticket.issued_at+1236,60)))
+        clock=lambda:next(ticks,ticket.issued_at+1235)
+        return LocalRunner(AffineTrainer(self.store),AffineEvaluator(self.store,image),clock,image,poll_s=.01)
+    def _finish(self,ticket,result):
+        return dataclasses.replace(result,started_at=ticket.issued_at+1,finished_at=ticket.issued_at+1236,phase_s={"training":1,"evaluation":1234})
+    def run(self,ticket):
+        mode=os.environ.get("DEDUP_DRY_ABORT_AFTER_OPEN")=="1"
+        abort=pathlib.Path(os.environ["DEDUP_WORK_DIR"])/"logs/abort-open-observed"
+        started=pathlib.Path(os.environ["DEDUP_WORK_DIR"])/"logs/abort-worker-started"
+        if mode and ticket.round_id==os.environ.get("DEDUP_FIRST_HEALTH","r000090") and not started.exists():
+            # The supervisor must observe this actual worker before reporting a
+            # crash. Journal-open alone can precede ticket dispatch in a dry run.
+            started.touch()
+            deadline=time.monotonic()+120
+            while not abort.exists():
+                if time.monotonic()>deadline: raise RuntimeError("dry abort release missing")
+                time.sleep(.01)
+            os._exit(70)  # a crashed worker/controller leaves an undecided open round
+        release=pathlib.Path(os.environ["DEDUP_WORK_DIR"])/"logs/driver-release"
+        if ticket.round_id==os.environ.get("DEDUP_SECOND_OPEN","r000091") and not release.exists():
+            deadline=time.monotonic()+1200
+            while not release.exists():
+                if time.monotonic()>deadline: raise RuntimeError("dry second-open release missing")
+                time.sleep(.05)
+        result=self._runner(ticket).run(ticket)
+        return self._finish(ticket,result)
+
+def stack(context):
+    # Each real CLI process sees the checkout that launches it. The helper's
+    # initial path is only a bootstrap; rollback must not retain new Params.
+    os.environ["DEDUP_V2"]=str(pathlib.Path(__file__).resolve().parents[1]/"repo/v2")
+    store=PublicMirrorStore(pathlib.Path(os.environ["DEDUP_OBJECT_ROOT"]))
+    state=context.load()
+    pool=PoolRuntime(store,state.params,state,root=store.root/"reserve")
+    sampler=IRTSampler(pool.active_ids,state.params,snapshot=stored_irt_snapshot(store,state))
+    admission=StoreAdmission(store,state.params,tokens=None,grader=None,streams=1)
+    return Stack(store,admission,sampler,Runner(store),SimFolder(store),pool=pool,
+                 entropy=lambda:"dry-unpredictable-fixture-entropy",head=HeadPublish(promote=promote_fold),mirror=False)
+PY
+# The injected journal boundary is real: Controller._settle has appended and
+# applied round_settled, but has not yet applied, closed or deleted evidence.
+cat > "$D/helpers/interrupt_journal.py" <<'PY'
+import os,pathlib
+from sn120_v2.journal import Journal
+class DecidedOpenJournal(Journal):
+    def append(self,kind,data,at):
+        record=super().append(kind,data,at)
+        crash=pathlib.Path(os.environ["DEDUP_WORK_DIR"])/"logs/decided-open-crash"
+        if (os.environ.get("DEDUP_DRY_DECIDED_OPEN")=="1" and kind=="round_settled"
+                and data.get("round_id")==os.environ.get("DEDUP_FIRST_HEALTH","r000090") and not crash.exists()):
+            assert record.data["decision"] is not None
+            assert pathlib.Path(os.environ["DEDUP_STATE"],"journal.jsonl").read_bytes().endswith(record.line()+b"\n")
+            crash.write_text(record.data["round_id"]+"\n")
+            os._exit(70)
+        return record
+PY
+cat > "$D/helpers/cli.py" <<'PY'
+import os,pathlib,sys
+helpers=pathlib.Path(__file__).resolve().parent
+sys.path.insert(0,str(helpers)); sys.path.insert(0,os.environ["DEDUP_V2"])
+import sn120_v2.cli
+# Match production's explicit bounded-run environment. Without a work
+# directory StopRequest has no path and cannot enforce the real stop request.
+if any(os.environ.get(name)=="1" for name in
+       ("DEDUP_DRY_ABORT_AFTER_OPEN","DEDUP_DRY_STORE_RESULT_AFTER_OPEN","DEDUP_DRY_DECIDED_OPEN")):
+    os.environ["SN120_WORK_DIR"]=os.environ["DEDUP_WORK_DIR"]
+    os.environ.pop("SN120_LOOP_MARK",None)
+# open_controller captured Journal in its own module, not in the helper module.
+if os.environ.get("DEDUP_DRY_DECIDED_OPEN")=="1":
+    import interrupt_journal
+    sn120_v2.cli.Journal=interrupt_journal.DecidedOpenJournal
+failure_mode=any(os.environ.get(name)=="1" for name in
+                 ("DEDUP_DRY_ABORT_AFTER_OPEN","DEDUP_DRY_STORE_RESULT_AFTER_OPEN","DEDUP_DRY_DECIDED_OPEN"))
+if failure_mode:
+    base=sn120_v2.cli.Journal
+    class RecoveryBoundJournal(base):
+        def append(self,kind,data,at):
+            rid=data.get("round_id") or (data.get("round") or {}).get("round_id")
+            if kind=="round_opened" and rid==os.environ.get("DEDUP_SECOND_OPEN","r000091"):
+                marker=pathlib.Path(os.environ["DEDUP_WORK_DIR"])/"logs/recovery-second-open"
+                marker.write_text(rid+"\n")
+                raise AssertionError("bounded recovery attempted a successor open")
+            return super().append(kind,data,at)
+    sn120_v2.cli.Journal=RecoveryBoundJournal
+raise SystemExit(sn120_v2.cli.main(sys.argv[1:]))
+PY
+cat > "$D/helpers/open_only.py" <<'PY'
+"""Prepare only copied predecessor opens; live health uses the real run CLI."""
+import os,pathlib,sys,time
+sys.path.insert(0,os.environ["DEDUP_V2"]); sys.path.insert(0,str(pathlib.Path(__file__).parent))
+from dry_stack import stack
+from sn120_v2.controller import StackContext
+from sn120_v2.journal import Journal
+from sn120_v2.params import Params
+from sn120_v2.controller import Controller
+state=pathlib.Path(os.environ["DEDUP_STATE"])
+now=int(time.time())
+context=StackContext(state,Params(),"round")
+parts=stack(context); context.params=context.load().params
+journal=Journal(state/"journal.jsonl","dry-predecessor",now)
+controller=Controller(journal,parts.store,parts.admission,parts.sampler,context.params,folder=parts.folder,pool=parts.pool,head=parts.head)
+at=max(now,context.load().last_failure_at+context.params.apply_retry_s+1)
+tickets=controller.open_round(at,"dry-predecessor-"+sys.argv[1])
+assert len(tickets)==1 and tickets[0].round_id==sys.argv[1]
+print(sys.argv[1])
+PY
+cat > "$D/helpers/old_status.py" <<'PY'
+import json,os,pathlib,sys
+kit=pathlib.Path(os.environ["DEDUP_HERE"]); sys.path.insert(0,str(kit)); sys.path.insert(0,str(pathlib.Path(__file__).parent))
+import rollback_cli
+rollback_cli.install(kit)
+from sn120_v2.cli import summary
+from sn120_v2.state import load
+state=load(pathlib.Path(os.environ["DEDUP_STATE"])/"journal.jsonl")
+report=summary(state,state.params)|{"batch_cap":state.params.batch_cap,"recipe_code_digest":state.params.recipe.code_digest}
+print(json.dumps(report))
+PY
+cat > "$D/helpers/synthesize.py" <<'PY'
+"""Synthetic affine files; no production batch or LoRA bytes are fetched."""
+import json,os,pathlib,sys
+sys.path.insert(0,os.environ["DEDUP_V2"])
+from sn120_v2 import layout
+from sn120_v2.canonical import canonical_json,sha256_hex
+from sn120_v2.state import load
+from sn120_v2.store import LocalStore
+from sn120_v2.admission import check_batch
+root=pathlib.Path(os.environ["DEDUP_OBJECT_ROOT"]); store=LocalStore(root)
+state=load(pathlib.Path(os.environ["DEDUP_STATE"])/"journal.jsonl")
+seats=list(state.queue.values())
+assert len(seats)>=28
+from sn120_v2.queue import waiting
+selected=waiting(state.queue)[:state.params.batch_cap+2]
+assert len(selected)==state.params.batch_cap+2
+# The copied predecessor starts with r86 open. A later call sees the already
+# open r89 gate and may replace only the not-yet-open r90 selection.
+gate=os.environ.get("DEDUP_GATE_ROUND","r000089")
+health_mode=state.round is not None and state.round.round_id==gate
+predecessor=state.round is not None and state.round.round_id=="r000086"
+assert state.round is None or health_mode or predecessor,state.round.round_id
+quality_map={}
+quality_path=pathlib.Path(os.environ["DEDUP_DRY_QUALITY"])
+if quality_path.exists(): quality_map=json.loads(quality_path.read_text())
+
+def batch(hotkey,label,train=None,short=False):
+    # Advantage is computed within each prompt group, not across the batch.
+    # Two alternating-reward rollouts per group make all rollouts active.
+    count=58 if short else 128
+    assert count%2==0
+    groups=[]
+    for i in range(count//2):
+        groups.append({"prompt":f"{label}-prompt-{i}","rollouts":[
+            {"output":f"{label}-answer-{2*i}","reward":0.0},
+            {"output":f"{label}-answer-{2*i+1}","reward":1.0}]})
+    body={"version":"affine-batch-v3","hotkey":hotkey,"groups":groups}
+    if train is not None: body["train"]=train
+    return canonical_json(body)
+
+for index,seat in enumerate(state.queue.values()):
+    hotkey=seat.reg.hotkey
+    # Predecessor fixtures have 128 nonzero-advantage rollouts, so they also
+    # pass the future 64-rollout floor without changing old-code behavior.
+    quality=.1 if index%3==0 else 0.0
+    raw=batch(hotkey,f"predecessor-{index}")
+    store.put(layout.miner_object(hotkey),raw)
+    quality_map[sha256_hex(raw)]=quality
+if not health_mode:
+    quality_path.write_text(json.dumps(quality_map,sort_keys=True))
+    print(json.dumps({"synthetic":True,"predecessor_queue_files":len(state.queue)}))
+    raise SystemExit(0)
+assert state.round.round_id==gate and state.round.decision is None
+
+for index,seat in enumerate(selected):
+    hotkey=seat.reg.hotkey
+    if index==0: raw=batch(hotkey,"minimum-signal",short=True)
+    elif index==1: raw=batch(hotkey,"static-null",train={"global_norm_cap":0.01})
+    elif index==2: raw=batch(hotkey,"keeper"); keeper_raw=raw
+    elif index==3: raw=batch(hotkey,"stored-null")
+    else: raw=batch(hotkey,f"independent-{index}")
+    store.put(layout.miner_object(hotkey),raw)
+    quality_map[sha256_hex(raw)]=.9 if index==2 else (.1 if index!=0 else 0.0)
+
+# The fifth selected file is a normalized-output copy of the third-seat keeper.
+# The fourth selected seat survives Stage A and produces the separate stored
+# null update. Waiting order is not insertion/dictionary order.
+assert selected[3].reg.uid != selected[4].reg.uid
+copied=json.loads(batch(selected[4].reg.hotkey,"copy"))
+keeper=json.loads(keeper_raw)
+copied["groups"]=[{"prompt":row["prompt"],"rollouts":[{"output":" "+r["output"]+" ","reward":r["reward"]} for r in row["rollouts"]]} for row in keeper["groups"]]
+raw=canonical_json(copied)
+store.put(layout.miner_object(selected[4].reg.hotkey),raw)
+quality_map[sha256_hex(raw)]=0.1
+
+for index,seat in enumerate(selected):
+    raw=store.get(layout.miner_object(seat.reg.hotkey))
+    assert store.sha256(layout.miner_object(seat.reg.hotkey))==sha256_hex(raw)
+health_selection=pathlib.Path(os.environ["DEDUP_DRY_HEALTH_SELECTION"])
+health_selection.write_text(json.dumps([seat.reg.hotkey for seat in selected]))
+# This old-code interpreter never parses the new params. A fresh interpreter
+# running the checked-out new release validates every intended admission cut.
+import subprocess
+code='import os,sys;sys.path.insert(0,sys.argv[1]);from sn120_v2.params import load_params;from sn120_v2.admission import check_batch,Invalid;from sn120_v2 import layout;from sn120_v2.store import LocalStore;import json;store=LocalStore(os.environ["DEDUP_OBJECT_ROOT"]);params=load_params(os.environ["DEDUP_HERE"]+"/new-params.json");seats=json.load(open(os.environ["DEDUP_DRY_HEALTH_SELECTION"]));out=[];\nfor i,hotkey in enumerate(seats):\n raw=store.get(layout.miner_object(hotkey));\n try: check_batch(raw,hotkey,params)\n except Invalid as exc: assert i in (0,1) and exc.rule==("min_rollouts" if i==0 else "null_update"),(i,exc.rule);out.append(exc.rule)\n else: assert i not in (0,1),i;out.append("accepted")\nprint(json.dumps(out))'
+checks=subprocess.run([sys.executable,"-I","-c",code,str(pathlib.Path(__file__).resolve().parents[1]/"new-release/v2")],env=os.environ,capture_output=True,text=True,check=True,timeout=180)
+quality_path.write_text(json.dumps(quality_map,sort_keys=True))
+print(json.dumps({"synthetic":True,"queue_files":len(state.queue),"health_selection_uids":[seat.reg.uid for seat in selected],"new_code_admission_checks":json.loads(checks.stdout),"admission_rejects":{"min_rollouts":1,"null_update":1},"selected_plan":{"duplicate":1,"stored_null_update":1,"survivors":4}}))
+PY
+cat > "$D/helpers/mirror_public.py" <<'PY'
+import os,pathlib,sys
+sys.path.insert(0,os.environ["DEDUP_V2"])
+from sn120_v2.store import LocalStore
+source=LocalStore(os.environ["DEDUP_OBJECT_ROOT"]); target=LocalStore(os.environ["DEDUP_PUBLIC_ROOT"])
+for key in source.list("public"):
+    if not key.startswith("public/pool/state"): target.put(key,source.get(key))
+assert not (target.root/"public/pool/state").exists()
+PY
+cat > "$D/helpers/interrupt_store.py" <<'PY'
+"""Optional crash injection after a genuine sealed-result store write."""
+import os,pathlib
+from sn120_v2 import layout
+from dry_stack import PublicMirrorStore
+class SealedInterruptStore(PublicMirrorStore):
+    def put(self,key,raw):
+        answer=super().put(key,raw)
+        crash=pathlib.Path(os.environ["DEDUP_WORK_DIR"])/"logs/sealed-result-crash"
+        if (os.environ.get("DEDUP_DRY_STORE_RESULT_AFTER_OPEN")=="1"
+                and key.startswith("private/rounds/"+os.environ.get("DEDUP_FIRST_HEALTH","r000090")+"/")
+                and key.endswith("/result.json") and not crash.exists()):
+            crash.write_text(key+"\n")
+            raise RuntimeError("dry crash after durable sealed-result write")
+        return answer
+PY
+# Enable the crash-injecting store without changing the real controller.
+if [ "${DEDUP_DRY_STORE_RESULT_AFTER_OPEN:-0}" = 1 ]; then
+    printf '\nPublicMirrorStore = __import__("interrupt_store", fromlist=["SealedInterruptStore"]).SealedInterruptStore\n' >> "$D/helpers/dry_stack.py"
+fi
+cat > "$D/helpers/drive.py" <<'PY'
+"""A disposable run-loop supervisor; every round is the real CLI run."""
+import json,os,pathlib,subprocess,sys,time
+root=pathlib.Path(sys.argv[1]); state=root/"operator-state"; work=root/"work"; logs=work/"logs"
+pidfile=root/"state-loop.pid"; stop=logs/"run-loop.stop-after-round"; runlog=logs/"run.log"
+def journal_state():
+    # Do not retain old Params/State definitions across the checkout boundary.
+    code='import json,sys;sys.path.insert(0,sys.argv[1]);from sn120_v2.state import load;s=load(sys.argv[2]);print(json.dumps({"round":None if s.round is None else s.round.round_id,"decided":s.round is not None and s.round.decision is not None}))'
+    result=subprocess.run([sys.executable,"-I","-c",code,str(root/"repo/v2"),str(state/"journal.jsonl")],capture_output=True,text=True,check=True,timeout=60)
+    return json.loads(result.stdout)
+
+cli=[sys.executable,"-I",str(root/"helpers/cli.py"),"run","--state-dir",str(state),"--stack","dry_stack:stack"]
+env=dict(os.environ,SN120_WORK_DIR=str(work)); env.pop("SN120_LOOP_MARK",None)
+
+def run_bounded():
+    # A successor ticket during the real stop-after-round path is a failed
+    # bound, even if a later crash happens to return the journal to idle.
+    unexpected=logs/"gate-second-open"
+    with runlog.open("a") as out:
+        process=subprocess.Popen(cli,env=env,stdout=out,stderr=subprocess.STDOUT)
+        while process.poll() is None:
+            state_now=journal_state()
+            if state_now["round"]=="r000090":
+                unexpected.write_text("r000090\n")
+                process.terminate()
+                raise RuntimeError("gate stop-after-round opened a successor")
+            time.sleep(.03)
+        result=process
+    if result.returncode: raise RuntimeError(f"real gate run exited {result.returncode}")
+    with runlog.open("a") as out: out.write("STOPPED after the round, as asked\n")
+    stop.unlink(missing_ok=True); pidfile.unlink(missing_ok=True)
+
+def new_loop():
+    with runlog.open("a") as out:
+        out.write("run-loop: loop started\n")
+        process=subprocess.Popen(cli,env=env,stdout=out,stderr=subprocess.STDOUT)
+    deadline=time.monotonic()+1200
+    while time.monotonic()<deadline:
+        state_now=journal_state()
+        if state_now["round"]=="r000091":
+            print("real new-code run opened r000091; second worker is held",flush=True)
+            (logs/"second-open-observed").write_text("r000091\n")
+            return process
+        if (os.environ.get("DEDUP_DRY_ABORT_AFTER_OPEN")=="1" and state_now["round"]=="r000090"
+                and (logs/"abort-worker-started").exists()):
+            (logs/"abort-open-observed").write_text("r000090\n")
+            process.wait(timeout=30)
+            if process.poll() is None: process.kill(); process.wait()
+            assert state_now["decided"] is False,state_now
+            pidfile.unlink(missing_ok=True)
+            with runlog.open("a") as out: out.write("run-loop: isolated crash after open\n")
+            print("undecided-open crash left r000090 open",flush=True)
+            return None
+        if process.poll() is not None:
+            if os.environ.get("DEDUP_DRY_STORE_RESULT_AFTER_OPEN")=="1" or os.environ.get("DEDUP_DRY_DECIDED_OPEN")=="1":
+                code='import json,os,sys;sys.path.insert(0,sys.argv[1]);from sn120_v2.state import load;from sn120_v2.store import LocalStore;from sn120_v2 import layout;s=load(sys.argv[2]);r=s.round;store=LocalStore(os.environ["DEDUP_OBJECT_ROOT"]);print(json.dumps({"round":None if r is None else r.round_id,"decided":r is not None and r.decision is not None,"sealed":[] if r is None else [l.lease_id for l in r.leases if store.exists(layout.sealed_result(r.round_id,l.lease_id))]}))'
+                result=subprocess.run([sys.executable,"-I","-c",code,str(root/"repo/v2"),str(state/"journal.jsonl")],capture_output=True,text=True,check=True,timeout=60)
+                proof=json.loads(result.stdout)
+                assert proof["round"]=="r000090" and proof["sealed"],proof
+                decided=os.environ.get("DEDUP_DRY_DECIDED_OPEN")=="1"
+                assert proof["decided"] is decided,proof
+                (logs/("decided-open-proof.json" if decided else "sealed-result-proof.json")).write_text(json.dumps(proof,indent=2)+"\n")
+                pidfile.unlink(missing_ok=True)
+                print(("decided-open" if decided else "sealed-result")+" crash left r000090 open",flush=True)
+                return None
+            raise RuntimeError(f"new run exited early {process.returncode}")
+        time.sleep(.05)
+    raise RuntimeError("real run did not reach the required second open")
+
+phase="gate"; process=None
+start=time.monotonic()
+while time.monotonic()-start<1800:
+    if phase=="gate" and stop.exists():
+        run_bounded(); phase="wait-new"
+    elif phase=="wait-new" and pidfile.exists():
+        process=new_loop(); phase="failed" if process is None else "second"
+    if phase in ("failed","second"): break
+    time.sleep(.03)
+else: raise RuntimeError(f"driver timed out in {phase}")
+if phase=="second":
+    release=logs/"driver-release"; deadline=time.monotonic()+1200
+    while not release.exists() and time.monotonic()<deadline: time.sleep(.05)
+    if release.exists():
+        stop.touch()
+        process.wait(timeout=1200)
+        assert process.returncode==0,process.returncode
+        with runlog.open("a") as out: out.write("STOPPED after the round, as asked\n")
+        stop.unlink(missing_ok=True); pidfile.unlink(missing_ok=True)
+print("disposable supervisor done",phase,flush=True)
+PY
+
+export DEDUP_DRY=1 DEDUP_PY="$PY" DEDUP_V2="$D/repo/v2" DEDUP_HERE="$D/here" DEDUP_STATE="$D/operator-state" DEDUP_ROLLBACK_PY="$PY" DEDUP_OLD_V2="$D/repo/v2"
+export DEDUP_OBJECT_ROOT="$D" DEDUP_PUBLIC_ROOT="$D/site" DEDUP_WORK_DIR="$D/work" DEDUP_LOOP_PIDFILE="$D/state-loop.pid"
+export DEDUP_RESERVE_PATH_FILE="$D/reserve-live.path" DEDUP_RESERVE_DIR="$D/live-reserve"
+export DEDUP_GENERATOR_ROOT="$D" DEDUP_GENERATOR_INBOX="$D/generator/inbox" DEDUP_GENERATOR_PID="$D/generator/ingestd.pid" DEDUP_PRIOR_INDEX="$D/generator/prior-index.json"
+export SN120_RESERVE_PATH_FILE="$D/reserve-live.path" SN120_GENERATOR_INBOX="$D/generator/inbox" SN120_GENERATOR_LOG="$D/generator/ingestd.log" SN120_GENERATOR_LOCK="$D/generator/ingestd.lock" SN120_GENERATOR_POLL_S=120 SN120_PUBLIC_URL=http://127.0.0.1:9
+export DEDUP_FIRST_HEALTH=r000090 DEDUP_SECOND_OPEN=r000091 DEDUP_GATE_ROUND=r000089
+# The first two new-code admission rejections do not receive queue positions.
+# Intended selected seat 3 is therefore the genuine survivor at queue_pos=1.
+export DEDUP_DRY_STORED_NULL_POS=1
+unset PYTHONPATH
+OP=("$PY" -I "$D/here/dedup_operator.py")
+export DEDUP_DRY_RUN="$PY -I $D/helpers/cli.py run --state-dir $D/operator-state --stack dry_stack:stack"
+export DEDUP_DRY_ROLLBACK_STATUS="$PY -I $D/helpers/old_status.py"
+export DEDUP_DRY_ROLLBACK_PARAMS_HASH="$D/here/rollback-python verify-params"
+cat > "$D/here/set-params" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$(git -C "$DEDUP_V2/.." rev-parse HEAD)" = c525286580c84d795b3ca7cbdf2302e96fce31ba ]; then
+    export PYTHONPATH="$DEDUP_HELPERS"
+    exec "$DEDUP_HERE/rollback-python" set-params --state-dir "$DEDUP_STATE" --stack dry_stack:stack --params "$1"
+fi
+exec "$DEDUP_PY" -I "$DEDUP_HELPERS/cli.py" set-params --state-dir "$DEDUP_STATE" --stack dry_stack:stack --params "$1"
+SH
+chmod +x "$D/here/set-params"
+export DEDUP_HELPERS="$D/helpers" DEDUP_DRY_SET_PARAMS="$D/here/set-params"
+# Shorten only the isolated publication retry; all production pins stay intact.
+$PY -I -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text()); assert d["new_commit"]=="e96566341dfa463d0a2f1853f038dac9877b2c9a"; d["public_retry_seconds"]=int(__import__("os").environ.get("DEDUP_DRY_PUBLIC_SECONDS","8")); p.write_text(json.dumps(d,indent=2,sort_keys=True)+"\n")' "$D/here/expect.json"
+$PY -I -c 'import sys;sys.path.insert(0,sys.argv[1]);from sn120_v2.state import load;s=load(sys.argv[2]);assert s.round and s.round.round_id=="r000086" and s.params.batch_cap==6' "$D/repo/v2" "$D/operator-state/journal.jsonl"
+"${OP[@]}" work-dir; "${OP[@]}" loop-count; "${OP[@]}" journal-close r000086 > "$D/entrypoint-journal-close.json"; "${OP[@]}" facts
+$PY -I "$D/helpers/mirror_public.py"
+export DEDUP_DRY_QUALITY="$D/synthetic-quality.json"
+export DEDUP_DRY_HEALTH_SELECTION="$D/health-selection.json"
+$PY -I "$D/helpers/synthesize.py" > "$D/predecessor-inputs.json"
+
+# Real ingestd and reserve/generator preservation fixtures. Its operator
+# launcher is outside the changing checkout; production uses a stable service
+# path, so the daemon's identity does not change with code checkout.
+INGESTD_SCRIPT="$D/generator/generator-ingestd.sh"
+cat > "$INGESTD_SCRIPT" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+V2=$(cd -P -- "$(dirname -- "$0")/../repo/v2" && pwd -P)
+cd "$V2"
+exec bash "$V2/systemd/generator-ingestd.sh" "$@"
+SH
+$PY -I - "$D/repo/v2" "$INGESTD_SCRIPT" <<'PY'
+import os,shlex,subprocess,sys
+v2,script=sys.argv[1:]
+command=f"exec setsid nohup bash {shlex.quote(script)} {shlex.quote(sys.executable)} {shlex.quote(os.environ['DEDUP_PRIOR_INDEX'])} >> {shlex.quote(os.environ['SN120_GENERATOR_LOG'])} 2>&1 < /dev/null & echo $! > {shlex.quote(os.environ['DEDUP_GENERATOR_PID'])}"
+subprocess.Popen(["bash","-c",command],cwd=v2,env=os.environ,start_new_session=True).wait(timeout=15)
+PY
+for _ in $(seq 1 100); do [ -s "$D/generator/ingestd.pid" ] && break; sleep .05; done
+INGESTD=$(cat "$D/generator/ingestd.pid"); kill -0 "$INGESTD"
+cleanup(){
+    if [ -f "$D/driver.pid" ]; then
+        driver=$(cat "$D/driver.pid")
+        if kill -0 "$driver" 2>/dev/null; then
+            # The held second-round worker must finish under new code. Release
+            # it and let the real stop-after-round path close the fixture.
+            touch "$D/work/logs/driver-release"
+            if ! wait "$driver" 2>/dev/null; then
+                kill -TERM "$driver" 2>/dev/null || true
+            fi
+        fi
+    fi
+    if [ -r "/proc/$INGESTD/cmdline" ] && tr '\0' ' ' < "/proc/$INGESTD/cmdline" | grep -q "$D/repo/v2/systemd/generator-ingestd.sh"; then kill -TERM "$INGESTD" 2>/dev/null || true; fi
+}
+trap cleanup EXIT
+"${OP[@]}" generator-check > "$D/generator-check.json"
+$PY -I -c 'import hashlib,json,pathlib; root=pathlib.Path(__import__("os").environ["DEDUP_GENERATOR_ROOT"]); paths=[root/"reserve-live.path",root/"generator/prior-index.json",root/"generator/state.json",root/"generator/inbox/pending.json",root/"generator/ingestd.lock"]; rows={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}; (root/"generator-before.json").write_text(json.dumps(rows,sort_keys=True)); reserve=pathlib.Path(__import__("os").environ["DEDUP_RESERVE_DIR"]); rows={str(p.relative_to(reserve)):hashlib.sha256(p.read_bytes()).hexdigest() for p in reserve.rglob("*") if p.is_file()}; (root/"reserve-before.json").write_text(json.dumps(rows,sort_keys=True))'
+cat > "$D/here/check-preserved" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+"$DEDUP_PY" -I -c 'import hashlib,json,os,pathlib; root=pathlib.Path(os.environ["DEDUP_GENERATOR_ROOT"]); expected=json.loads((root/"generator-before.json").read_text()); actual={k:hashlib.sha256((root/k).read_bytes()).hexdigest() for k in expected}; assert actual==expected,(actual,expected); reserve=pathlib.Path(os.environ["DEDUP_RESERVE_DIR"]); expected=json.loads((root/"reserve-before.json").read_text()); actual={str(p.relative_to(reserve)):hashlib.sha256(p.read_bytes()).hexdigest() for p in reserve.rglob("*") if p.is_file()}; assert actual==expected; print("generator and reserve bytes preserved")'
+"$DEDUP_PY" -I "$DEDUP_HERE/dedup_operator.py" generator-check >/dev/null
+SH
+chmod +x "$D/here/check-preserved"
+
+# Competing genfeed deployment must fail before a stop request or mutation.
+mkdir -p "$D/work/competitor/genfeed-deploy"
+printf '#!/usr/bin/env bash\nsleep 1200\n' > "$D/work/competitor/genfeed-deploy/autodeploy.sh"
+bash "$D/work/competitor/genfeed-deploy/autodeploy.sh" > "$D/competing.log" 2>&1 & COMPETITOR=$!
+if "${OP[@]}" deployment-guard > "$D/competing-guard.log" 2>&1; then echo 'competing deployment not detected' >&2; exit 1; fi
+grep 'another genfeed/dedup deploy is alive' "$D/competing-guard.log"
+kill -TERM "$COMPETITOR"; wait "$COMPETITOR" 2>/dev/null || true
+
+# Advance copied r86-r88 using real old-code runs. Re-pin the complete old file
+# immediately after r86 closes and before r87 opens.
+run_old(){ "$PY" -I "$D/helpers/cli.py" run --state-dir "$D/operator-state" --stack dry_stack:stack --rounds 1 --max-idle 1 --idle-sleep 0 >> "$D/work/logs/run.log" 2>&1; }
+open_old(){ "$PY" -I "$D/helpers/open_only.py" "$1" >> "$D/work/logs/run.log" 2>&1; }
+printf 'open: round r000089 is open\n' > "$D/work/logs/run.log"
+run_old
+[ "$("${OP[@]}" journal-open r000087 | "$PY" -I -c 'import json,sys;print(json.load(sys.stdin)["round"] is None)')" = True ]
+DEDUP_OLD_V2="$D/repo/v2" DEDUP_ROLLBACK_PY="$PY" "$D/here/set-params" "$D/here/old-params.json" > "$D/old-repin-before-r87.json"
+open_old r000087; run_old; open_old r000088; run_old; open_old r000089
+"${OP[@]}" journal-close r000088 > "$D/dispatch-journal-close.json"
+# These files were not consumed by old-code rounds. New params reject the two
+# admission fixtures; six genuine/duplicate seats form the health round.
+$PY -I "$D/helpers/synthesize.py" > "$D/synthetic-inputs.json"
+"${OP[@]}" journal-open r000090 > "$D/dispatch-journal-open.json"
+
+# The old gate stops through the genuine stop-after-round CLI mechanism.
+$PY -I "$D/helpers/drive.py" "$D" > "$D/driver.log" 2>&1 & DRIVER=$!
+printf '%s\n' "$DRIVER" > "$D/state-loop.pid" "$D/driver.pid"
+export H="$D/here" V2DIR="$D/repo/v2" RUNLOG="$D/work/logs/run.log" STOPF="$D/work/logs/run-loop.stop-after-round" WD="$D/watchdog"
+export S=0.002 POLL=1 STOP_WAIT=120 FIRST_OPEN_WAIT=180 HEALTH_WAIT=180
+bash "$D/here/autodeploy" > "$D/autodeploy-outer.log" 2>&1 & DEPLOY=$!
+# Create both distinct offline approvals before releasing the driver's gate
+# wait. Under parallel rehearsal load `sleep 2` does not prove autodeploy has
+# passed its marker checks, and a late marker can otherwise hit the one-second
+# poll after the required go-confirmed refusal.
+[ ! -e "$STOPF" ]
+touch "$D/here/go"
+# Two distinct explicit operator actions are required before any stop/apply.
+# Both files are disposable offline markers, never production authorization.
+touch "$D/here/go-confirmed"
+for _ in $(seq 1 100); do grep -q 'armed dedup' "$D/here/autodeploy.log" 2>/dev/null && break; sleep .05; done
+grep 'armed dedup' "$D/here/autodeploy.log"
+[ ! -e "$STOPF" ]
+for _ in $(seq 1 1800); do ! kill -0 "$DEPLOY" 2>/dev/null && break; sleep 1; done
+if kill -0 "$DEPLOY" 2>/dev/null; then echo 'autodeploy exceeded its dry deadline' >&2; exit 1; fi
+set +e; wait "$DEPLOY"; RC=$?; set -e
+cat "$D/autodeploy-outer.log"
+if [ "${DEDUP_DRY_ABORT_AFTER_OPEN:-0}" = 1 ] || [ "${DEDUP_DRY_STORE_RESULT_AFTER_OPEN:-0}" = 1 ] || [ "${DEDUP_DRY_DECIDED_OPEN:-0}" = 1 ]; then
+    [ "$RC" = 1 ] || { echo "forced post-open failure expected rc=1, got $RC" >&2; exit 1; }
+    grep 'public files not healthy' "$D/here/autodeploy.log"
+    if [ "${DEDUP_DRY_ABORT_AFTER_OPEN:-0}" = 1 ]; then
+        [ -f "$D/work/logs/abort-open-observed" ]
+        grep 'undecided-open crash left r000090 open' "$D/driver.log"
+    fi
+    if [ "${DEDUP_DRY_STORE_RESULT_AFTER_OPEN:-0}" = 1 ]; then
+        [ -f "$D/work/logs/sealed-result-proof.json" ]
+        $PY -I -c 'import json,sys; s=json.load(open(sys.argv[1])); assert s["round"]=="r000090" and s["sealed"] and not s["decided"],s; print("durable sealed result survived before undecided recovery")' "$D/work/logs/sealed-result-proof.json"
+    fi
+    if [ "${DEDUP_DRY_DECIDED_OPEN:-0}" = 1 ]; then
+        [ -f "$D/work/logs/decided-open-proof.json" ]
+        $PY -I -c 'import json,sys; s=json.load(open(sys.argv[1])); assert s["round"]=="r000090" and s["sealed"] and s["decided"],s; print("round_settled survived before decided-open recovery")' "$D/work/logs/decided-open-proof.json"
+    fi
+    grep 'reviewed new-code run finished' "$D/here/autodeploy.log"
+    grep 'old-code loop started after rollback' "$D/here/autodeploy.log"
+    [ "$(git -C "$D/repo" rev-parse HEAD)" = c525286580c84d795b3ca7cbdf2302e96fce31ba ]
+    [ "$("${OP[@]}" loop-count)" = 1 ]
+    DEDUP_OLD_V2="$D/repo/v2" "$PY" -I "$D/helpers/old_status.py" > "$D/recovered-old-status.json"
+    $PY -I -c 'import json,sys; s=json.load(open(sys.argv[1])); assert s["params_hash"]=="bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a" and s["phase"]=="IDLE" and s["batch_cap"]==6; print("shimmed old params/code verified")' "$D/recovered-old-status.json"
+    "$D/here/check-preserved"
+    [ ! -e "$STOPF" ]
+    if [ "$DEV" = 1 ]; then echo 'DRY DEVELOPMENT COMPLETE: bounded new-code finish and shimmed old rollback'; else printf '%s DRY POST-OPEN ROLLBACK PASS: sealed/undecided evidence finished under new code; shimmed old params/code and one old loop\n' "$(date -u +%FT%TZ)"; fi
+    exit 0
+fi
+[ "$RC" = 0 ] || { cat "$D/here/autodeploy.log"; exit "$RC"; }
+grep '^.* PASS: dedup ' "$D/here/autodeploy.log"
+"$D/here/check-preserved"
+[ -f "$D/site/public/rounds/r000090/round.json" ]
+[ ! -e "$D/site/public/pool/state" ]
+$PY -I -c 'import json,pathlib,sys; root=pathlib.Path(sys.argv[1]); h=json.loads((root/"here/health-r000090.json").read_text()); assert h["ok"],h; assert h["admission_cut_counts"]=={"min_rollouts":1,"null_update":1},h["admission_cut_counts"]; assert h["cut_counts"]["duplicate"]>=1 and h["cut_counts"]["null_update"]>=1 and h["surviving_batches"]>0,h; assert h["eval_wall_s"]==1234; assert (root/"operator-state/journal.jsonl").is_file(); print("health evidence verified",h["cut_counts"],h["admission_cut_counts"])' "$D"
+touch "$D/work/logs/driver-release"
+wait "$DRIVER"
+if [ "$DEV" = 1 ]; then echo 'DRY DEVELOPMENT COMPLETE: real run/gate/apply/public/health; no final PASS'; else printf '%s DRY AUTODEPLOY PASS: real run/gate/apply/open/public/health; r000089 remained offline-only\n' "$(date -u +%FT%TZ)"; fi

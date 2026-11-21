@@ -1,0 +1,21 @@
+{
+  "active_size": 10000,
+  "batch_cap": 6,
+  "first_health_round": "r000090",
+  "gate_round": "r000089",
+  "irt_draw_rule": "sqrt_fisher",
+  "reserve_path_file": "/root/sn120-run/reserve-live.path",
+  "reserve_dir": "/root/sn120-run/reserve-live",
+  "generator_inbox": "/root/sn120-run/generator/inbox",
+  "generator_ingestd_pid": "/root/sn120-run/generator/ingestd.pid",
+  "prior_index": "/root/sn120-run/generator/prior-index.json",
+  "n_tasks": 2000,
+  "new_commit": "e96566341dfa463d0a2f1853f038dac9877b2c9a",
+  "new_digest": "b68a3005fd9837e9474349ca086088d9a7649406772e141b169952e7ef7f6e01",
+  "new_params_hash": "0b2f390b0e416e9b1ff2523b81976777d827c1da92238f9147cbae7d8472a5f6",
+  "null_samples": 2,
+  "old_commit": "c525286580c84d795b3ca7cbdf2302e96fce31ba",
+  "old_digest": "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47",
+  "old_params_hash": "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a",
+  "public_retry_seconds": 1200
+}
