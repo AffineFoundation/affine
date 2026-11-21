@@ -438,7 +438,9 @@ class BoxResult(Record):
 
 @dataclass(frozen=True)
 class Score(Record):
-    """One LoRA against the mean king outcome; sample 0 shares its seed."""
+    """One LoRA against the king, with optional field-relative final-look measurements."""
+
+    LEFT_OUT_AT_DEFAULT = ("field_delta", "field_se", "field_z")
 
     n_tasks: int  # tasks this LoRA was scored on
     delta: float  # weighted mean of (LoRA pass rate - null M pass rate) per task
@@ -451,6 +453,9 @@ class Score(Record):
     cover: float  # share of this LoRA's rollouts that resolved without an infrastructure error
     eligible: bool
     reasons: tuple[str, ...] = ()  # why it is not eligible; empty when it is
+    field_delta: float | None = None
+    field_se: float | None = None
+    field_z: float | None = None
 
 
 @dataclass(frozen=True)

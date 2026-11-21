@@ -58,7 +58,7 @@ class Build:
         # Existing unit fixtures contain only a handful of rollouts and fake tiny updates.
         # Production defaults remain in Params; new floor tests opt into them explicitly.
         base = dict(n_tasks=8, min_scored_tasks=2, looks=(1.0,), batch_cap=4, recipe=Recipe(image_digests=(IMAGE,)),
-                    min_signal_rollouts=1, min_step_norm=0.0)
+                    min_signal_rollouts=1, min_step_norm=0.0, crown_gate="king")
         return Params(**(base | changes))
 
     @staticmethod

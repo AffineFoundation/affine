@@ -55,7 +55,7 @@ def sim_params(**changes: Any) -> Params:
     """Small parameters for fast CPU rounds."""
     # Simulation files are not affine batches and its fake updates are deliberately tiny: test new rules explicitly.
     base = dict(n_tasks=64, min_scored_tasks=16, batch_cap=4, looks=(0.5, 1.0), recipe=Recipe(image_digests=(SIM_IMAGE,)),
-                train_seed_scope="batch", min_signal_rollouts=1, min_step_norm=0.0, dedup_enabled=False)
+                train_seed_scope="batch", min_signal_rollouts=1, min_step_norm=0.0, dedup_enabled=False, crown_gate="king")
     params = Params(**(base | changes))
     # Historical simulations omit these fields. Dataclass replacement opts into a changed new rule explicitly.
     legacy = frozenset(name for name in Params.LEGACY_FIELDS
