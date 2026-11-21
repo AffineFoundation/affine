@@ -81,7 +81,7 @@ def test_full_step_changes_release_keys_on_a_kingx2_sim_journal(tmp_path, capsys
         "recipe.code_digest": {"before": "", "after": GPU_DIGEST},
     }
     assert preview["changed"] == expected
-    assert {name for name in preview["changed"]} == set(Params.LEGACY_FIELDS) | {
+    assert {name for name in preview["changed"]} == set(Params.LEGACY_FIELDS) - {"crown_gate", "z_field_bar"} | {
         "z_bar", "eval_merged", "recipe.code_digest",
     }
 

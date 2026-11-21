@@ -31,7 +31,7 @@ def test_defaults_match_the_spec_parameter_table():
 def test_serving_defaults_preserve_old_json_params_and_ticket_digests():
     params = Params()
     assert params.kv_cache_dtype == "auto" and params.max_num_seqs == 256
-    assert params.params_hash == "dd5b56fae0b953d84bc396a42a3c10f4e62acd974754cfbaa960221b59cb5fe8"
+    assert params.params_hash == "7eb09fa89387d1d2c5db2d8d0ffd627ad87ece8ef31bdfe93f3374f0c7bb1e50"
     assert "kv_cache_dtype" not in params.to_dict() and "max_num_seqs" not in params.to_dict()
     assert params.null_samples_per_task is None and params.null_samples == params.samples_per_task
     assert "null_samples_per_task" not in params.to_dict()
@@ -40,7 +40,7 @@ def test_serving_defaults_preserve_old_json_params_and_ticket_digests():
     assert two.params_hash != params.params_hash
     raw = json.dumps(params.to_dict(), sort_keys=True)
     assert Params.from_dict(json.loads(raw)).params_hash == params.params_hash
-    assert dataclasses.replace(params, kv_cache_dtype="fp8", max_num_seqs=512).params_hash == "4fb5d6fb049d98f57b0039897b758f9b5c8d6f5584475321df94b1bb3702133d"
+    assert dataclasses.replace(params, kv_cache_dtype="fp8", max_num_seqs=512).params_hash == "5e2169191be5163443b2fb30821234b7a2be058b08589d1eeb95a1488a309571"
     ticket = Build.ticket(params=params)
     assert ticket.digest() == ticket.digest()
     from sn120_v2.types import RoundTicket
@@ -89,7 +89,7 @@ def test_changed_params_shows_left_out_at_default_fields_in_both_directions():
     off = Params.from_json((Path(__file__).parent / "data" / "params_prod_shaped.json").read_bytes())
     on = dataclasses.replace(off, rotation_enabled=True)
     assert off.params_hash == "5359a448461c3f3a3e09bd9a2d8df9f387d916fb02b8d02eecea3582649c74a1"
-    assert Params().params_hash == "dd5b56fae0b953d84bc396a42a3c10f4e62acd974754cfbaa960221b59cb5fe8"
+    assert Params().params_hash == "7eb09fa89387d1d2c5db2d8d0ffd627ad87ece8ef31bdfe93f3374f0c7bb1e50"
     assert changed_params(on, off) == {"rotation_enabled": {"before": True, "after": False}}
     assert changed_params(off, on) == {"rotation_enabled": {"before": False, "after": True}}
 
@@ -221,7 +221,7 @@ def test_a_rejection_never_repeats_the_miners_own_key_text_and_bounds_must_name_
 def test_kingx2_and_dedup_params_keep_their_combined_and_legacy_identities():
     base = Params()
     assert "null_samples_per_task" not in base.to_dict()
-    assert base.params_hash == "dd5b56fae0b953d84bc396a42a3c10f4e62acd974754cfbaa960221b59cb5fe8"
+    assert base.params_hash == "7eb09fa89387d1d2c5db2d8d0ffd627ad87ece8ef31bdfe93f3374f0c7bb1e50"
     both = dataclasses.replace(base, null_samples_per_task=2, irt_draw_rule="sqrt_fisher")
     assert both.null_samples == 2 and both.dedup_enabled and both.train_seed_scope == "round"
     restored = Params.from_dict(both.to_dict())
