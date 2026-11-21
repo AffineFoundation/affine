@@ -332,6 +332,17 @@ class Controller:
         if not self.state.heads:
             raise V2Error("the journal has no genesis yet; give the parameters to bootstrap")
         self._log(PARAMS_SET, {"params": params.to_dict()}, now)
+        # set-params runs in its own process, but a controller may also keep
+        # running (the loop uses this method between rounds). Keep its live
+        # sampler and rotation inputs in step with the newly pinned params;
+        # otherwise the next open can seal an old-rule draw under a new hash.
+        if self.pool is not None:
+            self.pool.params = params
+        from .irt import IRTSampler
+        if isinstance(self.sampler, IRTSampler):
+            snapshot = stored_irt_snapshot(self.store, self.state) or self.sampler.public_snapshot()
+            self.sampler = IRTSampler(tuple(snapshot["tasks"]), params, snapshot=snapshot,
+                                      rotation=snapshot.get("rotation"))
         self._pin()
 
     def sync_registrations(self, chain: ChainSnapshot, now: int, force: bool = False) -> SyncPlan:
@@ -433,10 +444,9 @@ class Controller:
             snapshot = stored_irt_snapshot(self.store, state)
             if snapshot is None:
                 snapshot = self.sampler.public_snapshot()
-            self._rotation, self.sampler = self.pool.open(round_id, snapshot, state)
+            self._rotation, self.sampler, rotation = self.pool.open_and_publish(round_id, snapshot, state)
             if snapshot.get("snapshot_id"):
                 self.store.put(layout.irt_snapshot(snapshot["snapshot_id"]), canonical_json(to_jsonable(snapshot)))
-            rotation = self.pool.publish_open(self._rotation)
         draw = self.sampler.draw(head, make_round_seed(round_id, head.version_id, entropy), params.n_tasks)
         self._store_snapshot(draw.snapshot_id)
         tickets, leases = [], []

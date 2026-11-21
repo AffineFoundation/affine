@@ -1,6 +1,7 @@
 """Controller lifecycle with rotation enabled on a small, injected catalog."""
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from sn120_v2.controller import Controller
 from sn120_v2.envs.math_pool import MathPool, Task, POOL_V2_0_FILE, POOL_V2_0_SHA256, load_pool
 from sn120_v2.envs.reserve import empty_manifest
 from sn120_v2.errors import ConfigError, VerifyError
-from sn120_v2.irt import IRTSampler
+from sn120_v2.irt import MASS_RULES, IRTSampler
 from sn120_v2.journal import Journal, read_journal
 from sn120_v2.params import Params
 from sn120_v2.pool_runtime import PoolRuntime, active_file, load_rotation, replay_rotation
@@ -38,7 +39,7 @@ def make_reserve(root: Path, count: int = 20):
 
 
 def rotated_world(tmp_path, reserve_count=20, **changes) -> tuple[SimWorld, PoolRuntime]:
-    params = sim_params(rotation_enabled=True, rotation_k=3, rotation_retire_p=0.1, rotation_n_min=0, rotation_active_size=2, **changes)
+    params = sim_params(**(dict(rotation_enabled=True, rotation_k=3, rotation_retire_p=0.1, rotation_n_min=0, rotation_active_size=2) | changes))
     world = SimWorld(tmp_path, params)
     # Explicit initial ids keep the test quick; production PoolRuntime defaults
     # to all 20,120 base-pool ids, and therefore target size 20,120.
@@ -85,6 +86,21 @@ def test_rotated_round_opens_artifacts_before_journal_and_closes_ledger(tmp_path
     assert sum(row[0] for row in world.controller._rotation.ledger.values()) > 0
     replay = load(world.root / "journal.jsonl")
     assert replay.rotation_state_sha == world.controller.state.rotation_state_sha
+
+
+def test_live_params_change_rebuilds_the_next_sqrt_fisher_open(tmp_path):
+    world, pool = rotated_world(tmp_path, irt_draw_rule="fisher")
+    world.round()
+    params = dataclasses.replace(world.params, irt_draw_rule="sqrt_fisher")
+    world.controller.set_params(params, world.clock())
+    assert world.controller.sampler.public_snapshot()["config"]["draw_rule"] == "sqrt_fisher"
+    assert pool.params == params
+    world.register(2, 0.0)
+    record = world.round()
+    assert record is not None and record.params_hash == params.params_hash
+    snapshot = json.loads(world.store.get(layout.irt_snapshot(record.snapshot_id)))
+    assert snapshot["config"]["draw_rule"] == "sqrt_fisher"
+    assert snapshot["mass_rule"] == MASS_RULES["sqrt_fisher"]
 
 
 def test_mid_round_restart_does_not_rotate_again_and_recovers_exact_draw(tmp_path):
