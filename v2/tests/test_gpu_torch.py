@@ -28,6 +28,7 @@ from sn120_v2 import layout  # noqa: E402
 from sn120_v2.canonical import manifest_digest  # noqa: E402
 from sn120_v2.errors import BatchRejected, ContractError, InfraError, VerifyError  # noqa: E402
 from sn120_v2.gpu import genesis, train_job  # noqa: E402
+from sn120_v2.gpu.batch import render_prompt_ids  # noqa: E402
 from sn120_v2.gpu.folder import LoraFolder, read_lora, upcast  # noqa: E402
 from sn120_v2.gpu.plan import BoxConfig  # noqa: E402
 from sn120_v2.gpu.resident import hash_tree, upload_tree  # noqa: E402
@@ -126,7 +127,8 @@ def test_the_warm_up_row_changes_no_byte_of_what_training_makes(head_dir, tmp_pa
 
 def test_gradient_checkpointing_changes_no_byte_of_what_training_makes(head_dir, tmp_path, monkeypatch):
     # float32, as the test above: this test compares bytes.
-    cases = {"one": {}, "two": {"n": 2}, "mlp": {"n": 2, "steps": 3, "target_modules": ("gate_proj", "up_proj", "down_proj")}}
+    # Different replica counts need not give identical artifacts; use distinct recipes in this independent guard.
+    cases = {"one": {}, "two": {"n": 2, "steps": 3}, "mlp": {"n": 2, "steps": 3, "target_modules": ("gate_proj", "up_proj", "down_proj")}}
     cases["capped"] = {"steps": 4, "rank": 64, "alpha": 128.0, "global_norm_cap": 1e-4, "train_max_output_tokens": 3}
 
     def trees(name: str) -> dict:
@@ -242,8 +244,7 @@ def test_both_train_caps_cut_a_row_and_a_row_with_no_room_is_dropped_and_counted
     _, _, report = run(head_dir, tmp_path / "out", train_max_output_tokens=3)
     assert (report["truncated_rows"], report["dropped_rows"], report["rows"]) == (1, 0, 3)  # "ccdd" is 4 tokens: cut to 3, not rejected
     tokenizer = transformers.AutoTokenizer.from_pretrained(head_dir)
-    chat = tokenizer.apply_chat_template([{"role": "user", "content": "x"}], add_generation_prompt=True, tokenize=False)
-    short = len(tokenizer.encode(chat, add_special_tokens=False))  # the prompt "ab c" is 3 tokens longer
+    short = len(render_prompt_ids(tokenizer, "x"))  # the prompt "ab c" is 3 tokens longer
     result, _, report = run(head_dir, tmp_path / "context", train_max_output_tokens=3, train_max_context_tokens=short + 2)
     # The context cap leaves 2 output tokens after "x", and none after "ab c": that prompt's two rows are dropped.
     assert (report["truncated_rows"], report["dropped_rows"], report["rows"], result["status"]) == (1, 2, 1, "ok")

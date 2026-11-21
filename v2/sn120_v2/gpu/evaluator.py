@@ -27,7 +27,7 @@ from ..sampling import rollout_seed
 from ..seams import ObjectStore
 from ..types import CAP, ERROR, FAIL, NULL_MODEL, PASS, EvalChunk, EvalRequest, HeadVersion
 
-from .batch import END_OF_TURN
+from .batch import CHAT_TEMPLATE_KWARGS, END_OF_TURN
 from .plan import BoxConfig, check_pins, log_phase
 from .procs import Child, Process, Spawn, gpu_env, nvidia_smi, stop_all, wait_gpus_free
 from .resident import Resident, resident_head
@@ -231,7 +231,7 @@ def chat_body(model: str, messages: list[dict[str, str]], seed: int, params: Par
         "top_p": params.top_p,
         "top_k": params.top_k,
         "skip_special_tokens": False,
-        "chat_template_kwargs": {"enable_thinking": True},
+        "chat_template_kwargs": CHAT_TEMPLATE_KWARGS,
     }
 
 

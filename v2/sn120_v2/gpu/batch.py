@@ -8,14 +8,40 @@ mean reward of its group, with no division by the standard deviation.
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from typing import Any, Sequence
 
 from ..errors import BatchRejected
 
 END_OF_TURN = "<|im_end|>"  # the token that ends an assistant turn
 CONTROL_TOKENS = ("<|im_start|>", END_OF_TURN, "<|endoftext|>")
 
+# Every prompt is a math task. Keep the request and tokenization beside the batch rules so
+# scoring, training and admission share one source, covered by plan.code_digest().
+MANDATE = (
+    "Solve the math problem. Reason step by step in plain text, then end your response with the final answer "
+    "in `\\boxed{}`. Emit exactly one `\\boxed{}` block and nothing after it."
+)
+CHAT_TEMPLATE_KWARGS = {"enable_thinking": True}
+
 Groups = Sequence[tuple[str, Sequence[tuple[str, float]]]]  # ((prompt, ((output, reward), ...)), ...)
+
+
+def chat_messages(problem: str) -> list[dict[str, str]]:
+    """The scoring prompt: the math instruction as system, then the problem as user."""
+    return [{"role": "system", "content": MANDATE}, {"role": "user", "content": problem}]
+
+
+def train_messages(prompt: str) -> list[dict[str, str]]:
+    """Normalize either accepted pool-batch prompt form to the scoring messages."""
+    return chat_messages(prompt.removeprefix(MANDATE + "\n\n"))
+
+
+def render_prompt_ids(tokenizer: Any, prompt: str) -> list[int]:
+    """The prompt ids under exactly the head template and options of the scoring request."""
+    text = tokenizer.apply_chat_template(
+        train_messages(prompt), add_generation_prompt=True, tokenize=False, **CHAT_TEMPLATE_KWARGS
+    )
+    return tokenizer.encode(text, add_special_tokens=False)
 
 
 def advantages(rewards: Sequence[float], group_size: int = 0) -> list[float]:

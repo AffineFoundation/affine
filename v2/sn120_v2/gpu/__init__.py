@@ -3,7 +3,7 @@
 Everything that needs no GPU is plain Python and is tested on CPU:
 
   plan.py       the box config, the worker-image pin, the code digest
-  batch.py      frozen batch -> training rows: caps, advantages, derail mask
+  batch.py      frozen batch -> training rows: prompt render, caps, advantages, derail mask
   procs.py      child processes that hold GPUs, and the check that GPUs are free
   resident.py   verified local copies of the head, the fp32 master and LoRAs
   trainer.py    ``Trainer`` seam: one child process per LoRA, then hash and upload
