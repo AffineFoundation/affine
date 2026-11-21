@@ -22,35 +22,39 @@ from .errors import BatchRejected, ConfigError
 
 # BEGIN GENERATED RELEASE PINS (repin.py)
 DEDUP_FIELDS = {
-    "train_seed_scope": "round",
-    "dedup_enabled": True,
-    "dedup_rollout_overlap": 0.5,
-    "dedup_cos_shared_seed": 0.135,
-    "dedup_cos_own_seed": 0.002,
-    "min_signal_rollouts": 1,
-    "min_step_norm": 0.0,
-    "eval_merged": True,
+    'train_seed_scope': 'round',
+    'dedup_enabled': True,
+    'dedup_rollout_overlap': 0.5,
+    'dedup_cos_shared_seed': 0.135,
+    'dedup_cos_own_seed': 0.002,
+    'min_signal_rollouts': 1,
+    'min_step_norm': 0.0,
+    'eval_merged': True,
 }
-RELEASE_FIELDS = DEDUP_FIELDS | {"z_bar": 1.5}
 REVIEWED_OLD_PARAMS_HASH = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"
 REVIEWED_OLD_CODE_DIGEST = "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47"
+RELEASE_FIELDS = DEDUP_FIELDS | {'z_bar': 1.5}
 HISTORICAL_NEW_PARAMS_HASH = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 HISTORICAL_NEW_CODE_DIGEST = "28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"
 REVIEWED_NEW_PARAMS_HASH = "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
 REVIEWED_NEW_CODE_DIGEST = "2f7fd4ecaa8fa26800d8a3f54063d6286d614e309fcdffd9af59bfffeb7824fa"
 FINAL_NEW_PARAMS_HASH = "4c83d52f7489f8eae22e550e226edc17fb6f2f0d9f6dce5a4d333369e5b1a3be"
 FINAL_NEW_CODE_DIGEST = "07e946950889a1dfc9d8e59ce6b98fd955e2729b6ecf3b25912bf5660f556fda"
+STACKED_1_NEW_PARAMS_HASH = "965c2dbd935abf67e903ebf74465feb46e8c3f5cb635cd0df1335958f3b81856"
+STACKED_1_NEW_CODE_DIGEST = "790f3b6f2ff24916aeac56943bb8666d50fe26e3912da13e5ce0a68a227bb185"
 REVIEWED_NEW_PARAMS_HASHES = frozenset((
     HISTORICAL_NEW_PARAMS_HASH,
     REVIEWED_NEW_PARAMS_HASH,
     FINAL_NEW_PARAMS_HASH,
+    STACKED_1_NEW_PARAMS_HASH,
 ))
 REVIEWED_NEW_CODE_DIGESTS = {
     HISTORICAL_NEW_PARAMS_HASH: HISTORICAL_NEW_CODE_DIGEST,
     REVIEWED_NEW_PARAMS_HASH: REVIEWED_NEW_CODE_DIGEST,
     FINAL_NEW_PARAMS_HASH: FINAL_NEW_CODE_DIGEST,
+    STACKED_1_NEW_PARAMS_HASH: STACKED_1_NEW_CODE_DIGEST,
 }
-NEW_PARAMS_ONLY_FIELDS = frozenset()
+NEW_PARAMS_ONLY_FIELDS = frozenset(('crown_gate', 'z_field_bar'))
 # END GENERATED RELEASE PINS (repin.py)
 
 # Identity of the launch model. The base hash is the manifest digest of the

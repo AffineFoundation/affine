@@ -8,8 +8,8 @@ Run from the final stacked worktree, not from a production checkout:
 The checkout must be at that commit and contain the complete crown-gate and
 prompt-template changes. Committed Params defaults are the source of their
 values; no gate/template value is guessed or overwritten by this tool.
-Only the reviewed dedup release overrides and the release thresholds below
-are required to remain at their approved values.
+Only the reviewed dedup release overrides and admission floors below are
+required. The committed release's crown thresholds are never replaced.
 
 The command updates new-params.json, expect.json, the exact historical
 params/code pairs in rollback-compat/params.py, the preserved raw incident
@@ -45,11 +45,19 @@ DEDUP_FIELDS = {
     "dedup_cos_own_seed": 0.002,
     "min_signal_rollouts": 1,
     "min_step_norm": 0.0,
-    "z_bar": 1.5,
     "eval_merged": True,
 }
-REQUIRED = {"batch_cap": 6, "z_bar": 1.5, "eval_merged": True,
+REQUIRED = {"batch_cap": 6, "dedup_enabled": True, "eval_merged": True,
             "min_step_norm": 0.0, "min_signal_rollouts": 1, "train_seed_scope": "round"}
+OLD_COMMIT = "c525286580c84d795b3ca7cbdf2302e96fce31ba"
+OLD_PIN = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"
+OLD_DIGEST = "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47"
+FULL_FOLD_COMMIT = "71d287f61338596ee24ad1dca654f8cf2cafe6e7"
+REPAIRED_COMMIT = "14ae80f538448a203481de6f5a3304965cd3f334"
+REPAIRED_PIN = "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
+REPAIRED_DIGEST = "2f7fd4ecaa8fa26800d8a3f54063d6286d614e309fcdffd9af59bfffeb7824fa"
+COMBINED_PIN = "4c83d52f7489f8eae22e550e226edc17fb6f2f0d9f6dce5a4d333369e5b1a3be"
+COMBINED_DIGEST = "07e946950889a1dfc9d8e59ce6b98fd955e2729b6ecf3b25912bf5660f556fda"
 INCIDENT_COMMIT = "50afaca32ea982796728a0b07cb6e3c579ef378b"
 INCIDENT_PIN = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 INCIDENT_DIGEST = "28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"
@@ -105,6 +113,7 @@ def render_pins(text: str, pins: dict[str, tuple[str, str]], added: set[str]) ->
     lines.append("}")
     lines.append('REVIEWED_OLD_PARAMS_HASH = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"')
     lines.append('REVIEWED_OLD_CODE_DIGEST = "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47"')
+    lines.append("RELEASE_FIELDS = DEDUP_FIELDS | {'z_bar': 1.5}")
     for pin, (name, code_digest) in pins.items():
         prefix = name.removesuffix("_NEW_PARAMS_HASH")
         lines.append(f'{name} = "{pin}"')
@@ -128,28 +137,44 @@ def render_pins(text: str, pins: dict[str, tuple[str, str]], added: set[str]) ->
     return replaced
 
 
-def incident_params(full: dict, added: set[str], canonical) -> tuple[dict, str]:
-    incident_file = KIT / "incident_new-params.json"
-    if incident_file.exists():
-        data = json.loads(incident_file.read_text(encoding="utf-8"))
-    else:
-        # Fields added after the incident use the new schema's default-omission
-        # rule. A deliberately nondefault committed value remains in the raw
-        # record; a default value is omitted and decodes without changing its
-        # historical canonical hash.
-        stacked_fields = {
-            f.name for f in dataclasses.fields(Params)
-            if f.name in added - set(DEDUP_FIELDS)
-            and f.default is not dataclasses.MISSING and full[f.name] == f.default
-            and f.name in Params.LEFT_OUT_AT_DEFAULT
-        }
-        data = {key: value for key, value in full.items() if key not in stacked_fields}
-        data["recipe"] = dict(full["recipe"], code_digest=INCIDENT_DIGEST)
+def incident_params(canonical) -> tuple[dict, str]:
+    """Read the preserved incident record; never infer its historical fields."""
+    path = KIT / "incident_new-params.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or not isinstance(data.get("recipe"), dict):
         raise ValueError("incident_new-params.json must contain a full Params object and recipe")
     if data["recipe"].get("code_digest") != INCIDENT_DIGEST or canonical.digest(data) != INCIDENT_PIN:
         raise ValueError("incident_new-params.json is not the exact historical d5979c30/code pin")
     return data, canonical.digest(data)
+
+
+def repaired_params(canonical) -> dict:
+    """Recover the exact first repaired release from its immutable Git record."""
+    raw = subprocess.run(
+        ["git", "show", f"{REPAIRED_COMMIT}:v2/tools/dedup-deploy/new-params.json"],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    ).stdout
+    data = json.loads(raw)
+    preserved = KIT / "repaired_new-params.json"
+    if preserved.exists() and json.loads(preserved.read_text(encoding="utf-8")) != data:
+        raise ValueError("preserved repaired params differ from the reviewed 14ae80f5 record")
+    if (not isinstance(data, dict) or not isinstance(data.get("recipe"), dict)
+            or data["recipe"].get("code_digest") != REPAIRED_DIGEST
+            or canonical.digest(data) != REPAIRED_PIN):
+        raise ValueError("the exact 14ae80f5 repaired params/code pin changed")
+    return data
+
+
+def git_digest(commit: str, canonical) -> str:
+    files = {}
+    names = subprocess.run(["git", "ls-tree", "--name-only", f"{commit}:v2/sn120_v2/gpu"],
+                           cwd=ROOT, check=True, capture_output=True, text=True).stdout.splitlines()
+    for name in names:
+        if name.endswith(".py"):
+            raw = subprocess.run(["git", "show", f"{commit}:v2/sn120_v2/gpu/{name}"],
+                                 cwd=ROOT, check=True, capture_output=True).stdout
+            files[name] = hashlib.sha256(raw).hexdigest()
+    return canonical.manifest_digest(files)
 
 
 def write_json(path: Path, value: object) -> None:
@@ -158,7 +183,9 @@ def write_json(path: Path, value: object) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("final_sha", help="complete 40-hex SHA of the stacked production commit")
+    parser.add_argument("final_sha", help="complete 40-hex SHA of HEAD, normally the stacked production-code commit")
+    parser.add_argument("--code-sha",
+                        help="production code identity when final_sha is a kit-only commit; its source tree must match HEAD")
     parser.add_argument("--gate-round", default="r000093")
     parser.add_argument("--first-health-round", default="r000094")
     parser.add_argument("--python", default=sys.executable,
@@ -170,6 +197,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not SHA.fullmatch(args.final_sha):
         parser.error("final_sha must be a complete lowercase 40-hex commit SHA")
+    if args.code_sha is not None and not SHA.fullmatch(args.code_sha):
+        parser.error("--code-sha must be a complete lowercase 40-hex commit SHA")
     if not ROUND.fullmatch(args.gate_round) or not ROUND.fullmatch(args.first_health_round):
         parser.error("rounds must be rNNNNNN")
     if int(args.first_health_round[1:]) != int(args.gate_round[1:]) + 1:
@@ -178,9 +207,40 @@ def main(argv: list[str] | None = None) -> int:
                           capture_output=True, text=True).stdout.strip()
     if head != args.final_sha:
         raise ValueError(f"checkout HEAD is {head}, not requested final SHA {args.final_sha}")
-    subprocess.run(["git", "merge-base", "--is-ancestor", "40fe054e6444a575fc9ad0a11d01631928488c81", head],
-                   cwd=ROOT, check=True)
-    subprocess.run(["git", "merge-base", "--is-ancestor", INCIDENT_COMMIT, head], cwd=ROOT, check=True)
+    code_sha = args.code_sha or args.final_sha
+    for required in (INCIDENT_COMMIT, REPAIRED_COMMIT, FULL_FOLD_COMMIT):
+        if subprocess.run(["git", "merge-base", "--is-ancestor", required, code_sha], cwd=ROOT).returncode:
+            raise ValueError(f"production code {code_sha} omits required safety lineage {required}")
+    for label, directory in (("production code", "v2/sn120_v2"),):
+        result = subprocess.run(["git", "diff", "--exit-code", code_sha, head, "--", directory],
+                                cwd=ROOT, capture_output=True, text=True)
+        if result.returncode:
+            raise ValueError(f"{label} at HEAD differs from production code {code_sha}")
+        result = subprocess.run(["git", "diff", "--exit-code", code_sha, "--", directory],
+                                cwd=ROOT, capture_output=True, text=True)
+        if result.returncode:
+            raise ValueError(f"{label} working tree differs from production code {code_sha}")
+    overlay_dir = "v2/tools/dedup-deploy/rollback-compat"
+    result = subprocess.run(["git", "diff", "--exit-code", code_sha, head, "--", overlay_dir],
+                            cwd=ROOT, capture_output=True, text=True)
+    if result.returncode:
+        raise ValueError(f"rollback overlay at kit HEAD differs from production code {code_sha}")
+    changed = subprocess.run(["git", "diff", "--name-only", code_sha, "--", overlay_dir],
+                             cwd=ROOT, check=True, capture_output=True, text=True).stdout.splitlines()
+    if set(changed) - {f"{overlay_dir}/params.py"}:
+        raise ValueError(f"uncommitted handwritten rollback-overlay changes are refused: {sorted(set(changed) - {f'{overlay_dir}/params.py'})}")
+    overlay_path = f"{overlay_dir}/params.py"
+    committed_overlay = subprocess.run(["git", "show", f"{head}:{overlay_path}"],
+                                       cwd=ROOT, check=True, capture_output=True, text=True).stdout
+    generated_block = re.compile(
+        r"# BEGIN GENERATED RELEASE PINS \(repin\.py\)\n.*?"
+        r"# END GENERATED RELEASE PINS \(repin\.py\)", re.DOTALL,
+    )
+    if generated_block.sub("", PARAMS.read_text(encoding="utf-8")) != generated_block.sub("", committed_overlay):
+        raise ValueError("only the generated rollback-pin block may be dirty before re-pinning")
+    overlay = (V2 / "sn120_v2/gpu/folder.py").read_text(encoding="utf-8")
+    if "folded = in_children([FoldJob(" not in overlay:
+        raise ValueError("full-mode crowned install fold is not isolated with in_children")
 
     # The new code and its exact old schema are loaded directly from the final
     # checkout/git object. No installed package or ambient PYTHONPATH is used.
@@ -205,18 +265,10 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError(f"final Params removed old-schema fields; reviewed migration required: {sorted(missing)}")
     added = new_fields - old_fields
     gpu_digest = digest_files(V2 / "sn120_v2/gpu", canonical)
-    # Read the incident GPU files from git, not the final checkout.
-    incident_files = {}
-    names = subprocess.run(["git", "ls-tree", "--name-only", f"{INCIDENT_COMMIT}:v2/sn120_v2/gpu"],
-                           cwd=ROOT, check=True, capture_output=True, text=True).stdout.splitlines()
-    for name in names:
-        if name.endswith(".py"):
-            raw = subprocess.run(["git", "show", f"{INCIDENT_COMMIT}:v2/sn120_v2/gpu/{name}"],
-                                 cwd=ROOT, check=True, capture_output=True).stdout
-            incident_files[name] = hashlib.sha256(raw).hexdigest()
-    incident_gpu = canonical.manifest_digest(incident_files)
-    if incident_gpu != INCIDENT_DIGEST:
-        raise ValueError("the exact incident GPU digest no longer matches the reviewed identity")
+    # Read the historical GPU trees from git, not the final checkout.
+    for commit, expected_digest in ((INCIDENT_COMMIT, INCIDENT_DIGEST), (REPAIRED_COMMIT, REPAIRED_DIGEST)):
+        if git_digest(commit, canonical) != expected_digest:
+            raise ValueError(f"the exact historical GPU digest changed for {commit}")
 
     full = json.loads((KIT / "new-params.json").read_text(encoding="utf-8"))
     if not isinstance(full, dict) or not isinstance(full.get("recipe"), dict):
@@ -249,16 +301,17 @@ def main(argv: list[str] | None = None) -> int:
         cwd=ROOT, check=True, capture_output=True, text=True,
     ).stdout
     expected = json.loads((KIT / "expect.json").read_text(encoding="utf-8"))
-    if expected["old_commit"] != "c525286580c84d795b3ca7cbdf2302e96fce31ba" or expected["old_digest"] != "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47" or expected["old_params_hash"] != "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a":
+    if (expected["old_commit"], expected["old_digest"], expected["old_params_hash"]) != (OLD_COMMIT, OLD_DIGEST, OLD_PIN):
         raise ValueError("re-pin supports only the reviewed c5252865 rollback identity")
     pins = read_pins(bootstrap_text if "# BEGIN GENERATED RELEASE PINS (repin.py)" not in old_text else old_text)
     for name, value in {
         "DEDUP_FIELDS": DEDUP_FIELDS,
+        "RELEASE_FIELDS": DEDUP_FIELDS | {"z_bar": 1.5},
         "NEW_PARAMS_ONLY_FIELDS": frozenset(added - set(DEDUP_FIELDS)),
         "REVIEWED_NEW_PARAMS_HASHES": frozenset(pins),
         "REVIEWED_NEW_CODE_DIGESTS": {pin: code for pin, (_, code) in pins.items()},
-        "REVIEWED_OLD_PARAMS_HASH": expected["old_params_hash"],
-        "REVIEWED_OLD_CODE_DIGEST": expected["old_digest"],
+        "REVIEWED_OLD_PARAMS_HASH": OLD_PIN,
+        "REVIEWED_OLD_CODE_DIGEST": OLD_DIGEST,
     }.items():
         setattr(old_params_module, name, value)
     for pair in args.accept_new_pin:
@@ -286,21 +339,24 @@ def main(argv: list[str] | None = None) -> int:
         while f"STACKED_{number}_NEW_PARAMS_HASH" in used:
             number += 1
         pins[params_hash] = (f"STACKED_{number}_NEW_PARAMS_HASH", gpu_digest)
-    incident_data, incident_pin = incident_params(full, added, canonical)
+    incident_data, incident_pin = incident_params(canonical)
+    repaired_data = repaired_params(canonical)
+    combined_data = json.loads(subprocess.run(
+        ["git", "show", "40fe054e6444a575fc9ad0a11d01631928488c81:v2/tools/dedup-deploy/new-params.json"],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    ).stdout)
     required_pins = {
         INCIDENT_PIN: INCIDENT_DIGEST,
-        "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4": "2f7fd4ecaa8fa26800d8a3f54063d6286d614e309fcdffd9af59bfffeb7824fa",
-        "4c83d52f7489f8eae22e550e226edc17fb6f2f0d9f6dce5a4d333369e5b1a3be": "07e946950889a1dfc9d8e59ce6b98fd955e2729b6ecf3b25912bf5660f556fda",
+        REPAIRED_PIN: REPAIRED_DIGEST,
+        COMBINED_PIN: COMBINED_DIGEST,
     }
     for pin, code_digest in required_pins.items():
         if pin not in pins or pins[pin][1] != code_digest:
             raise ValueError(f"required historical params/code pair {pin} is missing or changed")
     historical_pairs = {
         INCIDENT_PIN: incident_data,
-        "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4": dict(
-            incident_data, z_bar=1.0,
-            recipe=dict(incident_data["recipe"], code_digest="2f7fd4ecaa8fa26800d8a3f54063d6286d614e309fcdffd9af59bfffeb7824fa"),
-        ),
+        REPAIRED_PIN: repaired_data,
+        COMBINED_PIN: combined_data,
     }
     for pin, data in historical_pairs.items():
         if canonical.digest(data) != pin:
@@ -313,7 +369,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Check the exact complete new record against the old schema before writing.
     translated = dict(full)
-    for name in (*DEDUP_FIELDS, *added):
+    for name in (*DEDUP_FIELDS, "z_bar", *added):
         translated.pop(name, None)
     translated["recipe"] = dict(full["recipe"], code_digest=expected["old_digest"])
     translated_params = old_params_module.Params.from_json(canonical.canonical_json(translated))
@@ -324,9 +380,10 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     expect = dict(expected, gate_round=args.gate_round, first_health_round=args.first_health_round,
-                  new_commit=args.final_sha, new_digest=gpu_digest, new_params_hash=params_hash,
+                  new_commit=code_sha, kit_commit=args.final_sha, new_digest=gpu_digest, new_params_hash=params_hash,
                   incident_commit=INCIDENT_COMMIT, incident_digest=INCIDENT_DIGEST,
-                  incident_params_hash=INCIDENT_PIN)
+                  incident_params_hash=INCIDENT_PIN, repaired_commit=REPAIRED_COMMIT,
+                  repaired_digest=REPAIRED_DIGEST, repaired_params_hash=REPAIRED_PIN)
     new_text = render_pins(old_text, pins, added)
     ast.parse(new_text, filename=str(PARAMS))
     PARAMS.write_text(new_text, encoding="utf-8")
@@ -334,11 +391,36 @@ def main(argv: list[str] | None = None) -> int:
     # the pre-repin module. This is the same overlay file the old CLI installs.
     sys.modules.pop("repin_old_package.generated_params", None)
     generated_params = load_source("repin_old_package.generated_params", PARAMS)
-    generated_params.Params.from_dict(full)
-    generated_params.Params.from_dict(incident_data)
+    for data in (full, *historical_pairs.values()):
+        decoded = generated_params.Params.from_dict(data)
+        if decoded.params_hash != OLD_PIN or decoded.z_bar != 1.0:
+            raise ValueError("an accepted release does not translate to the exact old params behavior")
+        if "crown_gate" in data:
+            if (data.get("crown_gate"), data.get("z_field_bar"), data.get("z_bar")) != ("field_median", 1.0, 0.0):
+                raise ValueError("the field-gate release lost its committed gate parameters")
+        elif data.get("z_bar") != 1.5 or "z_field_bar" in data:
+            raise ValueError("a pre-field-gate release record was modified")
+    for field in added - set(DEDUP_FIELDS):
+        if field in full:
+            changed = dict(full)
+            changed[field] = {"field_median": "king", "king": "field_median"}.get(full[field], object())
+            try:
+                generated_params.Params.from_dict(changed)
+            except Exception:
+                pass
+            else:
+                raise ValueError(f"changed new field {field} was not refused by the old decoder")
+    for damaged in (dict(full, unreviewed_field=True),
+                    dict(full, recipe=dict(full["recipe"], code_digest=OLD_DIGEST))):
+        try:
+            generated_params.Params.from_dict(damaged)
+        except Exception:
+            pass
+        else:
+            raise ValueError("unknown fields or an unpaired code digest were accepted")
     write_json(KIT / "new-params.json", full)
-    if not (KIT / "incident_new-params.json").exists():
-        write_json(KIT / "incident_new-params.json", incident_data)
+    write_json(KIT / "incident_new-params.json", incident_data)
+    write_json(KIT / "repaired_new-params.json", repaired_data)
     write_json(KIT / "expect.json", expect)
     manifest = json.loads((KIT / "manifest.json").read_text(encoding="utf-8"))
     for name in manifest["files"]:
@@ -371,7 +453,7 @@ def main(argv: list[str] | None = None) -> int:
         subprocess.run([args.python, "-I", str(KIT / "test_frozen_inputs.py")], cwd=ROOT, env=env, check=True)
     print(json.dumps({
         "status": "REPIN STATIC CHECKS PASS" if args.skip_frozen_inputs else "REPIN STATIC/FROZEN-INPUT CHECKS PASS",
-        "commit": head, "gpu_digest": gpu_digest, "params_hash": params_hash,
+        "commit": head, "production_code_commit": code_sha, "gpu_digest": gpu_digest, "params_hash": params_hash,
         "new_params_sha256": hashlib.sha256((KIT / "new-params.json").read_bytes()).hexdigest(),
         "gate_round": args.gate_round, "first_health_round": args.first_health_round,
         "new_params_only_fields_dropped_for_old_code": sorted(added),

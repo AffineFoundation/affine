@@ -4,33 +4,38 @@ This is an **operator-only release kit**, not a deployment. It does not grant
 permission to arm a round, change weights, or access production. Building and
 qualifying this kit makes no production change.
 
-## Current r000093 release
+## Current integrated field-gate release
 
-This r000093 incident-repair addendum supersedes the historical release and
-round pins below. The production source is
-`71d287f61338596ee24ad1dca654f8cf2cafe6e7`, with GPU digest
-`07e946950889a1dfc9d8e59ce6b98fd955e2729b6ecf3b25912bf5660f556fda`,
+This integrated release supersedes the earlier combined release and the
+divergent r094 candidate. The production source is
+`304aae16c98646e10ba7e5363a528f3b497f5767`, with GPU digest
+`790f3b6f2ff24916aeac56943bb8666d50fe26e3912da13e5ce0a68a227bb185`,
 canonical params hash
-`4c83d52f7489f8eae22e550e226edc17fb6f2f0d9f6dce5a4d333369e5b1a3be`,
+`965c2dbd935abf67e903ebf74465feb46e8c3f5cb635cd0df1335958f3b81856`,
 and `new-params.json` file SHA-256
-`4183e5976910628dd162946600d756b43dc0a262320fa6dec414ad524f5f5309`.
-The offline gate is `r000093`, with first health round `r000094` and second
-open `r000095`.
+`e067fde2abd99f1962d12c054c95f319a0d8e76339b476df7306c5503b6178cc`.
+The default offline gate is `r000093`, with first health round `r000094` and
+second open `r000095`. `REPIN.md` documents the final-SHA and round overrides.
+
+The release retains full-fold child-process isolation and adds AFF-6 prompt
+rendering parity plus the `field_median` crown gate. A candidate must clear
+both `z_field_bar=1.0` and its paired king comparison with `z_bar=0.0`; the old
+pre-field-gate release records retain `z_bar=1.5`.
 
 The compatibility overlay accepts exactly the historical `d5979c30…` /
-`28f1fb8b…`, repaired `8caddd9c…` / `2f7fd4ec…`, and current
-`4c83d52f…` / `07e94695…` pairs, including the exact infrastructure-failed
-r000092 close. It still restores old `c5252865` / `50276206…` /
-`bba7a409…`; unknown pairs remain refused. Qualification uses fake
-GPU drivers and isolated journals, not a physical-GPU or production test.
-No deployment, chain write, merge, or `main` change is included.
+`28f1fb8b…`, repaired `8caddd9c…` / `2f7fd4ec…`, combined
+`4c83d52f…` / `07e94695…`, and integrated `965c2dbd…` / `790f3b6f…` pairs,
+including the exact infrastructure-failed r000092 close. It still restores old
+`c5252865` / `50276206…` / `bba7a409…`; unknown pairs remain refused.
+Qualification uses fake GPU drivers and isolated journals, not a physical-GPU
+or production test. No deployment, chain write, merge, or `main` change is
+included.
 
 ## Historical release and rehearsal boundary
 
-The approved release enables dedup, round-scoped training seeds, charged
-null updates and **merged-candidate evaluation**, raises the crown threshold to
-**`z_bar = 1.5`**, and makes **both
-admission floors no-ops**:
+The integrated release enables dedup, round-scoped training seeds, charged
+null updates and **merged-candidate evaluation**, selects
+**`crown_gate = "field_median"`**, and makes **both admission floors no-ops**:
 
 - `min_signal_rollouts = 1` preserves the legacy requirement for at least one
   active rollout. `recipe.minibatches` adds no admission floor: old code used
@@ -39,9 +44,10 @@ admission floors no-ops**:
   every finite stored norm, including zero. Non-finite stored norms remain
   charged `null_update` decisions.
 
-`z_bar` is the existing crown threshold. Final judging requires a strictly
-larger `z`, and early-look elimination uses the same threshold. The publisher
-renders this value in `llms.txt`; `mining.json` includes it in `params`.
+`z_field_bar` is the field-relative per-task-median threshold. Final judging
+requires strictly larger field and paired king z-scores. The publisher renders
+this rule and both values in `llms.txt`; `mining.json` includes them in `params`.
+The pre-field-gate releases used `z_bar=1.5` for the legacy king gate.
 Merged evaluation builds each candidate with the install-fold arithmetic
 `round_bf16(fp32 king master + LoRA update)`, rather than scoring a runtime LoRA
 on an already-rounded bf16 base. Scored merged results must carry their tested
@@ -53,11 +59,11 @@ stored updates are still charged. The health gate fails if duplicate/null-update
 cuts remove every selected batch or if a required healthy close does not occur.
 
 The default `r000091` gate, first health round `r000092` and second open
-`r000093` are **offline rehearsal identities only**. `GATE_WANT` may be
-explicitly overridden, but the selected gate must immediately precede the
-required health round in `expect.json`. Any real use still requires a separate
-explicit operator `go` and `go-confirmed`; this kit does not deploy or authorize
-production access.
+`r000093` in the historical records are **offline rehearsal identities only**.
+The current default gate/health pair is `r000093`/`r000094`; the selected gate
+must immediately precede the required health round in `expect.json`. Any real
+use still requires a separate explicit operator `go` and `go-confirmed`; this
+kit does not deploy or authorize production access.
 
 ## Frozen identities
 
@@ -66,34 +72,38 @@ production access.
 | Old commit | `c525286580c84d795b3ca7cbdf2302e96fce31ba` |
 | Old GPU source digest | `5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47` |
 | Old canonical params hash | `bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a` |
-| New commit | `50afaca32ea982796728a0b07cb6e3c579ef378b` |
+| New commit | `304aae16c98646e10ba7e5363a528f3b497f5767` |
 | Integrated AFF-5 PR #310 head | `1fa67a9770884eb679ffeb91fd133ac49575d117` |
-| New GPU source digest | `28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a` |
-| New canonical params hash | `d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c` |
+| New GPU source digest | `790f3b6f2ff24916aeac56943bb8666d50fe26e3912da13e5ce0a68a227bb185` |
+| New canonical params hash | `965c2dbd935abf67e903ebf74465feb46e8c3f5cb635cd0df1335958f3b81856` |
 | `old-params.json` file-byte SHA-256 | `86c9cd5b5e696c6c10411fd828b7e26a641d06bd39f94a4ea98eb69de3e78f56` |
-| `new-params.json` file-byte SHA-256 | `4acb73b3cf45e2240c147150e854ac27ab3f80851903b7adbb15b08452bc2784` |
+| `new-params.json` file-byte SHA-256 | `e067fde2abd99f1962d12c054c95f319a0d8e76339b476df7306c5503b6178cc` |
 
 A canonical `Params.params_hash` is not the SHA-256 of a pretty-printed params
-file. The new params pin the combined worker recipe
-`28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a`.
-AFF-5 supplies the merged-candidate worker change; the release contains the
-floor correction and no-op-floor publication as well. Its GPU tree has no diff
-from `1fa67a97`.
+file. The new params pin the integrated worker recipe
+`790f3b6f2ff24916aeac56943bb8666d50fe26e3912da13e5ce0a68a227bb185`.
+AFF-5 supplies the merged-candidate worker change; this release adds the
+prompt-parity worker change, floor corrections, and no-op-floor publication.
+The earlier combined GPU tree has no diff from `1fa67a97`; the integrated
+prompt-parity tree necessarily has a different digest.
 
 The effective production-copy changes are exactly:
 
 ```text
 dedup_enabled        false -> true
 train_seed_scope     batch -> round
-z_bar                1.0 -> 1.5
+crown_gate           king -> field_median
+z_field_bar          1.0 -> 1.0
+z_bar                1.0 -> 0.0
 eval_merged          false -> true
-recipe.code_digest   5027620615... -> 28f1fb8b...
+recipe.code_digest   5027620615... -> 790f3b6f...
 ```
 
 The other five explicit dedup fields retain their legacy-effective values.
 Expected rehearsal constants are `batch_cap=6`, `n_tasks=2000`, two null
 strings per leased box, `active_size=10000`, and `irt_draw_rule=sqrt_fisher`.
-`r000092` is the first health round and `r000093` the second-open proof.
+`r000094` is the first health round and `r000095` the second-open proof under
+the current defaults.
 
 ## Production parameter route and journal durability
 
@@ -101,8 +111,9 @@ Production `autodeploy` uses the **ordinary journaled `set-params` CLI**, only
 after the sole loop has stopped and `apply` has independently refused to run if
 a loop is alive. It runs against the real production state directory with the
 normal `sn120_v2.assembly:stack`, not with the copied-state isolation wrapper.
-The complete seven-field dedup record plus `z_bar=1.5` and `eval_merged=true`
-is required; the incomplete legacy file is never parsed by new code.
+The complete seven-field dedup record plus `eval_merged=true`, the committed
+field-gate values and `z_bar=0.0` is required; the incomplete legacy file is
+never parsed by new code.
 
 This is not an unjournaled local edit. `Journal` synchronizes against the one
 existing R2 journal prefix, appends its leader and `params_set` records there,
@@ -159,9 +170,11 @@ Recovery is code-first:
    old loop. The loader first validates the historical new pin, then exposes
    old behavior without changing historical records. The complete new pin
    includes `eval_merged=true` and the combined worker digest. After validating
-   that pin, replay removes the seven dedup fields, historical `z_bar=1.5`
-   override and `eval_merged=true`, and translates the reviewed combined worker digest to the reviewed
-   old worker digest **in memory**. Journal bytes are never rewritten; native
+   that pin, replay removes the dedup fields, `eval_merged=true`, the new-only
+   field-gate fields, and the release's `z_bar` override, then translates the
+   reviewed combined worker digest to the reviewed old worker digest **in
+   memory**. Historical pre-field-gate records retain their exact `z_bar=1.5`;
+   the integrated release has `z_bar=0.0`. Journal bytes are never rewritten; native
    release readers still see the original new worker identity. The restored
    old behavior has `z_bar=1.0` and the old worker recipe. Unknown or newer
    parameters remain refused.
