@@ -10,17 +10,22 @@ ingestd stage. Do not run `autodeploy` against production from this checkout.
 - `expect.json`: old/new commit, code digest, params and health pins.
 - `old-params.json`, `new-params.json`: byte-for-byte copies of the supplied
   `/home/bb/scratch/kingx2-live-qualification/{old-params,final-new-params}.json`.
-- `operator.py`: checkout, journal inspection, public checks and rollback.
-  Parameter changes call the existing `python -m sn120_v2 set-params` CLI.
-  It never edits the journal directly and never fetches from R2 or a remote
-  git repository. The work-directory lookup reads the operator loop env file;
-  no inspection command prints its values. The all-lease sealed-result precheck
-  is read-only and bounded. Parameter changes use the existing CLI.
-  Post-checkout apply and rollback verification run in fresh Python processes:
-  an old-code operator cannot retain the old Params schema after checkout.
+- `kx2_operator.py`: checkout, journal inspection, public checks and rollback.
+  It is named to avoid shadowing Python's stdlib `operator` module. Invoke it as
+  `python3 -I /root/sn120-run/kingx2-deploy/kx2_operator.py COMMAND`; isolated
+  mode excludes the kit directory from `sys.path` and ignores ambient
+  `PYTHONPATH`. Parameter changes call the existing
+  `python -I -m sn120_v2 set-params` CLI. It never edits the journal directly
+  and never fetches from R2 or a remote git repository. The work-directory
+  lookup reads the operator loop env file; no inspection command prints its
+  values. The all-lease sealed-result precheck is read-only and bounded.
+  Post-checkout apply and rollback verification run in fresh isolated Python
+  processes: an old-code operator cannot retain the old Params schema after
+  checkout.
 - `autodeploy`: the one-shot gate, apply, health and rollback orchestration.
-- `dry-run`: isolated synthetic replay on copied journal/public files. It
-  writes `/home/bb/scratch/kingx2-r082-live/kingx2-deploy-dry/dry-run.log`.
+- `dry-run`: isolated synthetic replay on copied journal/public files and the
+  exact committed branch/kit. It defaults to
+  `/home/bb/scratch/kingx2-r084-final/kingx2-deploy-dry/dry-run.log`.
 - `QUALIFICATION.md`: offline replay, estimator, timing and test evidence,
   including private-data and mutable-artifact limitations.
 
@@ -35,7 +40,7 @@ therefore applies to the exact code selected by `new_commit`.
 
 The `new_digest` independently pins the implementation's GPU code. Do not
 change the pinned SHA, fetch an unreviewed ref, or arm an altered kit.
-`autodeploy` and `operator.py apply` both reject a non-SHA or an absent commit.
+`autodeploy` and `kx2_operator.py apply` both reject a non-SHA or an absent commit.
 Copy the reviewed kit outside the live checkout (the default destination is
 `/root/sn120-run/kingx2-deploy`) and make sure the new commit object is already
 in the target repository. The kit is offline: it does not fetch. Create `go`
@@ -43,11 +48,12 @@ only after final review. The equivalent template preparation step, before the
 pin exists, uses `"new_commit": "PENDING_IMPLEMENTATION_COMMIT"`; both tools
 refuse that placeholder.
 
-`GATE_WANT` is configurable; its default is `r000082`. Set it to the exact
-old-code open round at the deployment boundary, for example:
+`GATE_WANT` is configurable; its default is read from `expect.json` and is
+`r000084`, the live open round at whose close the kit applies. Set it explicitly
+only to the exact old-code open round at the deployment boundary, for example:
 
 ```
-GATE_WANT=r000082 bash /root/sn120-run/kingx2-deploy/autodeploy
+GATE_WANT=r000084 bash /root/sn120-run/kingx2-deploy/autodeploy
 ```
 
 The command above documents the interface, not authorization to execute it.
@@ -56,8 +62,12 @@ loop and watchdog state before creating `go`.
 
 ## Arming, disarming and rollback
 
-`autodeploy` waits for `/root/sn120-run/kingx2-deploy/go`. Remove `go` after
-the run if retaining the kit. `touch /root/sn120-run/kingx2-deploy/disarm`
+`autodeploy` waits for `/root/sn120-run/kingx2-deploy/go`. Every operator call
+uses one internally constructed command:
+`python3 -I /root/sn120-run/kingx2-deploy/kx2_operator.py ...`. `KINGX2_PY` may
+select the Python interpreter, but there is no `OP` override and the dry-run
+uses this identical command construction. Remove `go` after the run if
+retaining the kit. `touch /root/sn120-run/kingx2-deploy/disarm`
 cancels a wait before apply without changing code or params. A disarm after
 go-live requests a safe rollback rather than leaving an unverdicted deploy.
 The stop request is removed on PASS or verified recovery. A loop that fails
@@ -129,11 +139,18 @@ touched by this kit.
 From this checkout:
 
 ```
-D=/home/bb/scratch/kingx2-r082-live/kingx2-deploy-dry bash v2/tools/kingx2-deploy/dry-run
+D=/home/bb/scratch/kingx2-r084-final/kingx2-deploy-dry bash v2/tools/kingx2-deploy/dry-run
 ```
 
-`D` must be a fresh directory beneath `/home/bb/scratch/kingx2-r082-live`; its
-complete log is `$D/dry-run.log`. A stale or armed directory is refused.
+`D` must be a fresh directory beneath `/home/bb/scratch`; its complete log is
+`$D/dry-run.log`. A stale or armed directory is refused. The source kit must be
+committed: the harness refuses a dirty kit and clones the exact current branch
+head. It copies the kit from that commit's Git archive and compares every file
+to the committed source kit byte-for-byte. No scratch implementation commit or
+working-tree overlay is used. `expect.json.new_commit` remains exactly
+`7e768a1ff1e121fed891b6ed23817a5e9a08d8a3`; only the isolated public retry
+window is shortened. The harness also runs the Python 3.12 entry-point
+regression checks for `work-dir`, `loop-count`, `journal-close` and `facts`.
 
 Two additional environment-selected scenarios are independent runs. Each
 forces a failure immediately after its first new-code open rather than running
@@ -146,18 +163,22 @@ watchdog that remains disarmed. `KINGX2_DRY_FAILED_LEASE=1` can be combined with
 the sealed-result scenario to prove that the all-lease precheck rejects evidence
 even after the lease is marked failed.
 
-The harness clones the current repository into the isolated scratch area. It
-constructs the implementation overlay through a dedicated temporary Git index,
-adds only the isolated `dry_stack.py` helper, and creates a clearly labelled
-scratch-only commit object. It resets the copied checkout to clean old code,
-including removal of that untracked helper, before launching the **real copied
-`autodeploy`**. The harness initially
-leaves `go` absent and verifies that no stop marker appears. After a synthetic
-old-params r82 close it starts the simulated-loop driver and creates the copied
-kit's `here/go`; from then on `autodeploy` itself performs wait/gate/preflight,
-stop, watchdog disarm, checkout, set-params, exactly-one-loop start, open/public
-checks, first-round health and watchdog re-arm. Only the loop and its outcomes
-are simulated. The source checkout and its `expect.json` are not modified.
+The harness clones the committed branch into the isolated scratch area and
+resets the copied deployment checkout to clean old code. A separate read-only
+copy of the exact implementation commit supports compatible-schema assertions;
+the actual apply checks out the pinned implementation itself. The isolated
+`dry_stack.py`, CLI wrapper and replay helpers live **outside** that checkout
+and are invoked with `python -I` and explicit paths. Nothing is added to or
+overlaid onto the implementation commit. Before launching the **real copied
+`autodeploy`**, the harness initially leaves `go` absent and verifies that no
+stop marker appears. It advances only the copied fixture with synthetic
+old-params closes through the r000084 gate, then starts the simulated-loop
+driver and creates the copied kit's `here/go`; from then on `autodeploy` itself
+performs wait/gate/preflight, stop, watchdog disarm, checkout, set-params,
+exactly-one-loop start, open/public checks, first-round health and watchdog
+re-arm. The new-code round is r000085 and its successor is r000086. Only the
+loop and its outcomes are simulated. The source checkout and its `expect.json`
+are not modified.
 
 After the copied `autodeploy` PASS, the harness also verifies that rollback
 preserves a sealed result. It then uses a separate hard-linked copy of the
@@ -166,10 +187,14 @@ rollback, and verifies that the original sealed journal/result remain
 byte-identical. A separate decided round on that copied fixture must be
 finished normally rather than relabelled no-decision.
 
-The scratch commit is deterministic for the overlaid implementation tree, but
-is not the final implementation SHA or final-commit qualification evidence. The
-copied public retired archive is rewound to its authenticated r82 prefix before
-the synthetic close; the source store is never edited.
+The copied public retired archive is rewound first to the copied r000082
+rotation's exact prefix, before either synthetic predecessor close, and then
+to the r000084 prefix before the gate close. This keeps each append-only
+archive update consistent with the copied journal; the source store is never
+edited. Post-rollback synthetic follow-ups load the retained new-schema journal
+with the compatible implementation schema, without claiming old code can parse
+it. This is final-committed-kit and pinned-implementation rehearsal evidence,
+not a claim that the production r000084 gate has already closed.
 
 The source journal under `/home/bb/scratch/kingx2-r082-live` and the
 materialized public store are copied. A separate operator journal is changed
@@ -179,8 +204,7 @@ reads use only the copied `LocalStore` tree. Loop state is a marker/pid file;
 read**. All sampled outcomes and LoRA objects are explicitly synthetic. The
 harness exercises gate close, apply, old-open refusal, new open/public checks,
 per-box 2 x 2,000 null health, eval timing and params-first rollback. It does
-not measure GPU eval performance, validate a final commit, or establish live
-production health.
+not measure GPU eval performance or establish live production health.
 
 Useful read-only operator reports (with the dry environment exported) are
 `journal-close RID`, `open-check RID`, `public-check RID`, `health RID`, and

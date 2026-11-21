@@ -80,7 +80,31 @@ waived; the authenticated current generation was used for replay.
 - Failed-lease sealed-result guard: `/home/bb/scratch/kingx2-r082-live/kingx2-deploy-failed-lease-final-v23/dry-run.log`.
 - Pre-go disarm: `/home/bb/scratch/kingx2-r082-live/kingx2-disarm-final-v5/disarm-check.log`.
 
-The rehearsal copies journal/public objects, uses a scratch-only commit and
-simulated loop/outcomes. It does not run a GPU workload or establish production
-health. The implementation commit and kit-pin commit are recorded in the PR;
-the scratch commit in rehearsal logs is not the implementation commit.
+The corrected entry point is `kx2_operator.py`, invoked with `python3 -I` to
+avoid stdlib `operator` shadowing and ambient import paths. `autodeploy` alone
+constructs that command; the rehearsal has no `OP` override. The gate default is
+read from `expect.json` and is `r000084`. The current committed-kit rehearsal
+uses implementation `7e768a1ff1e121fed891b6ed23817a5e9a08d8a3` directly: no
+scratch commit, working-tree overlay or `new_commit` substitution. Its helper
+modules live outside the deployment checkout and use explicit isolated imports.
+
+The rehearsal copies journal/public objects and simulates only the loop and its
+outcomes. It rewinds the copied append-only retired archive to the authenticated
+r000082 prefix before advancing through r000084 with synthetic old-code closes,
+then rewinds to r000084 before the gate close. It checks the new-code r000085
+close and r000086 open. Helper imports remain anchored outside the copied
+checkout, including for the independent rollback store. Compatible-schema
+synthetic follow-ups use the pinned implementation to read the journal's
+historical new-schema records after old params/code have been restored. It does
+not run a GPU workload, contact production or establish production health.
+
+Final committed-kit rehearsal destinations:
+
+- Normal: `/home/bb/scratch/kingx2-r084-final/final-normal/dry-run.log`.
+- Abort after open: `/home/bb/scratch/kingx2-r084-final/final-abort/dry-run.log`.
+
+Each run clones the exact final branch head and compares all eight kit files to
+its Git archive before proceeding. The `qualified branch head ...` line in each
+fresh log identifies that exact commit; the required PASS lines are reported
+with the kit-head result after those runs finish. Earlier logs above are
+historical baseline evidence, not qualification of the corrected final kit.

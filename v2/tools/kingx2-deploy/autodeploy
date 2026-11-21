@@ -5,9 +5,11 @@ set -uo pipefail
 H=${H:-/root/sn120-run/kingx2-deploy}
 L=$H/autodeploy.log
 V2DIR=${V2DIR:-/root/sn120/v2}
-OP=${OP:-"python3 $H/operator.py"}
+# One fixed command in production and dry-run. -I excludes this kit directory
+# from sys.path and ignores ambient PYTHONPATH. Never override the operator.
 PY_FOR_PATHS=${KINGX2_PY:-python3}
-WORK_DIR=$($PY_FOR_PATHS "$H/operator.py" work-dir) || exit 64
+OP=("$PY_FOR_PATHS" -I "$H/kx2_operator.py")
+WORK_DIR=$("${OP[@]}" work-dir) || exit 64
 export KINGX2_WORK_DIR="$WORK_DIR"
 RUNLOG=${RUNLOG:-$WORK_DIR/logs/run.log}
 STOPF=${STOPF:-$WORK_DIR/logs/run-loop.stop-after-round}
@@ -17,7 +19,7 @@ POLL=${POLL:-60}
 STOP_WAIT=${STOP_WAIT:-14400}
 FIRST_OPEN_WAIT=${FIRST_OPEN_WAIT:-3600}
 HEALTH_WAIT=${HEALTH_WAIT:-18000}
-GATE_WANT=${GATE_WANT:-r000082}
+GATE_WANT=${GATE_WANT:-$($PY_FOR_PATHS -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["gate_round"])' "$H/expect.json")} || exit 64
 STOP_TOUCHED=0
 WD_DISARMED=0
 APPLIED=0
@@ -26,25 +28,25 @@ FINISHED=0
 RECOVERED=0
 mkdir -p "$H"
 log(){ printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$L"; }
-jc(){ python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(("yes" if s.get("clean") else "no"),s.get("outcome"),"n_tasks",s.get("n_tasks"),"lease_failed",len(s.get("lease_failed") or []),"why",s.get("why"))' "$1" 2>&1; }
-summary(){ python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(("OK" if s.get("ok") else "BAD"),"active",s.get("active_size"),"params",s.get("params_hash") or s.get("round_params_hash"),"n_tasks",s.get("n_tasks") or (s.get("journal") or {}).get("n_tasks"),"snapshot",(s.get("snapshot_config") or {}).get("draw_rule"),"eval_wall_s",s.get("eval_wall_s"),"why",s.get("why"))' "$1" 2>&1; }
-journal_open(){ $OP journal-open "${1:?journal-open needs a round id}" > "${2:?journal-open needs an output file}" 2>>"$L" || fail "journal-open could not inspect ${1:-missing-round}"; }
-open_ready(){ python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("ok"))' "${1:?open_ready needs a report}"; }
-open_unexpected(){ python3 -c 'import json,sys; row=json.load(open(sys.argv[1])); print(any("not expected" in why or "journal passed" in why or "previous round" in why for why in row.get("why") or []))' "$1"; }
+jc(){ python3 -I -c 'import json,sys; s=json.load(open(sys.argv[1])); print(("yes" if s.get("clean") else "no"),s.get("outcome"),"n_tasks",s.get("n_tasks"),"lease_failed",len(s.get("lease_failed") or []),"why",s.get("why"))' "$1" 2>&1; }
+summary(){ python3 -I -c 'import json,sys; s=json.load(open(sys.argv[1])); print(("OK" if s.get("ok") else "BAD"),"active",s.get("active_size"),"params",s.get("params_hash") or s.get("round_params_hash"),"n_tasks",s.get("n_tasks") or (s.get("journal") or {}).get("n_tasks"),"snapshot",(s.get("snapshot_config") or {}).get("draw_rule"),"eval_wall_s",s.get("eval_wall_s"),"why",s.get("why"))' "$1" 2>&1; }
+journal_open(){ "${OP[@]}" journal-open "${1:?journal-open needs a round id}" > "${2:?journal-open needs an output file}" 2>>"$L" || fail "journal-open could not inspect ${1:-missing-round}"; }
+open_ready(){ python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("ok"))' "${1:?open_ready needs a report}"; }
+open_unexpected(){ python3 -I -c 'import json,sys; row=json.load(open(sys.argv[1])); print(any("not expected" in why or "journal passed" in why or "previous round" in why for why in row.get("why") or []))' "$1"; }
 # A still-open earlier round is normal here: the loop closes it before opening
 # the expected successor. Reject terminal journal/params errors immediately;
 # an unexpected open that never advances is bounded by the caller's deadline.
-open_unexpected_wait(){ python3 -c 'import json,sys; row=json.load(open(sys.argv[1])); print(any("journal passed" in why or "previous round" in why or "open params hash mismatch" in why for why in row.get("why") or []))' "$1"; }
+open_unexpected_wait(){ python3 -I -c 'import json,sys; row=json.load(open(sys.argv[1])); print(any("journal passed" in why or "previous round" in why or "open params hash mismatch" in why for why in row.get("why") or []))' "$1"; }
 openrid(){ grep -oE 'open: round r[0-9]+ is open' "$RUNLOG" 2>/dev/null | tail -1 | awk '{print $3}'; }
-loop_count(){ $OP loop-count 2>>"$L"; }
-sleep_poll(){ sleep "$(python3 -c 'import sys; print(float(sys.argv[1]) * float(sys.argv[2]))' "$1" "$S")"; }
-deadline_after(){ python3 -c 'import sys,time; print(time.monotonic() + float(sys.argv[1]))' "$1"; }
-remaining(){ python3 -c 'import sys,time; print(max(0.0,float(sys.argv[1])-time.monotonic()))' "$1"; }
+loop_count(){ "${OP[@]}" loop-count 2>>"$L"; }
+sleep_poll(){ sleep "$(python3 -I -c 'import sys; print(float(sys.argv[1]) * float(sys.argv[2]))' "$1" "$S")"; }
+deadline_after(){ python3 -I -c 'import sys,time; print(time.monotonic() + float(sys.argv[1]))' "$1"; }
+remaining(){ python3 -I -c 'import sys,time; print(max(0.0,float(sys.argv[1])-time.monotonic()))' "$1"; }
 sleep_until(){
   local left
   left=$(remaining "$1")
-  [ "$(python3 -c 'import sys; print(float(sys.argv[1]) > 0)' "$left")" = True ] || return 1
-  python3 -c 'import sys,time; time.sleep(min(float(sys.argv[1]),float(sys.argv[2])))' "$left" "$(python3 -c 'import sys; print(float(sys.argv[1])*float(sys.argv[2]))' "$2" "$S")"
+  [ "$(python3 -I -c 'import sys; print(float(sys.argv[1]) > 0)' "$left")" = True ] || return 1
+  python3 -I -c 'import sys,time; time.sleep(min(float(sys.argv[1]),float(sys.argv[2])))' "$left" "$(python3 -I -c 'import sys; print(float(sys.argv[1])*float(sys.argv[2]))' "$2" "$S")"
 }
 rearm(){
   if [ "$WD_DISARMED" = 1 ]; then
@@ -96,11 +98,11 @@ restore_old(){
     log "ROLLBACK BLOCKED: could not stop the loop; watchdog remains disarmed"
     return 1
   fi
-  if ! $OP rollback >>"$L" 2>&1; then
+  if ! "${OP[@]}" rollback >>"$L" 2>&1; then
     log "ROLLBACK FAILED: old commit/params not verified; no loop started under unrecovered code; watchdog remains disarmed"
     return 1
   fi
-  if ! $OP start-loop >>"$L" 2>&1; then
+  if ! "${OP[@]}" start-loop >>"$L" 2>&1; then
     log "ROLLBACK RECOVERY FAILED: could not start exactly one old-code loop; watchdog remains disarmed"
     return 1
   fi
@@ -115,7 +117,7 @@ fail(){
   else
     log "FAIL before go-live: $*"
     if [ "$STOPPED" = 1 ]; then
-      if $OP start-loop >>"$L" 2>&1; then RECOVERED=1
+      if "${OP[@]}" start-loop >>"$L" 2>&1; then RECOVERED=1
       else log "FAILED to restart unchanged old-code loop"
       fi
     fi
@@ -134,8 +136,8 @@ done
 [ -f "$RUNLOG" ] || refuse "run log missing: $RUNLOG"
 [[ "$GATE_WANT" =~ ^r[0-9]{6}$ ]] || refuse "GATE_WANT must be rNNNNNN"
 cd "$V2DIR" || exit 64
-old=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["old_commit"])' "$H/expect.json") || exit 64
-new=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["new_commit"])' "$H/expect.json") || exit 64
+old=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["old_commit"])' "$H/expect.json") || exit 64
+new=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["new_commit"])' "$H/expect.json") || exit 64
 [ "$new" != PENDING_IMPLEMENTATION_COMMIT ] || refuse "new_commit is PENDING_IMPLEMENTATION_COMMIT; see README sequencing"
 log "pid $$ armed king-x2 ${old:0:8} -> ${new:0:8}; waiting for $H/go-confirmed open $GATE_WANT on old HEAD"
 while [ "$(openrid)" != "$GATE_WANT" ]; do
@@ -154,20 +156,20 @@ log "gate $GATE; old HEAD ${now:0:8}"
 if ! stop_loop; then fail "could not stop old-code loop after $GATE"; fi
 if [ -e "$H/disarm" ]; then
   rm -f "$STOPF"; STOP_TOUCHED=0
-  if $OP start-loop >>"$L" 2>&1; then RECOVERED=1
+  if "${OP[@]}" start-loop >>"$L" 2>&1; then RECOVERED=1
   else log "FAILED to restart old-code loop after disarm"
   fi
   log "disarmed before apply; old code/params unchanged"
   exit 0
 fi
-$OP preflight >>"$L" 2>&1 || fail "old-code preflight failed"
-$OP journal-close "$GATE" > "$H/gate-$GATE.json" 2>>"$L" || fail "gate journal could not be verified"
+"${OP[@]}" preflight >>"$L" 2>&1 || fail "old-code preflight failed"
+"${OP[@]}" journal-close "$GATE" > "$H/gate-$GATE.json" 2>>"$L" || fail "gate journal could not be verified"
 v=$(jc "$H/gate-$GATE.json"); log "journal gate $GATE: $v"
 [ "${v%% *}" = yes ] || fail "gate close was not clean (outcome null|applied, n_tasks>0, no lease_failed since open required)"
 mkdir -p "$WD"
 touch "$WD/DISARM"; WD_DISARMED=1
 log "watchdog DISARM"
-if $OP apply >>"$L" 2>&1; then
+if "${OP[@]}" apply >>"$L" 2>&1; then
   APPLIED=1
   log "APPLY OK: new HEAD $(git rev-parse --short=8 HEAD); params applied through set-params CLI"
 else
@@ -177,13 +179,13 @@ fi
 LN0=$(wc -l < "$RUNLOG")
 FIRST=$(printf 'r%06d' "$((10#${GATE#r}+1))")
 SECOND=$(printf 'r%06d' "$((10#${FIRST#r}+1))")
-$OP start-loop >>"$L" 2>&1 || fail "could not start exactly one new-code loop"
+"${OP[@]}" start-loop >>"$L" 2>&1 || fail "could not start exactly one new-code loop"
 [ "$(loop_count)" -eq 1 ] || fail "new-code start did not yield exactly one loop"
 log "GO-LIVE: exactly one loop started; HEAD $(git rev-parse --short=8 HEAD); journal must open $FIRST"
 refused(){ tail -n +$((LN0+1)) "$RUNLOG" | grep -qE 'run-loop: STOPPED: (run refused|.*refus)|run refused'; }
 deadline=$(deadline_after "$FIRST_OPEN_WAIT")
 while :; do
-  $OP journal-open "$FIRST" > "$H/open-wait-$FIRST.json" 2>>"$L" || fail "journal-open could not inspect $FIRST"
+  "${OP[@]}" journal-open "$FIRST" > "$H/open-wait-$FIRST.json" 2>>"$L" || fail "journal-open could not inspect $FIRST"
   [ "$(open_unexpected_wait "$H/open-wait-$FIRST.json")" = False ] || fail "journal state is incompatible with the expected $FIRST open"
   [ "$(open_ready "$H/open-wait-$FIRST.json")" = True ] && break
   [ "$(open_unexpected "$H/open-wait-$FIRST.json")" = True ] && fail "unexpected journal open while waiting for $FIRST"
@@ -192,16 +194,16 @@ while :; do
   [ "$(loop_count)" -eq 1 ] || fail "loop missing or duplicated before first open"
   [ ! -e "$H/disarm" ] || fail "disarmed after go-live; rolling back"
 done
-$OP open-check "$FIRST" > "$H/open-$FIRST.json" 2>>"$L" || fail "open-check could not read first open $FIRST"
+"${OP[@]}" open-check "$FIRST" > "$H/open-$FIRST.json" 2>>"$L" || fail "open-check could not read first open $FIRST"
 oc=$(summary "$H/open-$FIRST.json"); log "first open $FIRST: $oc"
 [ "${oc%% *}" = OK ] || fail "open-check $FIRST: $oc"
-PUBLIC_SECONDS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("public_retry_seconds",1200))' "$H/expect.json")
+PUBLIC_SECONDS=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("public_retry_seconds",1200))' "$H/expect.json")
 pubdl=$(deadline_after "$PUBLIC_SECONDS")
 attempt=0
 while :; do
   attempt=$((attempt+1))
   left=$(remaining "$pubdl")
-  if [ "$(python3 -c 'import sys; print(float(sys.argv[1]) > 0)' "$left")" = True ] && timeout --signal=TERM --kill-after=5 "${left}s" $OP public-check "$FIRST" > "$H/public-$FIRST.json" 2>>"$L"; then
+  if [ "$(python3 -I -c 'import sys; print(float(sys.argv[1]) > 0)' "$left")" = True ] && timeout --signal=TERM --kill-after=5 "${left}s" "${OP[@]}" public-check "$FIRST" > "$H/public-$FIRST.json" 2>>"$L"; then
     pc=$(summary "$H/public-$FIRST.json")
   else
     pc="BAD public-check failed or used the remaining retry window"
@@ -223,16 +225,16 @@ while :; do
   [ "$(loop_count)" -eq 1 ] || fail "loop missing or duplicated during health watch"
   [ ! -e "$H/disarm" ] || fail "disarmed during health watch; rolling back"
 done
-$OP journal-close "$FIRST" --next-open-ok > "$H/first-$FIRST.json" 2>>"$L" || fail "first close journal could not be verified"
+"${OP[@]}" journal-close "$FIRST" --next-open-ok > "$H/first-$FIRST.json" 2>>"$L" || fail "first close journal could not be verified"
 fv=$(jc "$H/first-$FIRST.json")
 log "first new-code round $FIRST close: $fv; second $SECOND opened in same process"
 [ "${fv%% *}" = yes ] || fail "first new-code close was not clean: $fv"
-$OP health "$FIRST" > "$H/health-$FIRST.json" 2>>"$L" || fail "health command failed for $FIRST"
+"${OP[@]}" health "$FIRST" > "$H/health-$FIRST.json" 2>>"$L" || fail "health command failed for $FIRST"
 health=$(summary "$H/health-$FIRST.json"); log "first-round health: $health"
 [ "${health%% *}" = OK ] || fail "first-round health failed: $health"
-eval_wall=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["eval_wall_s"])' "$H/health-$FIRST.json")
-phase_wall=$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("eval_phase_wall_s"),sort_keys=True))' "$H/health-$FIRST.json")
-limits=$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("timing_limits_s"),sort_keys=True))' "$H/health-$FIRST.json")
+eval_wall=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["eval_wall_s"])' "$H/health-$FIRST.json")
+phase_wall=$(python3 -I -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("eval_phase_wall_s"),sort_keys=True))' "$H/health-$FIRST.json")
+limits=$(python3 -I -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("timing_limits_s"),sort_keys=True))' "$H/health-$FIRST.json")
 log "EVAL WALL: $FIRST evaluation=${eval_wall}s; eval phase records=${phase_wall}; limits=${limits}"
 FINISHED=1
 rearm

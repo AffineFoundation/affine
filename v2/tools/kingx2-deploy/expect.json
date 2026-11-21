@@ -1,6 +1,6 @@
 {
   "active_size": 10000,
-  "gate_round": "r000082",
+  "gate_round": "r000084",
   "irt_draw_rule": "sqrt_fisher",
   "n_tasks": 2000,
   "new_commit": "7e768a1ff1e121fed891b6ed23817a5e9a08d8a3",

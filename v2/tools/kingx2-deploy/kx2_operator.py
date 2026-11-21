@@ -172,7 +172,7 @@ def set_params(filename: str) -> None:
         env = load_env()
         if not env.get("SN120_WORK_DIR"):
             raise RuntimeError("loop environment has no SN120_WORK_DIR")
-        result = sh([PY, "-m", "sn120_v2", "set-params", "--state-dir", STATE,
+        result = sh([PY, "-I", "-m", "sn120_v2", "set-params", "--state-dir", STATE,
                      "--stack", STACK, "--params", path], timeout=3600, env=env)
     (HERE / f"set-params-{Path(filename).stem}.json").write_text(result.stdout)
     if result.stdout.strip():
@@ -189,7 +189,7 @@ def cli(command: str) -> subprocess.CompletedProcess:
     env = load_env()
     if not env.get("SN120_WORK_DIR"):
         raise RuntimeError("loop environment has no SN120_WORK_DIR")
-    return sh([PY, "-m", "sn120_v2", command, "--state-dir", STATE,
+    return sh([PY, "-I", "-m", "sn120_v2", command, "--state-dir", STATE,
                "--stack", STACK], timeout=3600, env=env)
 
 
@@ -213,7 +213,7 @@ def sealed_result_leases() -> list[str]:
             "print(json.dumps([] if record is None else "
             "[lease.lease_id for lease in record.leases if store.exists(layout.sealed_result(record.round_id,lease.lease_id))]))"
         )
-        result = sh([PY, "-c", code], cwd=HERE, env=load_env(), timeout=180)
+        result = sh([PY, "-I", "-c", code], cwd=HERE, env=load_env(), timeout=180)
         found = json.loads(result.stdout)
         if not isinstance(found, list) or any(not isinstance(value, str) for value in found):
             raise RuntimeError("sealed-result precheck returned an invalid lease list")
@@ -311,11 +311,11 @@ def apply() -> None:
     try:
         # Params and State were imported from the old checkout in this process.
         # A fresh interpreter must parse the new schema and replay new params.
-        sh([sys.executable, Path(__file__).resolve(), "apply-checked-out"], timeout=3600)
+        sh([sys.executable, "-I", Path(__file__).resolve(), "apply-checked-out"], timeout=3600)
     except BaseException as error:
         # This child also starts fresh under new code, so params-first rollback
         # can read the new journal before old code is checked out.
-        recovered = sh([sys.executable, Path(__file__).resolve(), "rollback"], check=False, timeout=3600)
+        recovered = sh([sys.executable, "-I", Path(__file__).resolve(), "rollback"], check=False, timeout=3600)
         if recovered.returncode:
             raise RuntimeError(f"apply failed ({error}); rollback also failed: {recovered.stderr.strip()[-1000:]}") from error
         raise
