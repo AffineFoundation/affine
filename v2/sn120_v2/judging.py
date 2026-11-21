@@ -389,9 +389,6 @@ def decide(
               "duplicate evidence does not match its frozen seat")
         copies[row.queue_pos] = row
     for ticket, result in leases:
-        if not any(e.status == SCORED for e in result.entries):
-            continue
-        null_scored = scored_prefix(result.null_outcomes)
         for seat, entry in zip(ticket.entries, result.entries):
             if entry.status != SCORED:
                 rows.append((seat, entry, entry.status, entry.reason, None))

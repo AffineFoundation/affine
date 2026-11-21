@@ -1,6 +1,7 @@
 """The final-look, field-relative per-task-median crown gate."""
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import subprocess
 import sys
@@ -121,8 +122,10 @@ def test_king_gate_reproduces_legacy_decide_bit_for_bit(build):
     exec(compile(source, "9dc952b3:v2/sn120_v2/judging.py", "exec"), module.__dict__)
     legacy = module.decide([(ticket, result)])
     assert new == legacy
-    assert new == legacy
     assert all(entry.score is None or entry.score.field_z is None for entry in new.entries)
+    unscored = build.ticket(1, 20, params, lease=1, first_pos=3)
+    leases = [(ticket, result), (unscored, build.result(unscored, (), {3: "no_decision"}))]
+    assert decide(leases) == module.decide(leases)
     assert Params.from_dict(params.to_dict()).crown_gate == "king"
 
 
@@ -178,10 +181,17 @@ def test_publisher_states_new_rule_and_mining_json_has_both_params(tmp_path):
     assert "The old z 1.5 king-only bar is retired." in text
     assert "field_z` > `z_field_bar` (1.25) AND paired z against the king > `z_bar`" in text
     assert "provisional and will be recalibrated." in text
+    floors = ("There are no minimum-signal or update-norm floors (`min_signal_rollouts` 1,\n"
+              "  `min_step_norm` 0); only non-finite or stored null updates and duplicates are removed.")
+    assert text.count(floors) == 2
     import json
     doc = json.loads(mining)
     assert doc["params"]["crown_gate"] == "field_median"
     assert doc["params"]["z_field_bar"] == 1.25
+    for change in ({"min_signal_rollouts": 2}, {"min_step_norm": 0.1}):
+        snapshot["params"] = dataclasses.replace(world.params, **change).to_dict()
+        changed = publisher.render(snapshot)[1].decode()
+        assert "There are no minimum-signal or update-norm floors" not in changed
 
 
 def test_new_score_fields_are_absent_when_not_used(build):
