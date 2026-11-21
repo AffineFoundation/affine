@@ -7,6 +7,7 @@ is disposable evidence for replay and rollback qualification, not a live state.
 from __future__ import annotations
 
 import argparse
+import os
 from contextlib import contextmanager
 import dataclasses
 import json
@@ -149,14 +150,18 @@ def main() -> int:
     sim_train = SimTrainer.train
     real_affine_train = world.trainer.train
     from sn120_v2.sim import SIM_IMAGE
-    production = json.loads((Path(__file__).parent / "new-params.json").read_text())
+    production = json.loads(Path(os.environ.get("DEDUP_REVIEWED_PARAMS", str(Path(__file__).parent / "new-params.json"))).read_text())
     from sn120_v2.params import Params
     # The journal carries the exact reviewed production pin. The isolated CPU
     # fixture adapts worker evidence only; it never changes that historical pin.
     full = Params.from_dict(production)
-    assert full.params_hash == "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
-    historical = dataclasses.replace(full, recipe=dataclasses.replace(
-        full.recipe, code_digest="28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"))
+    assert full.params_hash == os.environ["DEDUP_REVIEWED_PARAMS_HASH"]
+    historical_data = production.copy()
+    historical_data.pop("crown_gate", None)
+    historical_data.pop("z_field_bar", None)
+    historical_data["z_bar"] = 1.5
+    historical_data["recipe"] = dict(production["recipe"], code_digest="28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a")
+    historical = Params.from_dict(historical_data)
     assert historical.params_hash == "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
     world.controller.set_params(full, world.clock())
     world.params = full
@@ -169,7 +174,8 @@ def main() -> int:
     world.clock = lambda: world.now
     world.runner.clock = world.clock
     assert full.dedup_enabled and full.train_seed_scope == "round" and full.min_step_norm == 0.0
-    assert full.min_signal_rollouts == 1 and full.z_bar == 1.5 and full.eval_merged
+    assert full.min_signal_rollouts == 1 and full.z_bar == production["z_bar"] and full.eval_merged
+    assert full.crown_gate == "field_median" and full.z_field_bar == production["z_field_bar"]
     # Stage A plus no-result survivor accounting: three seats, one charged copy,
     # two uncharged genuine seats returned to the queue after a failed lease.
     for uid, quality in ((1, 0.9), (2, 0.0), (3, 0.0)):

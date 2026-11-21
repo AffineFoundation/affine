@@ -23,6 +23,7 @@ import tempfile
 KIT = Path(__file__).resolve().parent
 EXPECT = json.loads((KIT / "expect.json").read_text())
 NEW_PIN = EXPECT["new_params_hash"]
+REVIEWED_FIELD_GATE_PINS = EXPECT["reviewed_field_gate_params_hashes"]
 HISTORICAL_PIN = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 OLD_PIN = EXPECT["old_params_hash"]
 
@@ -57,19 +58,27 @@ def main() -> int:
     parser.add_argument("--old-v2", type=Path, required=True,
                         help="operator-created archive of old commit c5252865; never a production checkout")
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--new-params", type=Path, default=KIT / "new-params.json")
     args = parser.parse_args()
+    new_params_path = args.new_params.resolve(strict=True)
+    new_v2 = args.new_v2.resolve()
+    sys.path.insert(0, str(new_v2))
+    from sn120_v2.params import Params
+    selected = Params.from_dict(json.loads(new_params_path.read_text()))
+    assert selected.params_hash in REVIEWED_FIELD_GATE_PINS
+    NEW_PIN = selected.params_hash
     if args.output.exists():
         raise ValueError("output must be a new isolated directory")
     args.output.mkdir(parents=True)
     output = args.output.resolve()
-    new_v2, old_v2 = args.new_v2.resolve(), args.old_v2.resolve()
+    new_v2, old_v2 = new_v2, args.old_v2.resolve()
     # Select the old checkout before loading the overlay. The installed process
     # otherwise resolves the kit's new-code parent as its implicit old package.
     os.environ["DEDUP_OLD_V2"] = str(old_v2)
     for path in (new_v2 / "sn120_v2", old_v2 / "sn120_v2"):
         if not path.is_dir():
             raise ValueError(f"missing package {path}")
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(new_v2))
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(new_v2), DEDUP_REVIEWED_PARAMS=str(new_params_path), DEDUP_REVIEWED_PARAMS_HASH=selected.params_hash)
     fixture = output / "fixture"
     subprocess.run([args.python, "-I", "-c",
                     "import runpy,sys;sys.path.insert(0,sys.argv[1]);sys.argv=sys.argv[2:];runpy.run_path(sys.argv[0],run_name='__main__')",
@@ -216,7 +225,7 @@ else: raise AssertionError(mode)
 
     # Old Params.from_dict accepts only the complete reviewed pin, never an
     # unknown/newer dedup variant. The re-pin then uses the real old CLI.
-    changed = json.loads((KIT / "new-params.json").read_text()) | {"dedup_rollout_overlap": 0.500001}
+    changed = json.loads(new_params_path.read_text()) | {"dedup_rollout_overlap": 0.500001}
     try:
         Params.from_dict(changed)
     except Exception as error:
@@ -267,11 +276,14 @@ from sn120_v2.state import load
 from sn120_v2.store import LocalStore
 from sn120_v2.types import TrainReport
 from sn120_v2.weights_writer import main,read_view
-root=pathlib.Path(sys.argv[2]); old_pin=sys.argv[3]; historical_pin=sys.argv[4]; new_pin=sys.argv[5]
+root=pathlib.Path(sys.argv[2]); old_pin=sys.argv[3]; historical_pin=sys.argv[4]; new_pin=sys.argv[5]; new_z_bar=float(sys.argv[7]); selected_z_field_bar=float(sys.argv[8])
 before=(root/"journal.jsonl").read_bytes()
 rows=read_journal(root/"journal.jsonl")
+new_params=next(r.data["params"] for r in rows if r.kind=="params_set" and r.data["params"].get("crown_gate")=="field_median")
 history=[r for r in rows if r.kind=="params_set" and r.data["params"].get("dedup_enabled")]
-assert history and all(r.data["params"]["z_bar"]==1.5 and r.data["params"]["eval_merged"] is True for r in history)
+assert history and all(r.data["params"]["eval_merged"] is True for r in history)
+assert [r.data["params"]["z_bar"] for r in history]==[new_z_bar,1.5,new_z_bar]
+assert new_params["crown_gate"]=="field_median" and new_params["z_field_bar"]==selected_z_field_bar
 from sn120_v2.params import Params
 assert {Params.from_dict(r.data["params"]).params_hash for r in history}=={historical_pin,new_pin}
 assert rows[-1].kind=="params_set" and not rows[-1].data["params"].get("dedup_enabled",False)
@@ -304,8 +316,8 @@ print(json.dumps({"native_release_read":True,"compatibility_overlay":False,
                   "kings":len(view.kings),"weights_dry_run":result["status"],
                   "journal_unchanged":True,"chain_submissions":chain.submissions},sort_keys=True))
 ''')
-    native_env = {"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1"}
-    completed = subprocess.run([args.python, "-I", str(native), str(new_v2), str(repin), OLD_PIN, HISTORICAL_PIN, NEW_PIN, str(fixture / "store")],
+    native_env = {"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1", "DEDUP_REVIEWED_PARAMS_HASH": selected.params_hash}
+    completed = subprocess.run([args.python, "-I", str(native), str(new_v2), str(repin), OLD_PIN, HISTORICAL_PIN, NEW_PIN, str(fixture / "store"), str(selected.z_bar), str(selected.z_field_bar)],
                                cwd=output, env=native_env, capture_output=True, text=True, timeout=90)
     if completed.returncode:
         raise AssertionError(completed.stderr + completed.stdout)

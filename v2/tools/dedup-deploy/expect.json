@@ -10,9 +10,14 @@
   "generator_ingestd_pid": "/root/sn120-run/generator/ingestd.pid",
   "prior_index": "/root/sn120-run/generator/prior-index.json",
   "n_tasks": 2000,
-  "new_commit": "e7f95b55e2e3ef9a392842d945422943dbd19d48",
+  "new_commit": "79cfd4e0e9c22022ed7f60698763962eaccb9bf9",
   "new_digest": "2f7fd4ecaa8fa26800d8a3f54063d6286d614e309fcdffd9af59bfffeb7824fa",
-  "new_params_hash": "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4",
+  "new_params_hash": "346b99a875be5a9d5e2467bf846f20d124229397b67935c6563f1e7c2409b8b1",
+  "reviewed_field_gate_params_hashes": [
+    "346b99a875be5a9d5e2467bf846f20d124229397b67935c6563f1e7c2409b8b1",
+    "05a1b55556a14cd001f926f774a4231023851e43c2393ec41bcd23646fe6ca4b",
+    "0eb4867f6c08aa179015c9e927bb38d6ade14a022c406401a026280845a8e098"
+  ],
   "null_samples": 2,
   "old_commit": "c525286580c84d795b3ca7cbdf2302e96fce31ba",
   "old_digest": "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47",

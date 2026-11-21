@@ -34,18 +34,24 @@ DEDUP_FIELDS = {
     "dedup_cos_own_seed": 0.002,
     "min_signal_rollouts": 1,
     "min_step_norm": 0.0,
-    "z_bar": 1.5,
     "eval_merged": True,
 }
+FIELD_GATE_FIELDS = {"crown_gate": "field_median"}
+RELEASE_FIELDS = DEDUP_FIELDS | FIELD_GATE_FIELDS | {"z_field_bar": 1.0, "z_bar": 1.5}
 HISTORICAL_NEW_PARAMS_HASH = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 REVIEWED_NEW_PARAMS_HASH = "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
-REVIEWED_NEW_PARAMS_HASHES = frozenset((HISTORICAL_NEW_PARAMS_HASH, REVIEWED_NEW_PARAMS_HASH))
+FIELD_GATE_PARAMS_HASH = "346b99a875be5a9d5e2467bf846f20d124229397b67935c6563f1e7c2409b8b1"
+K1F1_PARAMS_HASH = "05a1b55556a14cd001f926f774a4231023851e43c2393ec41bcd23646fe6ca4b"
+KING_LED_PARAMS_HASH = "0eb4867f6c08aa179015c9e927bb38d6ade14a022c406401a026280845a8e098"
+FIELD_GATE_PARAMS_HASHES = (FIELD_GATE_PARAMS_HASH, K1F1_PARAMS_HASH, KING_LED_PARAMS_HASH)
+REVIEWED_NEW_PARAMS_HASHES = frozenset((
+    HISTORICAL_NEW_PARAMS_HASH, REVIEWED_NEW_PARAMS_HASH, *FIELD_GATE_PARAMS_HASHES,
+))
 REVIEWED_OLD_PARAMS_HASH = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"
 HISTORICAL_NEW_CODE_DIGEST = "28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"
 REVIEWED_NEW_CODE_DIGEST = "2f7fd4ecaa8fa26800d8a3f54063d6286d614e309fcdffd9af59bfffeb7824fa"
-REVIEWED_NEW_CODE_DIGESTS = {
+REVIEWED_NEW_CODE_DIGESTS = dict.fromkeys(REVIEWED_NEW_PARAMS_HASHES, REVIEWED_NEW_CODE_DIGEST) | {
     HISTORICAL_NEW_PARAMS_HASH: HISTORICAL_NEW_CODE_DIGEST,
-    REVIEWED_NEW_PARAMS_HASH: REVIEWED_NEW_CODE_DIGEST,
 }
 REVIEWED_OLD_CODE_DIGEST = "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47"
 
@@ -385,20 +391,28 @@ class Params(Record):
         """
         if not isinstance(data, Mapping):
             raise ConfigError("Params must be a JSON object")
-        fields = set(data) & set(DEDUP_FIELDS)
+        fields = set(data) & set(RELEASE_FIELDS)
         if fields:
-            if set(data) - {f.name for f in dataclasses.fields(cls)} != set(DEDUP_FIELDS) - {"z_bar"}:
+            unknown = set(data) - {f.name for f in dataclasses.fields(cls)}
+            if unknown not in (set(DEDUP_FIELDS), set(RELEASE_FIELDS) - {"z_bar"}):
                 # Let the ordinary strict decoder report any other new field.
                 return super().from_dict(data)
-            if {name: data[name] for name in DEDUP_FIELDS} != DEDUP_FIELDS:
-                raise ConfigError("rollback compatibility accepts only the reviewed dedup parameter values")
             params_hash = digest(data)
             if params_hash not in REVIEWED_NEW_PARAMS_HASHES:
-                raise ConfigError("historical params are not a reviewed dedup pin")
+                raise ConfigError("historical params are not a reviewed dedup or field-gate pin")
+            is_field_gate = params_hash in FIELD_GATE_PARAMS_HASHES
+            expected = RELEASE_FIELDS | ({"z_field_bar": data["z_field_bar"], "z_bar": data["z_bar"]} if is_field_gate else {})
+            present = set(RELEASE_FIELDS) if is_field_gate else set(DEDUP_FIELDS) | {"z_bar"}
+            if {name: data[name] for name in present} != {name: expected[name] for name in present}:
+                raise ConfigError("rollback compatibility accepts only the reviewed dedup or field-gate parameter values")
+            if not is_field_gate and any(name in data for name in FIELD_GATE_FIELDS):
+                raise ConfigError("rollback compatibility accepts only the reviewed dedup parameter values")
             if data.get("recipe", {}).get("code_digest") != REVIEWED_NEW_CODE_DIGESTS[params_hash]:
                 # Each reviewed release pins its own merged-evaluation worker code.
                 raise ConfigError("rollback compatibility accepts only the reviewed combined worker recipe")
-            data = {key: value for key, value in data.items() if key not in DEDUP_FIELDS}
+            # Strip every release-only judging override, including z_bar. Old
+            # rollback behavior stays at the legacy z_bar=1.0 for every pin.
+            data = {key: value for key, value in data.items() if key not in RELEASE_FIELDS}
             # Historical replay exposes the old worker identity too. The full
             # combined pin above authorizes this translation; the journal bytes
             # themselves remain untouched and native release readers still see

@@ -32,7 +32,7 @@ def main() -> int:
     store = (fixture_root / "fixture/store").resolve(strict=True)
     old_v2 = args.old_v2.resolve(strict=True)
     expect = json.loads((kit / "expect.json").read_text())
-    old_pin, new_pin = expect["old_params_hash"], expect["new_params_hash"]
+    old_pin, new_pin = expect["old_params_hash"], os.environ.get("DEDUP_REVIEWED_PARAMS_HASH", expect["new_params_hash"])
     stage = fixture_root / "physical-validator-stage"
     tarball = fixture_root / "physical-validator-stage.tar.gz"
     restore = subprocess.run(
@@ -119,7 +119,9 @@ old_pin,historical_pin,new_pin=sys.argv[4:7]
 rows=read_journal(root/"journal.jsonl")
 history=[r for r in rows if r.kind=="params_set" and r.data["params"].get("dedup_enabled")]
 assert history and {digest_params(r.data["params"]) for r in history}=={historical_pin,new_pin}
-assert all(r.data["params"]["z_bar"]==1.5 and r.data["params"]["eval_merged"] is True for r in history)
+assert all(r.data["params"]["eval_merged"] is True for r in history)
+field_history=[r.data["params"] for r in history if r.data["params"].get("crown_gate")=="field_median"]
+assert field_history and all(p["z_field_bar"] in (0.0,1.0) for p in field_history)
 assert {Params.from_dict(r.data["params"]).params_hash for r in history}=={old_pin}
 state=load(root/"journal.jsonl")
 assert state.params.params_hash==old_pin and state.params.z_bar==1.0 and state.round is None
