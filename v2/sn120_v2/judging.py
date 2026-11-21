@@ -51,10 +51,13 @@ from typing import Sequence
 
 from .errors import ContractError, HeadMismatchError
 from .params import Params
+from .sampling import train_seed
 from .types import (
     CAP,
+    DUPLICATE,
     ERROR,
     LOST,
+    NULL_UPDATE,
     NO_DECISION,
     NOT_RUN,
     NOT_SCORED,
@@ -263,7 +266,9 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
             f"{what}: LoRA rank, alpha or target modules differ from the recipe with the miner's values",
         )
         _need(lora.report.image_digest in params.recipe.image_digests, f"{what}: trainer image is not pinned")
-        _need(math.isfinite(lora.report.loss) and math.isfinite(lora.report.step_norm), f"{what}: non-finite train report")
+        _need(math.isfinite(lora.report.loss), f"{what}: non-finite train loss")
+        _need(lora.report.seed == train_seed(ticket.draw.round_seed, seat.batch.batch_sha256, params.train_seed_scope),
+              f"{what}: training seed does not match the round's seed scope")
         _need(len(entry.outcomes) == samples, f"{what}: needs one outcome string per sample")
         check_outcomes(entry.outcomes, n, what)
         scored = scored_prefix(entry.outcomes)
@@ -296,13 +301,15 @@ def _entry_decision(seat, entry: EntryResult, status: str, reason: str, score: S
     )
 
 
-def decide(leases: Sequence[tuple[RoundTicket, BoxResult]]) -> RoundDecision:
-    """Settle a round from every lease's ticket and sealed result.
+def decide(
+    leases: Sequence[tuple[RoundTicket, BoxResult]],
+    duplicate_evidence: Sequence[EntryDecision] = (),
+    duplicate_clusters: Sequence[dict] = (),
+) -> RoundDecision:
+    """Settle a round from sealed results and replayable duplicate evidence.
 
-    Each LoRA is compared with the null M that its own box scored. With more
-    than one box, the boxes' null-M rates must agree within
-    ``calibration_tol``; if not, no score is used and every scored entry is
-    ``no_decision``.
+    Null updates are terminal before duplicate keepers or scoring candidates are selected. Stage-B
+    ``duplicate_evidence`` is an input, not a post-hoc rewrite, so a duplicate can never win.
     """
     _need(len(leases) >= 1, "a round needs at least one lease")
     first = leases[0][0]
@@ -330,10 +337,31 @@ def decide(leases: Sequence[tuple[RoundTicket, BoxResult]]) -> RoundDecision:
 
     rows: list[tuple[object, EntryResult, str, str, Score | None]] = []
     candidates: list[tuple[int, Score]] = []
+    seats = {seat.queue_pos: seat for ticket, _ in leases for seat in ticket.entries}
+    _need(len(seats) == sum(len(ticket.entries) for ticket, _ in leases), "a queue position occurs twice")
+    copies = {}
+    for row in duplicate_evidence:
+        seat = seats.get(row.queue_pos)
+        _need(row.status == DUPLICATE, "duplicate evidence must use the duplicate terminal status")
+        _need(row.queue_pos not in copies, "duplicate evidence names a queue position twice")
+        _need(seat is not None and (row.uid, row.hotkey, row.registration_block, row.batch_sha256) ==
+              (seat.reg.uid, seat.reg.hotkey, seat.reg.registration_block, seat.batch.batch_sha256),
+              "duplicate evidence does not match its frozen seat")
+        copies[row.queue_pos] = row
     for ticket, result in leases:
         for seat, entry in zip(ticket.entries, result.entries):
             if entry.status != SCORED:
                 rows.append((seat, entry, entry.status, entry.reason, None))
+                continue
+            norm = entry.lora.report.step_norm
+            if not math.isfinite(norm) or norm < params.min_step_norm:
+                shown = "non-finite" if not math.isfinite(norm) else f"{norm:.6g}"
+                rows.append((seat, entry, NULL_UPDATE,
+                             f"stored update norm {shown} does not meet min_step_norm {params.min_step_norm:g}", None))
+                continue
+            if seat.queue_pos in copies:
+                copy = copies[seat.queue_pos]
+                rows.append((seat, entry, DUPLICATE, copy.reason, None))
                 continue
             # At the round's time limit the box stops early. What it scored is then the whole test, by the same final rule.
             full = scored_prefix(result.null_outcomes) if result.stopped_at_limit else n
@@ -374,4 +402,11 @@ def decide(leases: Sequence[tuple[RoundTicket, BoxResult]]) -> RoundDecision:
         null_pass_rate=math.fsum(null_rates) / len(null_rates) if null_rates else 0.0,
         null_cap_rate=math.fsum(null_caps) / len(null_caps) if null_caps else 0.0,
         reason=why,
+        duplicate_clusters=tuple(duplicate_clusters),
     )
+
+
+def duplicate_decision(head_version_id: str, round_id: str, entries: tuple[EntryDecision, ...], clusters=()) -> RoundDecision:
+    """A duplicate-only close: copies are charged; any undersized survivors are uncharged ``no_decision`` rows."""
+    return RoundDecision(round_id, head_version_id, None, entries, 0, 0.0, 0.0,
+                         "no trainable entry remained after duplicate removal", tuple(clusters))

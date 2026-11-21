@@ -72,6 +72,8 @@ Grader = Callable[[str, str, bool], float | None]
 TIME_LIMIT = "grader_time_limit"  # the rule code of a row that the official grader cannot grade in time
 FAULT = "grader_fault"  # the rule code of a row that makes the official grader fail, while the grader itself works
 NO_SIGNAL = "no_signal"  # the rule code of a file in which no rollout can change the model
+MIN_ROLLOUTS = "min_rollouts"  # too few rollouts have a nonzero advantage
+NULL_UPDATE = "null_update"  # the configured cap cannot reach the minimum stored update norm
 TRAIN_COST = "train_cost"  # the rule code of a file that costs more training than one seat may use
 TOKENIZER_FAULT = "tokenizer_fault"  # the rule code of a text that makes the tokenizer fail, while the tokenizer itself works
 CHECK_FAULT = "check_fault"  # the rule code of a file that makes the checker itself fail, while the checker still passes a known-good file
@@ -150,6 +152,8 @@ RULES: dict[str, str] = {
     "reasoning_share": "too small a share of the output tokens is reasoning",
     "answer_repeat": "one final answer is in too many rollouts",
     NO_SIGNAL: "no rollout has a reward that differs from the mean reward of its training group, so nothing trains",
+    MIN_ROLLOUTS: "too few rollouts have a nonzero advantage; the floor is max(min_signal_rollouts, recipe.minibatches)",
+    NULL_UPDATE: "the miner's global_norm_cap is below min_step_norm, so the stored update cannot be large enough to judge",
     TRAIN_COST: "steps times the tokens that the trainer runs through the model is above the training cost cap",
     TIME_LIMIT: f"the official grader cannot grade a rollout inside its time limit; {_AGAIN}",
     FAULT: f"a rollout makes the official grader fail; {_AGAIN}",
@@ -421,6 +425,11 @@ def _groups(value: dict[str, Any], hotkey: str) -> list[Group]:
     return out
 
 
+def parse_groups(value: dict[str, Any], hotkey: str, max_prompts: int, max_rollouts: int) -> list[Group]:
+    """Kept shape-checked groups for read-only diagnostics. ``check_batch`` remains the admission decision."""
+    return _cap(_groups(value, hotkey), max_prompts, max_rollouts)
+
+
 def _cap(groups: list[Group], max_prompts: int, max_rollouts: int) -> list[Group]:
     """Keep whole groups, in file order, while both caps hold."""
     kept, n_rollouts = 0, 0
@@ -536,17 +545,8 @@ def trained_tokens(n_prompt: int, n_output: int, recipe: Recipe) -> int:
     return n_prompt + (room if n_output >= room else n_output + 1)
 
 
-def _trains(groups: Sequence[Group], params: Params, train: Mapping[str, Any], sizes: Sizes | None) -> int:
-    """The file must train something, and must not cost more training than one seat may use. Return the cost.
-
-    Both rules use the trainer's own arithmetic. A rollout trains when its advantage is not zero and the
-    trainer does not drop it. The advantage is the reward minus the mean reward of the training group
-    (``gpu.batch.advantages``). A file in which no rollout trains gives no gradient: the trainer rejects it, so
-    it must not take a slot. The cost is ``steps`` times the tokens of the rollouts that train
-    (``trained_tokens``): the trainer runs exactly these tokens through the model in each step. Without a
-    tokenizer the checker cannot know the tokens: no rollout counts as dropped and the cost rule does not run.
-    """
-    recipe = params.recipe.for_miner(train)
+def signal_counts(groups: Sequence[Group], recipe: Recipe, sizes: Sizes | None = None) -> tuple[int, int]:
+    """Active rollouts and token cost, exactly as the admission/trainer arithmetic defines them."""
     active = tokens = 0
     for i, (_, rollouts) in enumerate(groups):
         try:
@@ -558,7 +558,27 @@ def _trains(groups: Sequence[Group], params: Params, train: Mapping[str, Any], s
                 continue
             row = trained_tokens(*sizes[i, j], recipe) if sizes is not None else 1
             active, tokens = active + (row > 0), tokens + row
+    return active, tokens
+
+
+def _trains(groups: Sequence[Group], params: Params, train: Mapping[str, Any], sizes: Sizes | None) -> int:
+    """The file must train something, and must not cost more training than one seat may use. Return the cost.
+
+    Both rules use the trainer's own arithmetic. A rollout trains when its advantage is not zero and the
+    trainer does not drop it. The advantage is the reward minus the mean reward of the training group
+    (``gpu.batch.advantages``). A file in which no rollout trains gives no gradient: the trainer rejects it, so
+    it must not take a slot. The cost is ``steps`` times the tokens of the rollouts that train
+    (``trained_tokens``): the trainer runs exactly these tokens through the model in each step. Without a
+    tokenizer the checker cannot know the tokens: no rollout counts as dropped and the cost rule does not run.
+    """
+    recipe = params.recipe.for_miner(train)
+    _need(recipe.global_norm_cap is None or recipe.global_norm_cap >= params.min_step_norm, NULL_UPDATE,
+          f"global_norm_cap {recipe.global_norm_cap if recipe.global_norm_cap is not None else float('inf'):g} is below min_step_norm {params.min_step_norm:g}; the stored update can never reach the floor")
+    active, tokens = signal_counts(groups, recipe, sizes)
     _need(active > 0, NO_SIGNAL, "no rollout has a reward that differs from the mean reward of its training group, so the file trains nothing")
+    floor = max(params.min_signal_rollouts, recipe.minibatches)
+    _need(active >= floor, MIN_ROLLOUTS,
+          f"only {active} rollouts have a nonzero advantage; the floor is {floor} (max(min_signal_rollouts={params.min_signal_rollouts}, minibatches={recipe.minibatches}))")
     if sizes is None:
         return 0
     cost, cap = recipe.steps * tokens, params.max_train_token_steps

@@ -117,6 +117,55 @@ def test_box_config_has_no_default():
     assert plan.install_digest() == plan.install_digest() and len(plan.install_digest()) == 64  # the image digest of a box without a baked image
 
 
+# ---- training recovery identity and cache isolation ----
+
+
+def test_two_batches_cannot_share_a_cached_lora(box, tmp_path, monkeypatch):
+    from sn120_v2.gpu import trainer as trainer_module
+    from sn120_v2.sampling import train_seed
+
+    resident_module._SHARED.clear()
+    uploads, adopted = [], []
+    monkeypatch.setattr(trainer_module, "upload_tree",
+                        lambda store, path, prefix: uploads.append((prefix, hash_tree(path))) or
+                        (hash_tree(path), {name: (path / name).stat().st_size for name in hash_tree(path)}))
+    job = FakeJob()
+    made = trainer(box, job)
+    monkeypatch.setattr(made.resident, "prune", lambda keep: adopted.append(set(keep)))
+    first = train_request(box, groups=[["p1", [["one", 1.0], ["zero", 0.0]]]])
+    first_batch = box.build.replace(first.entry.batch, uri="private/rounds/r000001/batches/first.json")
+    box.store.put(first_batch.uri, box.store.get(first.entry.batch.uri))
+    first = box.build.replace(first, entry=box.build.replace(first.entry, batch=first_batch))
+    second = train_request(box, groups=[["p2", [["other", 1.0], ["none", 0.0]]]])
+    second_batch = box.build.replace(second.entry.batch, uri="private/rounds/r000001/batches/other.json")
+    raw = box.store.get(second.entry.batch.uri)
+    box.store.put(second_batch.uri, raw + b" ")
+    second_batch = box.build.replace(second_batch, batch_sha256=sha256_hex(box.store.get(second_batch.uri)))
+    second = box.build.replace(second, entry=box.build.replace(second.entry, batch=second_batch))
+    assert first.entry.batch.batch_sha256 != second.entry.batch.batch_sha256
+    seeds = [train_seed("round", entry.entry.batch.batch_sha256, "round") for entry in (first, second)]
+    requests = [box.build.replace(request, seed=seed, out_prefix=f"pending/loras/{index:03d}")
+                for index, (request, seed) in enumerate(zip((first, second), seeds))]
+    artifacts = [made.train(request) for request in requests]
+    assert seeds[0] == seeds[1], "the training seed is shared, but recovery identity still includes the batch"
+    assert artifacts[0].batch_sha256 != artifacts[1].batch_sha256
+    assert artifacts[0].lora_hash == artifacts[1].lora_hash, "the fixture uses identical adapter bytes"
+    assert artifacts[0].prefix != artifacts[1].prefix
+    assert [call[2]["seed"] for call in job.calls] == seeds
+    assert [call[2]["rows"] for call in job.calls] == [
+        [{"prompt": "p1", "output": "one", "reward": 1.0, "advantage": 0.5},
+         {"prompt": "p1", "output": "zero", "reward": 0.0, "advantage": -0.5}],
+        [{"prompt": "p2", "output": "other", "reward": 1.0, "advantage": 0.5},
+         {"prompt": "p2", "output": "none", "reward": 0.0, "advantage": -0.5}],
+    ]
+    assert [prefix for prefix, _ in uploads] == [artifact.prefix for artifact in artifacts]
+    assert adopted == [{box.head.base_hash, box.head.base_fp32_master_digest}] * 2
+    assert all(not path.is_dir() for path in (box.config.work_dir / "train").glob("*"))
+    assert list((box.config.work_dir / "cache").iterdir()) and all(
+        path.name in (box.head.base_hash, box.head.base_fp32_master_digest)
+        for path in (box.config.work_dir / "cache").iterdir())
+
+
 # ---- batch rows, token caps, derail mask ----
 
 
@@ -325,7 +374,7 @@ def test_every_key_a_miner_may_set_trains_at_both_ends_of_its_bound(box):
     [
         ({"status": "rejected", "reason": "no gradient"}, BatchRejected),
         ({"status": "ok", "loss": float("nan"), "step_norm": 0.1, "tokens": 1, "gpu_class": "x"}, BatchRejected),
-        ({"status": "ok", "loss": 0.1, "step_norm": float("inf"), "tokens": 1, "gpu_class": "x"}, BatchRejected),
+        ({"status": "ok", "loss": 0.1, "step_norm": "not-a-number", "tokens": 1, "gpu_class": "x"}, InfraError),
         ({"status": "ok", "loss": 0.1}, InfraError),
         ("none", InfraError),
     ],
@@ -334,6 +383,17 @@ def test_a_bad_training_report_never_becomes_a_lora(box, report, error):
     with pytest.raises(error):
         trainer(box, FakeJob(report)).train(train_request(box))
     assert box.store.list("pending") == []
+
+
+
+def test_a_nonfinite_update_norm_is_sealed_for_null_update_judging(box):
+    import math
+    from sn120_v2.types import LoRAArtifact
+    for value in (float("nan"), float("inf"), -float("inf")):
+        artifact = trainer(box, FakeJob({"status": "ok", "loss": 0.1, "step_norm": value, "tokens": 1, "gpu_class": "x"})).train(train_request(box))
+        assert not math.isfinite(artifact.report.step_norm)
+        restored = LoRAArtifact.from_json(artifact.to_json())
+        assert math.isnan(restored.report.step_norm) if math.isnan(value) else restored.report.step_norm == value
 
 
 def test_training_failures_are_sorted_into_miner_and_box(box):

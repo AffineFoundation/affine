@@ -172,9 +172,12 @@ class LoraTrainer:
         numbers = [report.get(key) for key in ("loss", "step_norm")]
         if report.get("status") != "ok" or not all(type(n) in (int, float) for n in numbers):
             raise InfraError("the training job wrote a report that cannot be read")
-        if not all(math.isfinite(n) for n in numbers):
-            raise BatchRejected("training gave a loss or an update that is not finite")
-        cap = recipe.global_norm_cap
-        if cap is not None and report["step_norm"] > cap * (1 + 1e-6):
-            raise InfraError("the adapter update is larger than recipe.global_norm_cap")
+        if not math.isfinite(report["loss"]):
+            raise BatchRejected("training gave a loss that is not finite")
+        # A non-finite stored update reaches pure judging, which charges it as null_update.
+        # TrainReport's tagged JSON form keeps the sealed result strictly canonical.
+        if math.isfinite(report["step_norm"]):
+            cap = recipe.global_norm_cap
+            if cap is not None and report["step_norm"] > cap * (1 + 1e-6):
+                raise InfraError("the adapter update is larger than recipe.global_norm_cap")
         return report

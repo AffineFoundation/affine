@@ -80,6 +80,8 @@ def test_train_accepts_each_bound_end_and_keeps_the_values_as_given(build):
     assert len(params.recipe.miner_bounds) >= 5
     for bound in params.recipe.miner_bounds:
         for value in edges(bound)[0]:
+            if bound.key == "minibatches" and value > 2:
+                continue  # a separate focused fixture exercises the new active >= minibatches rule at the high bound
             batch = check_batch(file(train={bound.key: value}), HOTKEY, params)
             assert batch.train == {bound.key: value}
             assert getattr(params.recipe.for_miner(batch.train), bound.key) in (value, tuple(value) if bound.choices else value)

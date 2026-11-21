@@ -10,6 +10,7 @@ import pytest
 
 from sn120_v2.canonical import manifest_digest, sha256_hex
 from sn120_v2.params import GenesisSpec, Params, Recipe
+from sn120_v2.sampling import train_seed
 from sn120_v2.types import (
     NO_DECISION,
     OUT_OF_TIME,
@@ -54,7 +55,10 @@ class Build:
 
     @staticmethod
     def params(**changes) -> Params:
-        base = dict(n_tasks=8, min_scored_tasks=2, looks=(1.0,), batch_cap=4, recipe=Recipe(image_digests=(IMAGE,)))
+        # Existing unit fixtures contain only a handful of rollouts and fake tiny updates.
+        # Production defaults remain in Params; new floor tests opt into them explicitly.
+        base = dict(n_tasks=8, min_scored_tasks=2, looks=(1.0,), batch_cap=4, recipe=Recipe(image_digests=(IMAGE,)),
+                    min_signal_rollouts=1, min_step_norm=0.0)
         return Params(**(base | changes))
 
     @staticmethod
@@ -114,7 +118,7 @@ class Build:
             rank=recipe.rank,
             alpha=recipe.alpha,
             target_modules=recipe.target_modules,
-            report=TrainReport(seed=1, steps=1, loss=0.5, step_norm=0.01, tokens=100, wall_s=1.0, gpu_class="cpu", image_digest=IMAGE),
+            report=TrainReport(seed=train_seed("seed-0", entry.batch.batch_sha256, params.train_seed_scope), steps=1, loss=0.5, step_norm=0.1, tokens=100, wall_s=1.0, gpu_class="cpu", image_digest=IMAGE),
         )
 
     @staticmethod
