@@ -1,0 +1,33 @@
+{
+ "deadline": "2026-11-19T16:00:00Z",
+ "epoch": "20261119T1600Z",
+ "files": [
+  {
+   "eligible_count": 1,
+   "hotkey": "5Ez973Q82FyaLNPfjnKEDnHF3jvshyx7qeJsvCmUCmjeR3GF",
+   "reason": "",
+   "sha256": "48921deb2588bf99add18d6e8a8558816a4828c7c3ad21b1ccdd65018ec7ff39",
+   "size": 416,
+   "task_count": 1,
+   "uploaded_at": 1795097700.0,
+   "uploaded_at_utc": "2026-11-19T14:15:00Z",
+   "valid": true
+  },
+  {
+   "eligible_count": 2,
+   "hotkey": "5FCM8VvFKfKzQnmkT7X9kDY6xMcgeGYRK8tmSbfwpXyM1CvS",
+   "reason": "",
+   "sha256": "b645d00cfc0ea0e47d5f3750831a39b3b0a6c5d8d8de14fc54089dfb5afd87a4",
+   "size": 439,
+   "task_count": 2,
+   "uploaded_at": 1795096800.0,
+   "uploaded_at_utc": "2026-11-19T14:00:00Z",
+   "valid": true
+  }
+ ],
+ "note": "Object hashes and counts only. Task IDs are private until results publication.",
+ "pool": "sn120-math-prior-v1:45b793b4d00d1f7225d34fd35e58018612a0ded00d96a9c23b750cfb18994115",
+ "snapshot_at": "2026-11-19T16:01:00Z",
+ "unique_tasks": 3,
+ "version": "affine-generator-manifest-v1"
+}

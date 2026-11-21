@@ -1,0 +1,11 @@
+[Unit]
+Description=SN120 Generator control plane every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Persistent=true
+Unit=sn120-generator-tick.service
+
+[Install]
+WantedBy=timers.target
