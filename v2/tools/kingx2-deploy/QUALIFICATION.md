@@ -127,6 +127,21 @@ waived; the authenticated current generation was used for replay.
   and `[3]`: both test fixtures attempt a historical `git show` outside a Git
   worktree. This is a shared isolated-test-environment limitation, not evidence
   that those trainer tests passed.
+
+  Targeted reruns resolved the local exported-tree harness issues identically on
+  both trees. With each selected tree's absolute `v2` on `PYTHONPATH` for child
+  processes, the pull-chain/site files containing the other 27 failures gave
+  **33 passed in 89.15s** on implementation and **33 passed in 88.75s** on base
+  (`env-repair-site-impl.log`, `env-repair-site-base.log`). Supplying the local
+  Git object database to the archive-only trainer fixtures gave **72 passed in
+  35.63s** on implementation and **72 passed in 33.82s** on base
+  (`env-repair-trainer-impl.log`, `env-repair-trainer-base.log`). Only these two
+  genuine assertions then remained, and their isolated reruns still fail on both
+  trees: the synthetic `VllmEvaluator` lacks `capture` in its `close()` path,
+  and the historical snapshot test expects SHA `a5ffb03f...` but observes
+  `7b07d90a...` (`isolated-shared-impl.log`, `isolated-shared-base.log`). The
+  raw 29-plus-two comparison remains the actual full-suite result; the targeted
+  runs explain its environment-dependent subset rather than replacing it.
 - Focused feature/import tests: `/home/bb/scratch/kingx2-genfeed-rebase/tests-agent/focused.log`
   (**175 passed in 150.98s**).
 - Restored PR 307 kit plus consumer regression tests:
