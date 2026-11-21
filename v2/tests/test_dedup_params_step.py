@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import sn120_v2
+from sn120_v2.canonical import file_sha256, manifest_digest
 from sn120_v2.cli import changed_params, main as cli_main
 from sn120_v2.journal import JOURNAL_FILE, read_journal
 from sn120_v2.params import Params
@@ -22,22 +23,30 @@ assert _spec is not None and _spec.loader is not None
 step = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(step)
 assert sys.modules["sn120_v2"] is sn120_v2
+GPU_DIGEST = manifest_digest({
+    path.name: file_sha256(path)
+    for path in sorted((SCRIPT.parents[1] / "sn120_v2/gpu").glob("*.py"))
+})
 
 
 @pytest.mark.parametrize("king_samples", [None, 2])
-def test_full_step_changes_exactly_seven_keys_on_a_kingx2_sim_journal(tmp_path, capsys, king_samples):
-    # Simulate a king-x2 journal with old nondefault dedup thresholds and legacy
-    # batch seeds: every requested value differs, so the diff has exactly 7 keys.
+def test_full_step_changes_release_keys_on_a_kingx2_sim_journal(tmp_path, capsys, king_samples):
+    # Simulate a legacy journal with nondefault historical dedup settings:
+    # every requested value differs, plus merged eval and the release GPU code.
+    # Explicit replay bookkeeping keeps the approved no-op values visible.
     old = sim_params(
         irt_draw_rule="sqrt_fisher", null_samples_per_task=king_samples,
+        dedup_enabled=False, train_seed_scope="batch", z_bar=0.75,
+        min_signal_rollouts=64, min_step_norm=0.02,
         dedup_rollout_overlap=0.75, dedup_cos_shared_seed=0.2, dedup_cos_own_seed=0.01,
     )
     world = SimWorld(tmp_path / "world", old)
     pinned = load(world.root / JOURNAL_FILE).params
     assert pinned is not None and pinned.irt_draw_rule == "sqrt_fisher"
     assert pinned.null_samples_per_task == king_samples
-    assert all(name not in pinned.to_dict() for name in (
-        "train_seed_scope", "dedup_enabled", "min_signal_rollouts", "min_step_norm",
+    assert all(name in pinned.to_dict() for name in (
+        "dedup_rollout_overlap", "dedup_cos_shared_seed", "dedup_cos_own_seed",
+        "min_signal_rollouts", "min_step_norm", "z_bar",
     ))
     before_bytes = (world.root / JOURNAL_FILE).read_bytes()
     before_records = len(read_journal(world.root / JOURNAL_FILE))
@@ -47,8 +56,11 @@ def test_full_step_changes_exactly_seven_keys_on_a_kingx2_sim_journal(tmp_path, 
     assert step.main(["--state-dir", str(world.root), "--output", str(output)]) == 0
     preview = json.loads(capsys.readouterr().out)
     full = json.loads(output.read_text())
-    assert full == pinned.to_dict() | step.DEDUP_FIELDS
-    assert full["irt_draw_rule"] == "sqrt_fisher" and full["recipe"] == pinned.to_dict()["recipe"]
+    assert full == pinned.to_dict() | step.DEDUP_FIELDS | {
+        "recipe": pinned.to_dict()["recipe"] | {"code_digest": GPU_DIGEST},
+    }
+    assert full["irt_draw_rule"] == "sqrt_fisher"
+    assert full["recipe"]["code_digest"] == GPU_DIGEST
     if king_samples is not None:
         assert full["null_samples_per_task"] == king_samples
     else:
@@ -62,13 +74,16 @@ def test_full_step_changes_exactly_seven_keys_on_a_kingx2_sim_journal(tmp_path, 
         "dedup_rollout_overlap": {"before": 0.75, "after": 0.5},
         "dedup_cos_shared_seed": {"before": 0.2, "after": 0.135},
         "dedup_cos_own_seed": {"before": 0.01, "after": 0.002},
-        "min_signal_rollouts": {"before": 1, "after": 64},
-        "min_step_norm": {"before": 0.0, "after": 0.02},
+        "min_signal_rollouts": {"before": 64, "after": 1},
+        "min_step_norm": {"before": 0.02, "after": 0.0},
+        "z_bar": {"before": 0.75, "after": 1.5},
+        "eval_merged": {"before": False, "after": True},
+        "recipe.code_digest": {"before": "", "after": GPU_DIGEST},
     }
     assert preview["changed"] == expected
-    # Replayed fields change explicit serialization even when their effective
-    # value was already the requested default; no other effective field moves.
-    assert {name for name in preview["changed"]} == set(Params.LEGACY_FIELDS)
+    assert {name for name in preview["changed"]} == set(Params.LEGACY_FIELDS) | {
+        "z_bar", "eval_merged", "recipe.code_digest",
+    }
 
     # Feed the resulting file to the actual set-params command, not to_dict or
     # a synthetic replacement of the command's input parser.
@@ -86,10 +101,10 @@ def test_full_step_changes_exactly_seven_keys_on_a_kingx2_sim_journal(tmp_path, 
     assert after.to_dict() == full
     assert after.null_samples_per_task == king_samples
     assert after.irt_draw_rule == "sqrt_fisher"
-    assert after.recipe == pinned.recipe
+    assert after.recipe == dataclasses.replace(pinned.recipe, code_digest=GPU_DIGEST)
     # All other effective fields and their defaults are unchanged too.
     for field in dataclasses.fields(Params):
-        if not field.name.startswith("_") and field.name not in step.DEDUP_FIELDS:
+        if not field.name.startswith("_") and field.name not in step.DEDUP_FIELDS.keys() | {"recipe"}:
             assert getattr(after, field.name) == getattr(pinned, field.name), field.name
 
 
@@ -100,7 +115,7 @@ def test_legacy_kingx2_fields_become_explicit_without_other_effective_changes(tm
     output = tmp_path / "dedup.json"
     assert step.main(["--state-dir", str(world.root), "--output", str(output)]) == 0
     preview = json.loads(capsys.readouterr().out)
-    assert set(preview["changed"]) == {"train_seed_scope", "dedup_enabled", "min_signal_rollouts", "min_step_norm"}
+    assert set(preview["changed"]) == {"train_seed_scope", "dedup_enabled", "z_bar", "eval_merged", "recipe.code_digest"}
     assert cli_main([
         "set-params", "--state-dir", str(world.root), "--stack", "sn120_v2.sim:stack", "--params", str(output),
     ]) == 0
@@ -109,9 +124,9 @@ def test_legacy_kingx2_fields_become_explicit_without_other_effective_changes(tm
     assert after is not None and after.to_dict() == json.loads(output.read_text())
     assert all(name in after.to_dict() for name in Params.LEGACY_FIELDS)
     assert after.null_samples_per_task == 2 and after.irt_draw_rule == "sqrt_fisher"
-    assert after.recipe == pinned.recipe
+    assert after.recipe == dataclasses.replace(pinned.recipe, code_digest=GPU_DIGEST)
     for field in dataclasses.fields(Params):
-        if not field.name.startswith("_") and field.name not in step.DEDUP_FIELDS:
+        if not field.name.startswith("_") and field.name not in step.DEDUP_FIELDS.keys() | {"recipe"}:
             assert getattr(after, field.name) == getattr(pinned, field.name), field.name
 
 

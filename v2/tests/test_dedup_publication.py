@@ -24,6 +24,8 @@ def published_pair(tmp_path, **changes):
         dedup_cos_own_seed=0.002,
         min_signal_rollouts=64,
         min_step_norm=0.02,
+        z_bar=1.5,
+        eval_merged=True,
     )
     params = dataclasses.replace(
         Params.from_dict(world.params.to_dict() | defaults), **changes
@@ -81,9 +83,14 @@ def test_duplicate_and_null_publication_and_check_pair(tmp_path):
     assert policy["public_cluster_member_fields"] == list(publisher.DUPLICATE_MEMBER_COLUMNS)
     assert policy["stages"] == publisher.DUPLICATE_STAGES
     assert doc["params_hash"] == params.params_hash == doc["contract"]["params_hash"]
+    assert doc["params"]["z_bar"] == 1.5 and doc["params"]["eval_merged"] is True
+    assert "Win rule: z is strictly above 1.5" in sentences
+    assert "dropped when (z + c) / sqrt(t) <= 1.5" in sentences
+    assert "Merged-candidate evaluation: Each candidate is tested as the merged model round_bf16(fp32 king master + your LoRA update)" in sentences
+    assert doc["contract"]["candidate_evaluation"]["tested_equals_installed"] is True
     assert all(name in doc["params"] for name in (
         "train_seed_scope", "dedup_enabled", "dedup_rollout_overlap", "dedup_cos_shared_seed",
-        "dedup_cos_own_seed", "min_signal_rollouts", "min_step_norm",
+        "dedup_cos_own_seed", "min_signal_rollouts", "min_step_norm", "z_bar", "eval_merged",
     ))
     assert publisher.check_pair(mining, text.encode(), params) == []
 
@@ -191,5 +198,5 @@ def test_publication_tracks_nondefault_dedup_params(tmp_path):
     assert "threshold is 0.01 (`dedup_cos_own_seed`)" in sentences
     assert "The configured minimum signal is 80; `minibatches` adds no admission floor." in sentences
     assert "stored `step_norm` below 0.04" in sentences
-    assert "Win rule: z is strictly above 1" in sentences
+    assert "Win rule: z is strictly above 1.5" in sentences
     assert publisher.check_pair(mining, text.encode(), params) == []

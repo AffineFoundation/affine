@@ -3,8 +3,10 @@
 
 This reads only journal.jsonl, writes only the requested output file, and never
 opens a controller, store, chain, network connection or production service.
-Every pinned serialized field, including king-x2 and the recipe, is retained;
-the seven dedup fields are set explicitly so omitted legacy fields cannot reset.
+Every pinned serialized field, including king-x2 and the recipe, is retained
+except for the reviewed release overrides below. The seven dedup fields, crown
+threshold, merged-evaluation switch and this checkout's GPU code digest are set
+explicitly so omitted legacy fields cannot reset or select stale worker code.
 
 Use between rounds, after reviewing the full file and printed expected diff:
 
@@ -37,7 +39,7 @@ if _package is None:
     sys.modules["sn120_v2"] = _package
     _spec.loader.exec_module(_package)
 
-from sn120_v2.canonical import canonical_json
+from sn120_v2.canonical import canonical_json, file_sha256, manifest_digest
 from sn120_v2.cli import changed_params
 from sn120_v2.errors import ConfigError
 from sn120_v2.journal import JOURNAL_FILE
@@ -50,8 +52,10 @@ DEDUP_FIELDS = {
     "dedup_rollout_overlap": 0.5,
     "dedup_cos_shared_seed": 0.135,
     "dedup_cos_own_seed": 0.002,
-    "min_signal_rollouts": 64,
-    "min_step_norm": 0.02,
+    "min_signal_rollouts": 1,
+    "min_step_norm": 0.0,
+    "z_bar": 1.5,
+    "eval_merged": True,
 }
 
 
@@ -61,6 +65,9 @@ def prepare(state_dir: str | Path) -> tuple[Params, Params, dict[str, object]]:
     if pinned is None:
         raise ConfigError(f"the journal in {state_dir} has no pinned Params")
     full = pinned.to_dict() | DEDUP_FIELDS
+    gpu = Path(__file__).resolve().parents[1] / "sn120_v2/gpu"
+    digest = manifest_digest({path.name: file_sha256(path) for path in sorted(gpu.glob("*.py"))})
+    full["recipe"] = dict(full["recipe"], code_digest=digest)
     # set-params parses new overrides with load_params/from_jsonable, not
     # Params.from_dict. This preserves all serialized fields without importing
     # the pinned record's _legacy_fields omission bookkeeping.
