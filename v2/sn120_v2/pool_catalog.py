@@ -10,7 +10,7 @@ from .canonical import sha256_hex
 from .envs.math_pool import MathPool
 from .envs.reserve import load_reserve
 from .errors import VerifyError
-from .pool_runtime import load_active
+from .pool_runtime import load_active, public_previous
 from .store import LocalStore
 
 
@@ -78,7 +78,17 @@ def public_rotation_inputs(contract: Any, work: Path, view: Mapping[str, Any]):
     if rotation.get('rule_version') == 'affine-pool-rotation-v2':
         _mirror(contract, layout.pool_ranking(view['round_id']), store)
     if rotation.get('prev_state_sha'):
-        _mirror(contract, layout.pool_rotation_state(rotation['prev_state_sha']), store)
+        previous_id = rotation['prev_state_sha']
+        previous_rid = f"r{int(str(view['round_id'])[1:]) - 1:06d}"
+        previous = public_previous(store, previous_id, previous_rid, lambda key: _mirror(contract, key, store))
+        report = json.loads(store.get(layout.round_file(previous_rid)))
+        if rotation.get('rule_version') == 'affine-pool-rotation-v2':
+            source_id = rotation.get('source_snapshot_id')
+            if source_id:
+                _mirror(contract, layout.irt_snapshot(source_id), store)
+                current_source = json.loads(store.get(layout.irt_snapshot(source_id)))
+                if set(current_source['tasks']) != set(previous.active_ids) and report.get('outcome') not in ('no_decision', 'abandoned'):
+                    raise VerifyError('a scored previous rotation must keep its exact active-set IRT rows')
     if rotation.get('initial_active_sha'):
         _mirror(contract, layout.active_pool(rotation['initial_active_sha']), store)
     source = rotation.get('source_snapshot_id')

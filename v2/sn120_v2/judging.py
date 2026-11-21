@@ -4,18 +4,24 @@ The box never picks the winner. The controller recomputes everything here
 from the outcome strings, so the decision is a fixed function of the score
 file and the pinned parameters.
 
-Estimator. For each scored task t, d_t = (LoRA pass rate) - (null M pass
-rate), on the same seeds. With sampling weights w_t:
+Estimator. For each scored task t, d_t = (LoRA pass rate) - (mean null M
+pass rate over its ``null_samples`` outcomes). Sample 0 uses the same seed
+for null M and the LoRA; later null-M samples are king-only. With sampling
+weights w_t:
 
     delta = sum(w_t * d_t) / sum(w_t)
     var   = n / (n - 1) * sum((w_t * (d_t - delta))^2) / sum(w_t)^2
     se    = sqrt(var),  z = delta / se
 
-The variance uses the spread of the realised d_t. One rollout per task has
-no per-task noise estimate, and the spread of d_t already holds both the
-task-sampling noise and the rollout noise. It has no finite-population
-term, so it is slightly on the safe side. With equal weights it is the
-paired standard error: sd(d) / sqrt(n).
+The variance uses the spread of the realised d_t, not a per-task variance
+estimate. The tasks are independent draws, so their design-based spread
+holds both task-sampling and rollout noise. Averaging k independent king
+outcomes reduces the king part of that noise: conditional on the task and
+sample-0 pairing, Var(d_t) = Var(lora_t) + Var(king_t)/k - 2Cov(lora_t,
+king_t). The design-based se of the realised d_t / sqrt(n), with HT weights,
+therefore remains correct with the averaged king. It has no
+finite-population term, so it is slightly on the safe side. With equal
+weights it is the paired standard error: sd(d) / sqrt(n).
 
 Win rule. A LoRA is eligible when it was scored on every task, z is strictly
 above ``z_bar``, and its cap-hit rate is not above
@@ -108,14 +114,16 @@ def _as_written(value: float) -> Fraction:
     return Fraction(repr(value))
 
 
-def cap_hit_ok(lora_caps: int, null_caps: int, rollouts: int, params: Params) -> bool:
+def cap_hit_ok(lora_caps: int, null_caps: int, rollouts: int, params: Params, null_rollouts: int | None = None) -> bool:
     """Exact test of: cap rate <= max(cap_hit_floor, null cap rate + cap_hit_margin).
 
-    A LoRA is rejected only when its cap-hit share is strictly greater than
-    the limit. A share exactly on the limit passes. The test uses
-    whole-number counts, so no rounding error can move the limit.
+    ``rollouts`` is the LoRA denominator. ``null_rollouts`` is the king's
+    separate denominator when it has extra samples; None retains the old
+    equal-sample-count call. Each side is divided by its own whole-number
+    count, so doubling the king samples never doubles its cap rate.
     """
-    limit = max(_as_written(params.cap_hit_floor), Fraction(null_caps, rollouts) + _as_written(params.cap_hit_margin))
+    null_rollouts = rollouts if null_rollouts is None else null_rollouts
+    limit = max(_as_written(params.cap_hit_floor), Fraction(null_caps, null_rollouts) + _as_written(params.cap_hit_margin))
     return Fraction(lora_caps, rollouts) <= limit
 
 
@@ -172,7 +180,7 @@ def score_entry(
     if not z > params.z_bar:
         reasons.append(f"z {z:.3f} is not above {params.z_bar:g}")
     rollouts = n * len(lora_outcomes)
-    if not cap_hit_ok(code_count(lora_outcomes, CAP, n), code_count(null_outcomes, CAP, n), rollouts, params):
+    if not cap_hit_ok(code_count(lora_outcomes, CAP, n), code_count(null_outcomes, CAP, n), rollouts, params, null_rollouts=n * len(null_outcomes)):
         reasons.append(f"cap-hit rate {cap_rate:.4f} is above {cap_limit(null_cap_rate, params):.4f}")
     return Score(
         n_tasks=n,
@@ -244,7 +252,7 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
     )
     null_scored = 0
     if any(e.status == SCORED for e in result.entries):
-        _need(len(result.null_outcomes) == samples, "null M needs one outcome string per sample")
+        _need(len(result.null_outcomes) == params.null_samples, "null M needs null_samples_per_task outcome strings; one outcome string per sample when null")
         check_outcomes(result.null_outcomes, n, "null M")
         null_scored = scored_prefix(result.null_outcomes)
     look_sizes = params.look_sizes(n)

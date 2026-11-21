@@ -193,7 +193,7 @@ class Params(Record):
     # A stored Params without this field loads with the Fisher default. Keep its JSON and params_hash unchanged;
     # selecting the old band rule writes the field and changes the hash, just like any other nondefault setting.
     LEFT_OUT_AT_DEFAULT = (
-        "irt_draw_rule", "kv_cache_dtype", "max_num_seqs",
+        "null_samples_per_task", "irt_draw_rule", "kv_cache_dtype", "max_num_seqs",
         "rotation_enabled", "rotation_k", "rotation_retire_p", "rotation_n_min",
         "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
@@ -209,10 +209,12 @@ class Params(Record):
     n_min_start: int = 1  # a short queue runs right away; a round never starts with 0 batches
     n_gpus: int = 8
 
-    # Evaluation. Null M and every LoRA use the same tasks, seeds and caps.
+    # Evaluation. Sample 0 of null M and every LoRA uses the same tasks, seed
+    # and caps. Null M may add independent, king-only samples after sample 0.
     n_tasks: int = 2000  # placeholder: pinned so EVAL fits eval_time_budget_s on the reference box
     eval_time_budget_s: int = 3600  # placeholder
     samples_per_task: int = 1
+    null_samples_per_task: int | None = None  # None = samples_per_task; omitted from JSON for old rounds
     looks: tuple[float, ...] = (0.25, 0.5, 1.0)  # shares of n_tasks; the win test runs at the last look only
     drop_alpha: float = 0.05  # PLACEHOLDER: total chance, over all early looks, to drop a LoRA that is truly on the win bar
     max_output_tokens: int = 65536
@@ -227,7 +229,7 @@ class Params(Record):
     # Task draw.
     irt_draw_rule: str = "fisher"
     irt_middle_band: tuple[float, float] = (0.2, 0.8)  # placeholder: favoured band of the head's pass rate under "band"
-    # Under "fisher", share of the draw spread uniformly over every task; under "band", share for barely seen tasks.
+    # Under "fisher"/"sqrt_fisher", share of the draw spread uniformly over every task; under "band", share for barely seen tasks.
     irt_explore_frac: float = 0.1
 
     # Public reserve -> active pool. Disabled by default; no reserve read or
@@ -306,6 +308,7 @@ class Params(Record):
         _need(1 <= self.batch_cap <= self.max_loras_per_box, "batch_cap must be between 1 and max_loras_per_box")
         _need(1 <= self.n_min_start <= self.batch_cap, "n_min_start must be between 1 and batch_cap")
         _need(self.n_gpus >= 1 and self.n_tasks >= 1 and self.samples_per_task >= 1, "n_gpus, n_tasks, samples_per_task >= 1")
+        _need(self.null_samples_per_task is None or (type(self.null_samples_per_task) is int and self.null_samples_per_task >= 1), "null_samples_per_task must be null or an integer of at least 1")
         _need(self.max_num_seqs >= 1, "max_num_seqs must be positive")
         _need(bool(self.looks) and self.looks[-1] == 1.0, "looks must end at 1.0")
         _need(all(0 < a < b for a, b in zip(self.looks, self.looks[1:])) and self.looks[0] > 0, "looks must rise from above 0")
@@ -314,7 +317,7 @@ class Params(Record):
         _need(_unit(self.cap_hit_floor) and _unit(self.cap_hit_margin), "cap-hit settings must be in [0, 1]")
         _need(_unit(self.min_cover) and self.min_cover > 0, "min_cover must be in (0, 1]")
         _need(self.min_scored_tasks >= 2, "min_scored_tasks must be at least 2: one task has no standard error")
-        _need(self.irt_draw_rule in ("band", "fisher"), "irt_draw_rule must be 'band' or 'fisher'")
+        _need(self.irt_draw_rule in ("band", "fisher", "sqrt_fisher"), "irt_draw_rule must be 'band', 'fisher' or 'sqrt_fisher'")
         low, high = self.irt_middle_band
         _need(_unit(low) and _unit(high) and low < high, "irt_middle_band must be two rising shares")
         _need(_unit(self.irt_explore_frac), "irt_explore_frac must be in [0, 1]")
@@ -338,6 +341,10 @@ class Params(Record):
         _need(self.kings_window >= 1 and self.burn_uid >= 0, "kings_window >= 1 and burn_uid >= 0")
         _need(self.weights_cadence_s > 0, "weights_cadence_s must be positive")
         _need(math.isfinite(self.budget_usd_per_hour) and self.budget_usd_per_hour > 0, "budget must be positive")
+
+    @property
+    def null_samples(self) -> int:
+        return self.samples_per_task if self.null_samples_per_task is None else self.null_samples_per_task
 
     @property
     def params_hash(self) -> str:

@@ -550,7 +550,12 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  for a full round. Registrations for the next round are always open.",
         "- Round loop: (1) pin head M, the recipe, the task draw and the public round seed; (2) copy the next valid",
         "  files in queue order; (3) train one LoRA per file; (4) score every LoRA and a null copy of M (no adapter)",
-        "  on the same tasks and seeds; (5) apply at most one winner; (6) publish; (7) start again.",
+        *([
+            "  on the same tasks, pairing sample 0 by seed; later king samples are king-only; (5) apply at most one winner;",
+            "  (6) publish; (7) start again.",
+        ] if params.null_samples_per_task is not None else [
+            "  on the same tasks and seeds; (5) apply at most one winner; (6) publish; (7) start again.",
+        ]),
         "",
         *_round_time_lines(params),
         "## 4. The queue",
@@ -978,8 +983,15 @@ def _scoring_lines(params: Params) -> list[str]:
         "",
         f"- `model` is `{NULL_MODEL}` for null M and the `lora_hash` for a LoRA. The seed is the seed of the pairing rule above.",
         f"  Task i of the full draw (i counts from 0) goes to a free GPU according to the solo scheduler. A GPU may steal",
-        "  another candidate's remaining block. Null M and every LoRA use the same task, sample and seed; only the adapter",
-        "  and the serving GPU can differ.",
+        *([
+            "  another candidate's remaining block. Null M sample 0 and every LoRA use the same task, sample and seed.",
+            f"- Null M (the king) runs {params.null_samples} sample(s) per task; every LoRA runs {params.samples_per_task}. Sample 0 has the same seed",
+            "  for null M and every LoRA. Later king samples use their own seed and are not run for any LoRA. Only the adapter",
+            "  and the serving GPU can differ between paired rollouts.",
+        ] if params.null_samples_per_task is not None else [
+            "  another candidate's remaining block. Null M and every LoRA use the same task, sample and seed; only the adapter",
+            "  and the serving GPU can differ.",
+        ]),
         f"- The box feeds {params.max_num_seqs} concurrent requests to each server (`max_num_seqs`), subject to the local file",
         "  descriptor limit. A server runs at most `--max-num-seqs` of them at a time; the",
         f"  others wait in the server. The time limit of one try of a request is {params.eval_time_budget_s} s (`eval_time_budget_s`),",
@@ -1005,7 +1017,10 @@ def _scoring_lines(params: Params) -> list[str]:
         f"  The chunk runs again: at most {BOX_TRIES} runs in all. When each of them fails before the stop time, the box stops with an",
         "  error and the round has no result (section 4). A run that fails after the stop time ends the scoring, and",
         "  the chunk is not used.",
-        "- Outcome strings: each model has one string for each sample. A string has one character for each task, in",
+        "- Outcome strings: each model has one string for each sample" + (": null M has `null_samples_per_task` strings (or" if params.null_samples_per_task is not None else ". A string has one character for each task, in"),
+        *([
+            "  `samples_per_task` when it is null), and every LoRA has `samples_per_task`. A string has one character for each task, in",
+        ] if params.null_samples_per_task is not None else []),
         f"  the order of the draw: `{PASS}`, `{FAIL}`, `{CAP}`, `{ERROR}`, or `{NOT_RUN}` for a task that was not run.",
         "- Estimator, in full: n is the number of tasks that the LoRA answered. They are the first n tasks of the draw.",
         f"  The pass rate of a model on a task is the share of its samples with `{PASS}`. The sums of the estimator above run",
@@ -1019,8 +1034,14 @@ def _scoring_lines(params: Params) -> list[str]:
         "- Win rule, in full. A LoRA is eligible when all of these are true. It has an outcome for every task of the",
         "  draw, or, when the stop time ended the scoring, for every task that null M has an outcome for; a LoRA that",
         "  was dropped at a look does not. n is at least `min_scored_tasks`. z > `z_bar`. (its count of",
-        f"  `{CAP}`) / rollouts <= max(`cap_hit_floor`, (the count of `{CAP}` of null M on the same n tasks) / rollouts +",
-        "  `cap_hit_margin`), where rollouts = n x `samples_per_task`. This last test uses exact fractions of whole counts, and each parameter as the",
+        *([
+            f"  `{CAP}`) / (n x LoRA sample count) <= max(`cap_hit_floor`, (the count of `{CAP}` of null M on the same n tasks) / (n x king sample count) +",
+            "  `cap_hit_margin`), where the LoRA denominator is n x `samples_per_task` and the null M denominator is n x its number of",
+            "  outcome strings. Each side is divided by its own denominator. This test uses exact fractions of whole counts, and each parameter as the",
+        ] if params.null_samples_per_task is not None else [
+            f"  `{CAP}`) / rollouts <= max(`cap_hit_floor`, (the count of `{CAP}` of null M on the same n tasks) / rollouts +",
+            "  `cap_hit_margin`), where rollouts = n x `samples_per_task`. This last test uses exact fractions of whole counts, and each parameter as the",
+        ]),
         "  decimal number that is written here: a share exactly on the limit passes.",
         f"- Cover, in full: (rollouts - the count of `{ERROR}`) / rollouts >= `min_cover`, as exact fractions, for null M on the",
         "  tasks that it answered and for a LoRA on its n tasks.",
@@ -1048,9 +1069,11 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         for name, found in snapshots.items() if found
     ]
     looks, n = params.look_sizes(), params.n_tasks
-    mass = [
+    mass = ([
+        f"- The IRT sampler gives each task a mass in proportion to sqrt(p(1 - p)), where p is the head's predicted pass rate on it, mixed with a uniform share of {show(params.irt_explore_frac)} over all tasks. Every task keeps a mass above zero; the published weights 1/pi keep the estimate unbiased.",
+    ] if params.irt_draw_rule == "sqrt_fisher" else [
         f"- The IRT sampler gives each task a mass in proportion to p(1 - p), where p is the head's predicted pass rate on it (the Fisher information of the task under the Rasch model), mixed with a uniform share of {show(params.irt_explore_frac)} over all tasks. Every task keeps a mass above zero; the published weights 1/pi keep the estimate unbiased.",
-    ] if params.irt_draw_rule == "fisher" else [
+    ]) if params.irt_draw_rule in ("fisher", "sqrt_fisher") else [
         f"- The IRT sampler favours tasks where the predicted pass rate of the head is from {show(params.irt_middle_band[0])}",
         f"  to {show(params.irt_middle_band[1])}, and keeps {show(params.irt_explore_frac)} of the draw for new tasks.",
     ]
@@ -1058,24 +1081,41 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"{params.z_bar * math.sqrt(size / n) - drop_margin(look, n, params):.3f} after {size} tasks"
         for look, size in enumerate(looks[:-1])
     ] or "no early look"
+    separate_king = params.null_samples_per_task is not None
     return [
         "## 6. Judging",
         "",
         "- All tasks are public. There is no hidden task set.",
         *_pool_lines(params),
-        f"- Draw: {params.n_tasks} tasks from the public pool of `{params.env}`, {params.samples_per_task} sample(s) per task.",
+        *([
+            f"- Draw: {params.n_tasks} tasks from the public pool of `{params.env}`. The king (null M) has {params.null_samples} sample(s)",
+            f"  per task; every LoRA has {params.samples_per_task}.",
+        ] if separate_king else [
+            f"- Draw: {params.n_tasks} tasks from the public pool of `{params.env}`, {params.samples_per_task} sample(s) per task.",
+        ]),
         "  The draw is a fixed function of the public sampler snapshot and the public round seed. Both are frozen at",
         f"  round start. Rebuild a draw with `{draw_from_snapshot.__module__}.{draw_from_snapshot.__name__}(snapshot,",
         "  round_seed, n_tasks)`.",
         *mass,
-        "- Pairing: the null copy of M and every LoRA run the same tasks with the same seeds. The seed of rollout j",
-        f"  on a task is the first {SEED_BITS} bits of sha256(\"<round_seed>|<task_id>|<j>\"), as a whole number; j counts from 0.",
+        *([
+            "- Pairing: null M sample 0 and every LoRA run the same tasks with the same seeds. Later null M samples are king-only.",
+        ] if separate_king else [
+            "- Pairing: the null copy of M and every LoRA run the same tasks with the same seeds. The seed of rollout j",
+        ]),
+        f"  The seed of rollout j on a task is the first {SEED_BITS} bits of sha256(\"<round_seed>|<task_id>|<j>\"), as a whole number; j counts from 0." if separate_king else f"  on a task is the first {SEED_BITS} bits of sha256(\"<round_seed>|<task_id>|<j>\"), as a whole number; j counts from 0.",
         f"- Decode: temperature {show(params.temperature)}, top_p {show(params.top_p)}, top_k {params.top_k}, {params.dtype},",
         f"  at most {params.max_output_tokens} output tokens and {params.max_context_tokens} prompt + output tokens.",
         f"- Outcome of a rollout: `{PASS}` pass, `{FAIL}` fail, `{CAP}` hit the token cap (not passed), `{ERROR}` our",
         "  infrastructure failed (not passed, stays in the count).",
-        "- Estimator: d_t = LoRA pass rate - null M pass rate on task t. delta = sum(w_t * d_t) / sum(w_t), with the",
-        "  published sampling weights w_t. se = sqrt(n / (n - 1) * sum((w_t * (d_t - delta))^2)) / sum(w_t). z = delta / se.",
+        *([
+            "- Estimator: d_t = lora_pass_t - mean(king_samples_t), where lora_pass_t and each king sample are 1 for PASS and 0 otherwise. delta = sum(w_t * d_t) / sum(w_t), with the",
+            "  published sampling weights w_t. se = sqrt(n / (n - 1) * sum((w_t * (d_t - delta))^2)) / sum(w_t). z = delta / se.",
+            "  Conditional on task and sample-0 pairing, Var(d_t) = Var(lora_t) + Var(king_t)/k - 2Cov(lora_t, king_t),",
+            "  for k king samples. The realized-d spread retains the same design-based standard error with HT weights.",
+        ] if separate_king else [
+            "- Estimator: d_t = LoRA pass rate - null M pass rate on task t. delta = sum(w_t * d_t) / sum(w_t), with the",
+            "  published sampling weights w_t. se = sqrt(n / (n - 1) * sum((w_t * (d_t - delta))^2)) / sum(w_t). z = delta / se.",
+        ]),
         f"- Win rule: z is strictly above {show(params.z_bar)} (beat M by more than that many standard errors), on at least",
         f"  {params.min_scored_tasks} tasks, with no correction for the number of LoRAs. The cap-hit rate of the LoRA may",
         f"  not be above max({show(params.cap_hit_floor)}, null M cap-hit rate + {show(params.cap_hit_margin)}).",
@@ -1279,7 +1319,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
     numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params)
-               if f.name != "recipe" and not (f.name.startswith("rotation_") and f.name in Params.LEFT_OUT_AT_DEFAULT and getattr(params, f.name) == f.default)]
+               if f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_")) and getattr(params, f.name) == f.default)]
     url = doc["contract"]["public_url"]
     where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
@@ -1292,7 +1332,12 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "",
         "You upload one JSON file per hotkey: prompts, rollouts and rewards. At round start the validator copies it,",
         "checks it, and trains one bounded LoRA from the current head M with the published recipe. Every LoRA of the",
-        "round and a null copy of M are scored on the same public tasks with the same seeds. At most one LoRA wins,",
+        *([
+            "round and a null copy of M are scored on the same public tasks. Sample 0 of each uses the same seed; later king",
+            "samples are king-only. At most one LoRA wins,",
+        ] if params.null_samples_per_task is not None else [
+            "round and a null copy of M are scored on the same public tasks with the same seeds. At most one LoRA wins,",
+        ]),
         f"and only if it beats M by more than {show(params.z_bar)} standard error. The winner is applied to the head and",
         "its miner becomes a king. Only kings earn.",
         "",
@@ -1387,7 +1432,7 @@ def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_tex
         problems.append(f"llms.txt and mining.json are not a pair: llms.txt names snapshot {found and found.group(1)}, mining.json {doc['snapshot_digest']}")
     stated = stated_params(text)
     values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params)
-              if f.name != "recipe" and not (f.name.startswith("rotation_") and f.name in Params.LEFT_OUT_AT_DEFAULT and getattr(params, f.name) == f.default)}
+              if f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_")) and getattr(params, f.name) == f.default)}
     for name in sorted(values.keys() | stated.keys()):
         if stated.get(name) != values.get(name):
             problems.append(f"`{name}`: llms.txt states {stated.get(name, 'no value')}, mining.json has {values.get(name, 'no such parameter')}")

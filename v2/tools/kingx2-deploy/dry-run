@@ -1,0 +1,709 @@
+#!/usr/bin/env bash
+# DEPLOY KIT (do not run against prod). Isolated journal/public replay.
+# Uses only copied fixtures, a clone of this exact branch and local public
+# objects. No services, real loop, R2, chain or secrets.
+set -euo pipefail
+ROOT=${ROOT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}
+DRY_ROOT=${DRY_ROOT:-/home/bb/scratch/kingx2-r086-genfeed}
+D=${D:-$DRY_ROOT/kingx2-deploy-dry}
+SRC=${SRC:-/home/bb/scratch/kingx2-r082-live/sn120-run/state/journal.jsonl}
+STORE=${STORE:-/home/bb/scratch/kingx2-next-open-store-v11}
+KIT=${KIT:-$ROOT/v2/tools/kingx2-deploy}
+PY=${PY:-/home/bb/scratch/kingx2-genfeed-rebase/testenv/bin/python}
+[ ! -e "$D" ] || { printf 'D must not exist; choose a fresh isolated directory\n' >&2; exit 64; }
+export PYTHONDONTWRITEBYTECODE=1
+case "$D" in /home/bb/scratch/*) ;; *) echo "D must stay under /home/bb/scratch" >&2; exit 64;; esac
+mkdir -p "$D"/{here,helpers,operator-state,work/logs,watchdog,public,reserve}
+mkdir -p "$D/generator/inbox" "$D/live-reserve"
+[ ! -e "$D/go" ] || { echo 'refusing a reused armed dry fixture' >&2; exit 64; }
+[ ! -e "$D/here/go" ] || { echo 'refusing a reused armed dry fixture' >&2; exit 64; }
+exec > >(tee "$D/dry-run.log") 2>&1
+printf '%s DRY ONLY: no production services, loop, chain, R2 or secrets\n' "$(date -u +%FT%TZ)"
+for path in "$SRC" "$STORE/public/pool/rotation/r000082.json" "$KIT/expect.json" "$KIT/kx2_operator.py"; do [ -f "$path" ] || { echo "missing isolated input $path" >&2; exit 64; }; done
+# Qualify the committed kit, never the working-tree overlay. Reject local kit
+# edits and a detached/uncommitted qualification state instead of hiding them.
+[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all -- v2/tools/kingx2-deploy)" ] || { echo 'kit has uncommitted changes; commit before final rehearsal' >&2; exit 64; }
+HEAD=$(git -C "$ROOT" rev-parse HEAD)
+BRANCH=$(git -C "$ROOT" symbolic-ref --quiet --short HEAD) || { echo 'final rehearsal requires a named branch' >&2; exit 64; }
+git clone -q --no-checkout --branch "$BRANCH" "$ROOT" "$D/repo"
+[ "$(git -C "$D/repo" rev-parse HEAD)" = "$HEAD" ]
+git -C "$D/repo" checkout -q --detach d368b2601f06458349cfe3e84adfbf691994fcb3
+[ "$(git -C "$D/repo" cat-file -t c525286580c84d795b3ca7cbdf2302e96fce31ba)" = commit ]
+[ "$(git -C "$D/repo" rev-parse c525286580c84d795b3ca7cbdf2302e96fce31ba^)" = d368b2601f06458349cfe3e84adfbf691994fcb3 ]
+IMPL="$D/implementation"
+mkdir "$IMPL"
+git -C "$D/repo" archive c525286580c84d795b3ca7cbdf2302e96fce31ba v2 | tar -x -C "$IMPL"
+[ -z "$(git -C "$D/repo" status --porcelain --untracked-files=all)" ]
+# The old-base working tree is deliberate. The real apply checks out the pinned
+# implementation itself; no overlay, scratch commit or new_commit substitution.
+cp -a "$STORE/public/." "$D/public/"
+# Advance only the copied r82-open fixture to the r86 gate with synthetic old-
+# code closes. Rewind the copied public archive before the first close so it
+# cannot observe later public rows.
+cp "$SRC" "$D/operator-state/journal.jsonl"
+cp -a /home/bb/scratch/kingx2-r082-live/sn120/v2/sn120_v2/envs/reserve/. "$D/reserve/"
+$PY -I -c 'import json,pathlib,sys; sys.path.insert(0,sys.argv[2]); from sn120_v2.canonical import canonical_json; from sn120_v2.state import load; from sn120_v2.store import LocalStore; from sn120_v2.pool_runtime import load_rotation; root=pathlib.Path(sys.argv[1]); state=load(root/"operator-state/journal.jsonl"); assert state.round and state.round.round_id=="r000082"; store=LocalStore(root); current=list(load_rotation(store,state.rotation_state_sha).retired_archive); public=json.loads(store.get("public/pool/retired.json")); assert public[:len(current)]==current; store.put("public/pool/retired.json",canonical_json(current)); print("dry fixture initial retired prefix",len(current),"of",len(public))' "$D" "$D/repo/v2"
+# Keep a valid, internally consistent source prefix in the external live reserve.
+# No checkout step copies, removes, reseeds or modifies this independent state.
+SOURCE_ROWS=$($PY -I -c 'import pathlib,sys; print(len(pathlib.Path(sys.argv[1]).read_text().splitlines()))' "$D/reserve/MANIFEST.jsonl")
+KEEP_ROWS=$((SOURCE_ROWS-1))
+[ "$KEEP_ROWS" -ge 2 ] || { echo 'reserve fixture needs at least one retained shard' >&2; exit 64; }
+cp -a "$D/reserve/." "$D/live-reserve/"
+printf '%s\n' "$D/live-reserve" > "$D/reserve-live.path"
+printf '{"schema":"disposable-dry-prior-index","problems":{}}\n' > "$D/generator/prior-index.json"
+printf '{"dry_fixture":"preserve generator state"}\n' > "$D/generator/state.json"
+printf '{"dry_fixture":"preserve pending inbox evidence"}\n' > "$D/generator/inbox/pending.json"
+cat > "$D/here/check-generator" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+"$KINGX2_PY" -I -c 'import json,os,pathlib,sys; root=pathlib.Path(sys.argv[1]); expected=json.loads(pathlib.Path(sys.argv[2]).read_text()); paths=[root/"reserve-live.path",*sorted((root/"generator").rglob("*")),root/"generator/ingestd.lock"]; paths=[p for p in paths if p.is_file() and "ingestd.pid" not in p.parts]; actual={str(p.relative_to(root)):__import__("hashlib").sha256(p.read_bytes()).hexdigest() for p in paths}; assert actual==expected,{"before":expected,"after":actual}; identity=json.loads((root/sys.argv[3]/"ingestd-before.json").read_text()); assert (root/"generator/ingestd.pid").read_text().strip()==str(identity["pid"]); proc=pathlib.Path("/proc")/str(identity["pid"]); stat=(proc/"stat").read_text().rsplit(") ",1)[1].split(); assert int(stat[19])==identity["start_ticks"] and stat[0]!="Z"; print("GENERATOR/INGESTD PRESERVED",len(actual),"files; pid",identity["pid"],"start_ticks",identity["start_ticks"])' "$KINGX2_GENERATOR_ROOT" "$KINGX2_GENERATOR_EXPECTED" "${KINGX2_IDENTITY_DIR:-here}"
+SH
+chmod +x "$D/here/check-generator"
+cat > "$D/here/check-reserve" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+"$KINGX2_PY" -I -c 'import hashlib,json,pathlib,sys; root=pathlib.Path(sys.argv[1]); expected=json.loads(pathlib.Path(sys.argv[2]).read_text()); actual={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob("*") if p.is_file() and "__pycache__" not in p.parts}; assert actual==expected, {"missing":sorted(set(expected)-set(actual)),"added":sorted(set(actual)-set(expected)),"changed":sorted(k for k in set(actual)&set(expected) if actual[k]!=expected[k])}; print("RESERVE BYTES PRESERVED",len(actual),"files")' "$KINGX2_RESERVE_DIR" "$KINGX2_RESERVE_EXPECTED"
+SH
+chmod +x "$D/here/check-reserve"
+export KINGX2_RESERVE_EXPECTED="$D/reserve-prefix.json"
+cat > "$D/helpers/dry_stack.py" <<'PY'
+"""An isolated LocalStore stack for the real end-round CLI, never production."""
+import os
+from pathlib import Path
+from sn120_v2.controller import Stack, stored_irt_snapshot
+from sn120_v2.irt import IRTSampler
+from sn120_v2.pool_runtime import PoolRuntime
+from sn120_v2.sim import SimAdmission
+from sn120_v2.store import LocalStore
+
+
+def stack(context):
+    # LocalStore keys already start with public/ and private/. The controller
+    # uses the full private object root; only the operator reads the separate
+    # production-like public projection.
+    store = LocalStore(Path(os.environ.get("KINGX2_OBJECT_ROOT", Path(__file__).resolve().parents[2])))
+    state = context.load()
+    pool = PoolRuntime(store, state.params, state, root=store.root / "reserve")
+    sampler = IRTSampler(pool.active_ids, state.params, snapshot=stored_irt_snapshot(store, state))
+    return Stack(store, SimAdmission(store), sampler, pool=pool)
+PY
+cat > "$D/helpers/replay.py" <<'PY'
+
+"""Synthetic, isolated replay. Never connects to a worker or a real store."""
+import hashlib, json, os, pathlib, subprocess, sys, time
+sys.path.insert(0, os.environ["KINGX2_V2"])
+from sn120_v2 import layout
+from sn120_v2.canonical import canonical_json, manifest_digest, sha256_hex
+from sn120_v2.controller import Controller, stored_irt_snapshot
+from sn120_v2.envs.math_pool import load_pool
+from sn120_v2.irt import IRTSampler, draw_from_snapshot
+from sn120_v2.journal import Journal
+from sn120_v2.params import Params
+from sn120_v2.pool_runtime import PoolRuntime
+from sn120_v2.state import load
+from sn120_v2.store import LocalStore
+from sn120_v2.types import BoxResult, EntryResult, FrozenBatch, LoRAArtifact, RoundTicket, TrainReport, Verdict
+
+class Admission:
+    params = None
+    def __init__(self, store): self.store = store
+    def verdicts(self, hotkeys):
+        return {key: Verdict(key, True, batch_sha256=sha256_hex(key.encode()), checked_at=1795202000) for key in hotkeys}
+    def freeze(self, reg, rid):
+        raw = canonical_json({"offline": True, "hotkey": reg.hotkey})
+        key = layout.frozen_batch(rid, reg.hotkey)
+        self.store.put(key, raw)
+        return FrozenBatch(reg.hotkey, sha256_hex(raw), key, "offline-replay", 1, 1)
+
+def controller(store, state, reserve):
+    pinned = load(state / "journal.jsonl")
+    pool = PoolRuntime(store, pinned.params, pinned, root=reserve, base=load_pool())
+    sampler = IRTSampler(pool.active_ids, pinned.params, snapshot=stored_irt_snapshot(store, pinned))
+    admission = Admission(store)
+    return Controller(Journal(state / "journal.jsonl", "kingx2-dry", 1795202000), store, admission, sampler, pinned.params, pool=pool)
+
+def close_current(store, state, reserve):
+    current = controller(store, state, reserve)
+    record = current.state.round
+    assert record is not None
+    lease = record.leases[0]
+    head = next(row for row in current.state.heads if row.version_id == record.head_version_id)
+    snapshot = json.loads(store.get(layout.irt_snapshot(record.snapshot_id)))
+    draw = draw_from_snapshot(snapshot, record.round_seed, record.n_tasks)
+    ticket = RoundTicket(record.round_id, lease.lease_id, lease.box_id, head, current.params, draw, lease.entries, lease.issued_at, lease.expires_at)
+    assert ticket.digest() == lease.ticket_digest
+    store.put(layout.ticket(record.round_id, lease.lease_id), ticket.to_json())
+    n = len(ticket.draw.task_ids)
+    # Old code has no null_samples property; None means samples_per_task.
+    king_count = getattr(ticket.params, "null_samples", ticket.params.samples_per_task)
+    null = tuple("P" * n for _ in range(king_count))
+    entries = []
+    # Use production-like evaluation timing in the actual synthetic result.
+    # Controller.close derives public wall_s from this result, so round_text
+    # cannot disagree with the public report used by health.
+    evaluation_wall = 6984 if os.environ.get("KINGX2_DRY_ABORT_AFTER_OPEN") != "1" and os.environ.get("KINGX2_DRY_STORE_RESULT_AFTER_OPEN") != "1" else 1234
+    for seat in ticket.entries:
+        recipe = ticket.params.recipe.for_miner(seat.batch.train)
+        raw = canonical_json({"synthetic": seat.queue_pos})
+        store.put(f"offline/loras/{seat.queue_pos}/weight", raw)
+        files = {"weight": sha256_hex(raw)}
+        artifact = LoRAArtifact(manifest_digest(files), files, {"weight": len(raw)}, f"offline/loras/{seat.queue_pos}", ticket.head.version_id, seat.batch.batch_sha256, ticket.params.recipe_id, recipe.rank, recipe.alpha, recipe.target_modules, TrainReport(1, 1, 0.0, 0.0, 1, 1, "offline", ticket.params.recipe.image_digests[0]))
+        entries.append(EntryResult(seat.queue_pos, "scored", lora=artifact, outcomes=tuple("P" * n for _ in range(ticket.params.samples_per_task))))
+    result = BoxResult(ticket.round_id, ticket.lease_id, ticket.box_id, ticket.digest(), ticket.head.version_id, ticket.params.recipe.image_digests[0], null, tuple(entries), ticket.issued_at + 1, ticket.issued_at + 2, phase_s={"training": 1, "evaluation": evaluation_wall})
+    current.submit_result(result, ticket.issued_at + 3)
+    assert current.state.round is None and current.state.rounds[-1].outcome == "null"
+    return record.round_id
+
+mode = sys.argv[1]
+store = LocalStore(pathlib.Path(sys.argv[2]))
+state = pathlib.Path(sys.argv[3])
+reserve = pathlib.Path(sys.argv[4])
+if mode in ("advance-gate", "close-gate"):
+    if mode == "advance-gate":
+        for expected in ("r000082", "r000083", "r000084", "r000085"):
+            current = controller(store, state, reserve)
+            assert current.state.round is not None and current.state.round.round_id == expected
+            print("closed synthetic predecessor", close_current(store, state, reserve))
+            tickets = controller(store, state, reserve).open_round(1795202000 + int(expected[1:]), "kingx2-dry-" + expected)
+            assert len(tickets) == 1
+            print("opened synthetic predecessor", tickets[0].round_id)
+    if mode == "close-gate":
+        current = controller(store, state, reserve)
+        assert current.state.round is not None and current.state.round.round_id == "r000086"
+        print("closed synthetic gate", close_current(store, state, reserve))
+elif mode == "open-guard":
+    # The genuine end-round CLI records a lease failure and its retry backoff.
+    # The next synthetic open must use a time after that genuine retry window;
+    # do not weaken the controller's admission/fold rules to force a ticket.
+    pinned = load(state / "journal.jsonl")
+    now = max(1795203000, pinned.last_failure_at + pinned.params.apply_retry_s + 1)
+    current = controller(store, state, reserve)
+    tickets = current.open_round(now, "kingx2-dry-" + mode)
+    assert len(tickets) == 1
+    print(tickets[0].round_id)
+elif mode in ("open-next", "open-second"):
+    current = controller(store, state, reserve)
+    tickets = current.open_round(1795203000, "kingx2-dry-" + mode)
+    assert len(tickets) == 1
+    if mode == "open-next":
+        # The real loop writes only the second open after its first close.
+        with (store.root / "work/logs/run.log").open("a") as out:
+            out.write(f"open: round {tickets[0].round_id} is open\n")
+    print(tickets[0].round_id)
+elif mode == "close-first":
+    print("closed synthetic new-code round", close_current(store, state, reserve))
+elif mode == "end-round":
+    # The failed-lease fixture records the real journal failure event before
+    # this guard runs. This is only an end-round race guard: store-result has
+    # already sealed the evidence and the all-lease precheck normally refuses.
+    if os.environ.get("KINGX2_DRY_STORE_RESULT_AFTER_OPEN") == "1":
+        raise SystemExit(3)
+    subprocess.run([str(store.root / "here/check-reserve")], check=True)
+    subprocess.run([str(store.root / "here/check-generator")], check=True, env=dict(os.environ, KINGX2_IDENTITY_DIR="here"))
+    # The original helper directory is stable even when this invocation targets
+    # the independent undecided rollback fixture.
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from sn120_v2.cli import main
+    answer = main(["end-round", "--state-dir", str(state), "--stack", "dry_stack:stack"])
+    (store.root / "work/logs/end-round-ran").write_text(f"{answer}\n")
+    if answer == 3:
+        (store.root / "work/logs/stored-result-refused").write_text(f"{record.round_id}\n" if (record := load(state / "journal.jsonl").round) else "stored result\n")
+    raise SystemExit(answer)
+elif mode == "store-result":
+    # A guard test only: copy the synthetic r86 result under the open lease.
+    # Nothing is judged or deleted; rollback must refuse to discard it.
+    record = load(state / "journal.jsonl").round
+    lease = record.leases[0]
+    source = layout.sealed_result("r000086", "r000086-l0")
+    target = layout.sealed_result(record.round_id, lease.lease_id)
+    assert not store.exists(target)
+    store.put(target, store.get(source))
+    if os.environ.get("KINGX2_DRY_FAILED_LEASE") == "1":
+        # Model a crash between the genuine lease_failed journal append and
+        # fail_lease's subsequent settle. In this isolated controller only,
+        # append the event without settling: the lease stays failed, the round
+        # stays open, and rollback still must preserve its sealed evidence.
+        from sn120_v2.state import LEASE_FAILED
+        current = controller(store, state, reserve)
+        current.journal.append(LEASE_FAILED, {"round_id": record.round_id, "lease_id": lease.lease_id,
+                                              "reason": "isolated crash after lease-failure append"}, 1795203500)
+        current.state = load(state / "journal.jsonl")
+        current._pin()
+        assert current.state.round.leases[0].status == "failed"
+    print("unjudged sealed result left for rollback refusal", record.round_id)
+elif mode == "decide-open":
+    # Guard test: settle through the normal judging path, then stop before
+    # training/apply. Rollback must require `run` to finish this round.
+    current = controller(store, state, reserve)
+    record = current.state.round
+    assert record is not None and record.decision is None
+    lease = record.leases[0]
+    n = record.n_tasks
+    head = next(row for row in current.state.heads if row.version_id == record.head_version_id)
+    snapshot = json.loads(store.get(layout.irt_snapshot(record.snapshot_id)))
+    draw = draw_from_snapshot(snapshot, record.round_seed, record.n_tasks)
+    ticket = RoundTicket(record.round_id, lease.lease_id, lease.box_id, head, current.params, draw, lease.entries, lease.issued_at, lease.expires_at)
+    store.put(layout.ticket(record.round_id, lease.lease_id), ticket.to_json())
+    artifact_entries = []
+    for seat in ticket.entries:
+        recipe = ticket.params.recipe.for_miner(seat.batch.train)
+        raw = canonical_json({"synthetic": seat.queue_pos})
+        store.put(f"offline/loras/{seat.queue_pos}/weight", raw)
+        files = {"weight": sha256_hex(raw)}
+        artifact = LoRAArtifact(manifest_digest(files), files, {"weight": len(raw)}, f"offline/loras/{seat.queue_pos}", ticket.head.version_id, seat.batch.batch_sha256, ticket.params.recipe_id, recipe.rank, recipe.alpha, recipe.target_modules, TrainReport(1, 1, 0.0, 0.0, 1, 1, "offline", ticket.params.recipe.image_digests[0]))
+        artifact_entries.append(EntryResult(seat.queue_pos, "scored", lora=artifact, outcomes=tuple("P" * n for _ in range(ticket.params.samples_per_task))))
+        king_count = getattr(ticket.params, "null_samples", ticket.params.samples_per_task)
+    sealed = BoxResult(record.round_id, lease.lease_id, lease.box_id, ticket.digest(), record.head_version_id, ticket.params.recipe.image_digests[0], tuple("P" * n for _ in range(king_count)), tuple(artifact_entries), ticket.issued_at + 1, ticket.issued_at + 2, phase_s={"training": 1, "evaluation": 1234})
+    from sn120_v2.judging import check_result, decide
+    check_result(ticket, sealed)
+    decision = decide([(ticket, sealed)])
+    from sn120_v2.state import ROUND_SETTLED
+    current._log(ROUND_SETTLED, {"round_id": record.round_id, "decision": decision.to_dict(), "results": {lease.lease_id: sealed.digest()}}, ticket.issued_at + 3)
+    assert current.state.round is not None and current.state.round.decision is not None
+    print("synthetic decided-open guard", record.round_id)
+elif mode == "drive":
+    """Watch the real autodeploy's markers; simulate only an isolated loop."""
+    root = pathlib.Path(sys.argv[2])
+    alive = root / "state-loop.pid"
+    stop = root / "work/logs/run-loop.stop-after-round"
+    runlog = root / "work/logs/run.log"
+    started = time.monotonic()
+    phase = "waiting"
+    while time.monotonic() - started < 1200:
+        if stop.exists() and alive.exists():
+            with runlog.open("a") as out: out.write("STOPPED after the round, as asked\n")
+            alive.unlink()
+            stop.unlink()
+            phase = "gate-stopped"
+        if alive.exists() and phase == "gate-stopped":
+            # The driver began under old code. Do not keep its old Params class
+            # when the real autodeploy switches the copied checkout.
+            env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", KINGX2_V2=str(root / "repo/v2"), KINGX2_OBJECT_ROOT=str(root))
+            env.pop("PYTHONPATH", None)
+            run = lambda action: subprocess.check_output([sys.executable, "-I", str(pathlib.Path(__file__).resolve()), action, str(root), str(state), str(reserve)], env=env, text=True).strip()
+            run("open-next")
+            if os.environ.get("KINGX2_DRY_STORE_RESULT_AFTER_OPEN") == "1":
+                run("store-result")
+                # Stop the isolated loop without closing its open round. The
+                # real rollback precheck must see the evidence and refuse. If
+                # it did not, the end-round override would return its exit-3
+                # refusal; neither path discards the evidence.
+                (root / "state-loop.pid").unlink(missing_ok=True)
+                with runlog.open("a") as out: out.write("run-loop: isolated failure after sealed result\n")
+                print("sealed result stored; isolated loop stopped with the round open", flush=True)
+                raise SystemExit(0)
+            with (root / "work/logs/open-observed").open("w") as marker:
+                marker.write("the real autodeploy may now inject an isolated failure\n")
+            while time.monotonic() - started < 1200:
+                if os.environ.get("KINGX2_DRY_ABORT_AFTER_OPEN") == "1" and (root / "work/logs/abort-open-observed").exists():
+                    # Simulate a lost loop, not a clean requested stop. The
+                    # real autodeploy must then stop nothing and roll back the
+                    # still-undecided open through its supported CLI.
+                    alive.unlink(missing_ok=True)
+                    with runlog.open("a") as out: out.write("run-loop: isolated failure after open\n")
+                    print("simulated post-open operator failure", flush=True)
+                    raise SystemExit(0)
+                if (root / "work/logs/open-checked").exists():
+                    break
+                if not alive.exists():
+                    raise AssertionError("the simulated loop was stopped before the first close")
+                time.sleep(.05)
+            else:
+                raise AssertionError("open-check did not finish")
+            first = run("close-first").rsplit(" ", 1)[-1]
+            # Production emits round_text's wall summary, not per-GPU phase
+            # records. Format the unchanged, controller-published public report.
+            from sn120_v2.public import round_text
+            report = json.loads(store.get(layout.round_file(first)))
+            assert report["wall_s"]["evaluation"] == 6984
+            with runlog.open("a") as out:
+                out.write(round_text(report) + "\n")
+            assert not (root / "work/logs/phases.jsonl").exists()
+            (root / "work/logs/first-closed").write_text(first + "\n")
+            second = run("open-second")
+            with runlog.open("a") as out: out.write(f"run-loop: loop started\nopen: round {second} is open\n")
+            print("simulated new-code close/open", first, second, flush=True)
+            phase = "done"
+            break
+        time.sleep(.05)
+    assert phase == "done", phase
+else:
+    raise AssertionError(mode)
+PY
+cat > "$D/helpers/cli.py" <<'PY'
+"""Run the real CLI with isolated helper/package paths outside the checkout."""
+import os
+from pathlib import Path
+import sys
+
+# Helpers belong to the original fixture even when a separate rollback object
+# root is selected; keep this path independent of KINGX2_PUBLIC_ROOT.
+helpers = Path(__file__).resolve().parent
+sys.path.insert(0, str(helpers))
+sys.path.insert(0, os.environ["KINGX2_V2"])
+from sn120_v2.cli import main
+
+raise SystemExit(main(sys.argv[1:]))
+PY
+cat > "$D/helpers/public_mirror.py" <<'PY'
+"""Project only the artifact families mirrored by the production static site.
+
+The controller writes pool/state into its object store, but the public site does
+not serve it. Keeping this projection separate from LocalStore makes a verifier
+that fetches private state fail in rehearsal just as it would in production.
+"""
+import os
+from pathlib import Path
+import sys
+sys.path.insert(0, os.environ["KINGX2_V2"])
+from sn120_v2 import layout
+from sn120_v2.store import LocalStore
+
+root = Path(sys.argv[1])
+source, public = LocalStore(root), LocalStore(root / "site")
+round_prefix = layout.round_file("x").partition("x")[0]
+prefixes = (layout.head_manifest("x").partition("x")[0], layout.irt_snapshot("x").partition("x")[0],
+            layout.active_pool("x").partition("x")[0], layout.pool_rotation("x").partition("x")[0],
+            layout.pool_ranking("x").partition("x")[0], "public/pool/reserve/")
+fixed = {layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN,
+         layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS, layout.POOL_SUMMARY}
+keys = [key for key in source.list("public/") if key in fixed or key.startswith(prefixes)
+        or (key.startswith(round_prefix) and key.endswith(("/round.json", "/scores.json", "/batch.json")))]
+for key in keys:
+    raw = source.get(key)
+    if not public.exists(key) or public.get(key) != raw:
+        public.put(key, raw)
+assert not (root / "site/public/pool/state").exists(), "pool/state must remain verifier-private"
+assert source.list("public/pool/state/"), "fixture needs private state to prove the projection excludes it"
+print(f"public projection: {len(keys)} served objects; pool/state absent", file=sys.stderr)
+PY
+export KINGX2_DRY_OPEN_CHECK="$D/here/open-check"
+# Controller.close writes the public round report, not the open. Exercise the
+# real public_check implementation against that local report when it arrives.
+export KINGX2_DRY_PUBLIC_CHECK="$D/here/public-check"
+cat > "$D/here/public-check" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+# The real loop publishes round.json at close, not at open. Keep inspecting
+# locally until that report exists, inside autodeploy's bounded retry window.
+for _ in $(seq 1 2400); do
+    "$KINGX2_PY" -I "$KINGX2_OBJECT_ROOT/helpers/public_mirror.py" "$KINGX2_OBJECT_ROOT"
+    if [ "${KINGX2_DRY_ABORT_AFTER_OPEN:-0}" = 1 ] || [ "${KINGX2_DRY_STORE_RESULT_AFTER_OPEN:-0}" = 1 ]; then
+        # The forced-failure scenario ends at its first open. Let the real
+        # bounded public retry expire, then inspect the actual recovery.
+        sleep .5
+        continue
+    fi
+    [ ! -e "$KINGX2_PUBLIC_ROOT/public/rounds/$1/round.json" ] || break
+    sleep .5
+done
+"$KINGX2_PY" -I -c 'import importlib.util,json,sys; spec=importlib.util.spec_from_file_location("kingx2_dry_operator",sys.argv[1]); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); print(json.dumps(module.public_check(sys.argv[2]),indent=2,sort_keys=True))' "$KINGX2_HERE/kx2_operator.py" "$1"
+SH
+chmod +x "$D/here/public-check"
+export KINGX2_DRY=1 KINGX2_V2="$D/repo/v2" KINGX2_HERE="$D/here" KINGX2_STATE="$D/operator-state" KINGX2_PY="$PY"
+export KINGX2_OBJECT_ROOT="$D" KINGX2_PUBLIC_ROOT="$D/site"
+export KINGX2_LOOP_PIDFILE="$D/state-loop.pid" KINGX2_PHASES="$D/work/logs/phases.jsonl" KINGX2_WORK_DIR="$D/work"
+export KINGX2_RESERVE_PATH_FILE="$D/reserve-live.path" KINGX2_RESERVE_DIR="$D/live-reserve"
+export KINGX2_GENERATOR_ROOT="$D" KINGX2_GENERATOR_INBOX="$D/generator/inbox" KINGX2_GENERATOR_PID="$D/generator/ingestd.pid" KINGX2_PRIOR_INDEX="$D/generator/prior-index.json"
+export KINGX2_GENERATOR_EXPECTED="$D/generator-before.json" KINGX2_IDENTITY_DIR=here
+export SN120_RESERVE_PATH_FILE="$D/reserve-live.path" SN120_GENERATOR_INBOX="$D/generator/inbox" SN120_GENERATOR_LOG="$D/generator/ingestd.log"
+export SN120_GENERATOR_LOCK="$D/generator/ingestd.lock" SN120_GENERATOR_POLL_S=120 SN120_PUBLIC_URL=http://127.0.0.1:9
+unset PYTHONPATH
+# This is the same fixed command construction as production autodeploy. There
+# is deliberately no OP environment variable or alternate entry-point command.
+OP=("$PY" -I "$D/here/kx2_operator.py")
+export KINGX2_DRY_SET_PARAMS="$PY -I $D/helpers/cli.py set-params --state-dir $D/operator-state --stack dry_stack:stack --params"
+export KINGX2_DRY_END_ROUND="$PY -I $D/helpers/replay.py end-round $D $D/operator-state $D/reserve"
+cat > "$D/here/open-check" <<'SH'
+#!/usr/bin/env bash
+# An inspection override for the isolated autodeploy only; all paths are local.
+set -euo pipefail
+"$KINGX2_PY" -I "$KINGX2_OBJECT_ROOT/helpers/public_mirror.py" "$KINGX2_OBJECT_ROOT"
+"$KINGX2_PY" -I -c 'import importlib.util,json,sys; spec=importlib.util.spec_from_file_location("kingx2_dry_operator",sys.argv[1]); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); print(json.dumps(module.open_check(sys.argv[2]),indent=2,sort_keys=True))' "$KINGX2_HERE/kx2_operator.py" "$1"
+if [ "${KINGX2_DRY_ABORT_AFTER_OPEN:-0}" = 1 ] || [ "${KINGX2_DRY_STORE_RESULT_AFTER_OPEN:-0}" = 1 ]; then
+    touch "$(dirname "$KINGX2_HERE")/work/logs/abort-open-observed"
+else
+    touch "$(dirname "$KINGX2_HERE")/work/logs/open-checked"
+fi
+SH
+chmod +x "$D/here/open-check"
+# Copy the exact kit from the qualified branch head, not working-tree files.
+git -C "$D/repo" archive "$HEAD" v2/tools/kingx2-deploy | tar -x -C "$D/here" --strip-components=3
+$PY -I -c 'import hashlib,pathlib,sys; left=pathlib.Path(sys.argv[1]); right=pathlib.Path(sys.argv[2]); names={x.name for x in right.iterdir() if x.is_file()}; assert len(names)==8,names; changed=[n for n in names if not (left/n).is_file() or hashlib.sha256((left/n).read_bytes()).digest()!=hashlib.sha256((right/n).read_bytes()).digest()]; assert not changed,changed; print("committed kit byte comparison",len(names),"files identical")' "$D/here" "$KIT"
+printf 'qualified branch head %s; implementation %s\n' "$HEAD" c525286580c84d795b3ca7cbdf2302e96fce31ba
+printf '== Python 3.12 stdlib-shadowing regression: renamed entry point plus -I ==\n'
+$PY -I -c 'import json,operator,pathlib,sys; assert sys.version_info[:2]==(3,12),sys.version; assert operator.__file__.startswith("/usr/lib/python3.12/"),operator.__file__; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert d["new_commit"]=="c525286580c84d795b3ca7cbdf2302e96fce31ba"; print("Python",sys.version.split()[0],"stdlib operator",operator.__file__)' "$D/here/expect.json"
+export KINGX2_DRY=1 KINGX2_V2="$D/repo/v2" KINGX2_HERE="$D/here" KINGX2_STATE="$D/operator-state" KINGX2_PY="$PY"
+export KINGX2_OBJECT_ROOT="$D" KINGX2_PUBLIC_ROOT="$D/site"
+export KINGX2_LOOP_PIDFILE="$D/state-loop.pid" KINGX2_PHASES="$D/work/logs/phases.jsonl" KINGX2_WORK_DIR="$D/work"
+"${OP[@]}" work-dir
+"${OP[@]}" loop-count
+"${OP[@]}" journal-close r000082 > "$D/entrypoint-journal-close.json"
+"${OP[@]}" facts
+$PY -I -c 'import json,pathlib,sys; d=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert d["new_commit"]=="c525286580c84d795b3ca7cbdf2302e96fce31ba" and d["gate_round"]=="r000086"; d["public_retry_seconds"]=120; pathlib.Path(sys.argv[1]).write_text(json.dumps(d,indent=2,sort_keys=True)+"\n"); print("implementation pin preserved; only isolated public retry shortened")' "$D/here/expect.json"
+printf '== copied operator command dispatch must use its round argument ==\n'
+$PY -I "$D/helpers/replay.py" advance-gate "$D" "$D/operator-state" "$D/reserve"
+$PY -I -c 'import json,pathlib,sys; sys.path.insert(0,sys.argv[2]); from sn120_v2.canonical import canonical_json; from sn120_v2.state import load; from sn120_v2.store import LocalStore; from sn120_v2.pool_runtime import load_rotation; root=pathlib.Path(sys.argv[1]); state=load(root/"operator-state/journal.jsonl"); assert state.round and state.round.round_id=="r000086"; store=LocalStore(root); current=list(load_rotation(store,state.rotation_state_sha).retired_archive); public=json.loads(store.get("public/pool/retired.json")); assert public[:len(current)]==current; store.put("public/pool/retired.json",canonical_json(current)); print("dry fixture retired prefix",len(current),"of",len(public))' "$D" "$D/repo/v2"
+"${OP[@]}" journal-open r000087 > "$D/dispatch-journal-open.json"
+$PY -I -c 'import json,sys; row=json.load(open(sys.argv[1])); assert row["expected"]=="r000087" and row["round"]=="r000086", row; print("dispatch journal-open",row["expected"],"observed",row["round"])' "$D/dispatch-journal-open.json"
+"${OP[@]}" journal-close r000085 > "$D/dispatch-journal-close.json"
+$PY -I -c 'import json,sys; row=json.load(open(sys.argv[1])); assert row["round"]=="r000085", row' "$D/dispatch-journal-close.json"
+git -C "$D/repo" reset --hard -q d368b2601f06458349cfe3e84adfbf691994fcb3
+# Select a valid external-reserve prefix. This is outside the deployment
+# checkout, so checkout cannot replace its manifest or remove later shards.
+$PY -I -c 'import json,pathlib,sys; root=pathlib.Path(sys.argv[1]); rows=(root/"MANIFEST.jsonl").read_text().splitlines(keepends=True); selected=rows[:-2]+rows[-1:]; assert len(selected)>1 and "shard" in json.loads(selected[-2]); (root/"MANIFEST.jsonl").write_text("".join(selected)); listed={json.loads(row)["shard"] for row in selected[:-1]}; [path.unlink() for path in (root/"shards").iterdir() if path.is_file() and path.name not in listed]' "$D/live-reserve"
+$PY -I -c 'import pathlib,sys; from hashlib import sha256; root=pathlib.Path(sys.argv[1]); rows={str(p.relative_to(root)):sha256(p.read_bytes()).hexdigest() for p in root.rglob("*") if p.is_file() and "__pycache__" not in p.parts}; pathlib.Path(sys.argv[2]).write_text(__import__("json").dumps(rows,sort_keys=True)); print("external reserve preservation fixture",len(rows),"files")' "$D/live-reserve" "$D/reserve-prefix.json"
+$D/here/check-reserve
+# Start one real disposable ingestd using genfeed's setsid/nohup construction.
+# The empty inbox means it cannot fetch or ingest anything during the rehearsal.
+mkdir -p "$D/work/competitor/genfeed-deploy"
+printf '#!/usr/bin/env bash\nsleep 1200\n' > "$D/work/competitor/genfeed-deploy/autodeploy.sh"
+cleanup(){
+    if [ -f "$D/competitor.pid" ]; then kill -TERM "$(cat "$D/competitor.pid")" 2>/dev/null || true; fi
+    if [ -f "$D/driver.pid" ]; then kill "$(cat "$D/driver.pid")" 2>/dev/null || true; fi
+    rm -f "$D/state-loop.pid" "$D/work/logs/run-loop.stop-after-round"
+    if [ -f "$D/generator/ingestd.pid" ]; then
+        pid=$(cat "$D/generator/ingestd.pid")
+        if [ -r "/proc/$pid/cmdline" ] && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q "$D/repo/v2/systemd/generator-ingestd.sh"; then
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    fi
+}
+trap cleanup EXIT
+INGESTD_SCRIPT="$D/repo/v2/systemd/generator-ingestd.sh"
+$PY -I - "$D/repo/v2" "$INGESTD_SCRIPT" "$D/generator/prior-index.json" "$D/generator/ingestd.log" "$D/generator/ingestd.pid" <<'PY'
+import os, shlex, subprocess, sys
+v2, script, index, logfile, pidfile = sys.argv[1:]
+# This is ol_operator.start_ingestd's exact shell and detached-launch shape.
+command = (f"exec setsid nohup bash {shlex.quote(script)} {shlex.quote(sys.executable)} "
+           f"{shlex.quote(index)} >> {shlex.quote(logfile)} 2>&1 < /dev/null & "
+           f"echo $! > {shlex.quote(pidfile)}")
+with open("/dev/null", "rb") as null:
+    subprocess.Popen(["bash", "-c", command], cwd=v2, env=os.environ,
+                     stdin=null, start_new_session=True).wait(timeout=15)
+PY
+for _ in $(seq 1 100); do [ -s "$D/generator/ingestd.pid" ] && break; sleep .05; done
+[ -s "$D/generator/ingestd.pid" ]
+INGESTD=$(cat "$D/generator/ingestd.pid")
+[ "$INGESTD" -gt 1 ]
+kill -0 "$INGESTD"
+"${OP[@]}" generator-check > "$D/ingestd-launch-check.json"
+$PY -I -c 'import json,sys; row=json.load(open(sys.argv[1])); assert row["ok"] and row["ingestd"]["running"]; print("disposable ingestd launch identity verified",row["ingestd"]["pid"],row["ingestd"]["start_ticks"])' "$D/ingestd-launch-check.json"
+# The initial shared-lock verification creates the normal empty .ingest.lock
+# coordination file. Refresh the strict baseline after that known side effect;
+# every later check then requires the lock and all reserve bytes to survive.
+$PY -I -c 'import pathlib,sys; from hashlib import sha256; root=pathlib.Path(sys.argv[1]); rows={str(p.relative_to(root)):sha256(p.read_bytes()).hexdigest() for p in root.rglob("*") if p.is_file() and "__pycache__" not in p.parts}; assert rows.get(".ingest.lock")==sha256(b"").hexdigest(),rows; pathlib.Path(sys.argv[2]).write_text(__import__("json").dumps(rows,sort_keys=True)); print("external reserve baseline after initial shared-lock verification",len(rows),"files")' "$D/live-reserve" "$D/reserve-prefix.json"
+$D/here/check-reserve
+# Launch a disposable stand-in for the already-live genfeed autodeploy. The
+# copied operator must refuse it before changing code, params or the run loop.
+bash "$D/work/competitor/genfeed-deploy/autodeploy.sh" > "$D/competing-deploy.log" 2>&1 &
+COMPETITOR=$!
+printf '%s\n' "$COMPETITOR" > "$D/competitor.pid"
+printf '== competing genfeed deploy must refuse before any mutation ==\n'
+if "${OP[@]}" deployment-guard > "$D/competing-guard.log" 2>&1; then echo 'competing genfeed autodeploy was not detected' >&2; exit 1; fi
+grep 'another genfeed/king-x2 deploy is alive' "$D/competing-guard.log"
+printf 'open: round r000086 is open\n' > "$D/work/logs/run.log"
+# Start already armed: this scenario must exit at the competing-deployment
+# guard, before the gate's old-loop stop request. The normal run below tests
+# the separate no-go wait independently.
+H="$D/here" V2DIR="$D/repo/v2" WD="$D/watchdog" bash -c 'touch "$H/go"; exec bash "$H/autodeploy"' > "$D/competing-autodeploy-outer.log" 2>&1 &
+COMPETING_AUTODEPLOY=$!
+for _ in $(seq 1 100); do grep -q 'another deployment is alive' "$D/competing-autodeploy-outer.log" 2>/dev/null && break; sleep .05; done
+if wait "$COMPETING_AUTODEPLOY"; then
+    echo 'armed autodeploy accepted a competing deploy' >&2; exit 1
+fi
+grep 'REFUSED: another deployment is alive; no stop request was made' "$D/competing-autodeploy-outer.log"
+[ ! -e "$D/work/logs/run-loop.stop-after-round" ]
+[ "$(git -C "$D/repo" rev-parse HEAD)" = d368b2601f06458349cfe3e84adfbf691994fcb3 ]
+kill -TERM "$COMPETITOR"
+wait "$COMPETITOR" 2>/dev/null || true
+rm -f "$D/competitor.pid"
+rm -f "$D/here/go"
+[ ! -e "$D/here/go" ]
+printf '%s DRY COMPETING-DEPLOY GUARD PASS: genfeed autodeploy refused before stop/code/params changes\n' "$(date -u +%FT%TZ)"
+# Hash only static generator state: ingestd's own log is expected to change on
+# its final disposable-process shutdown after all preservation assertions pass.
+$PY -I -c 'import hashlib,json,pathlib,sys; root=pathlib.Path(sys.argv[1]); paths=[root/"reserve-live.path",root/"generator/prior-index.json",root/"generator/state.json",root/"generator/inbox/pending.json",root/"generator/ingestd.lock",root/"generator/ingestd.log"]; paths=[p for p in paths if p.is_file()]; rows={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}; pathlib.Path(sys.argv[2]).write_text(json.dumps(rows,sort_keys=True)); print("generator static state",len(rows),"files fingerprinted")' "$D" "$D/generator-before.json"
+"${OP[@]}" generator-check > "$D/generator-check.json"
+$PY -I -c 'import json,pathlib,sys; row=json.load(open(sys.argv[1])); assert row["ok"] and row["ingestd"]["running"] and row["ingestd"]["pid"]==int(pathlib.Path(sys.argv[2]).read_text()); pathlib.Path(sys.argv[3]).write_text(json.dumps(row["ingestd"],sort_keys=True,indent=2)+"\n"); print("real disposable ingestd identity",row["ingestd"]["pid"],row["ingestd"]["start_ticks"])' "$D/generator-check.json" "$D/generator/ingestd.pid" "$D/here/ingestd-before.json"
+"${OP[@]}" start-ingestd
+$D/here/check-generator
+# All helper modules live outside the checkout; no dry_stack.py exists there.
+[ ! -e "$D/repo/v2/dry_stack.py" ]
+export H="$D/here" V2DIR="$D/repo/v2" RUNLOG="$D/work/logs/run.log" STOPF="$D/work/logs/run-loop.stop-after-round" WD="$D/watchdog"
+export S=0.002 POLL=1 STOP_WAIT=120 FIRST_OPEN_WAIT=180 HEALTH_WAIT=180
+unset GATE_WANT
+cleanup_children(){ for child in "$DEPLOY" "$DRIVER"; do pkill -TERM -P "$child" 2>/dev/null || true; kill -TERM "$child" 2>/dev/null || true; done; }
+trap 'cleanup_children; trap - INT TERM HUP; cleanup; exit 130' INT TERM HUP
+printf '== real autodeploy must wait for go before touching the fixture ==\n'
+[ "${KINGX2_TRACE:-0}" = 1 ] && TRACE=(-x) || TRACE=()
+bash "${TRACE[@]}" "$D/here/autodeploy" > "$D/autodeploy-outer.log" 2>&1 &
+DEPLOY=$!
+sleep 2
+[ ! -e "$D/work/logs/run-loop.stop-after-round" ]
+printf '== synthetic old-params r86 gate close on separate operator journal ==\n'
+$PY -I "$D/helpers/replay.py" close-gate "$D" "$D/operator-state" "$D/reserve"
+"${OP[@]}" journal-open r000087 > "$D/dispatch-open-pending.json"
+$PY -I -c 'import json,sys; row=json.load(open(sys.argv[1])); assert row["round"] is None and not row["ok"] and any("waiting for expected next open" in why for why in row["why"]), row; print("dispatch pending-open wait",row["expected"],"after",row["last_closed"])' "$D/dispatch-open-pending.json"
+printf 'open: round r000086 is open\n' > "$D/work/logs/run.log"
+$PY -I "$D/helpers/replay.py" drive "$D" "$D/operator-state" "$D/reserve" > "$D/driver.log" 2>&1 &
+DRIVER=$!
+printf '%s\n' "$DRIVER" > "$D/state-loop.pid"
+printf '%s\n' "$DRIVER" > "$D/driver.pid"
+printf '== arm only the isolated autodeploy; it drives the entire rehearsal ==\n'
+touch "$D/here/go"
+# The copied kit retains its own real retry/stop/health deadlines, including
+# a 120-second public window in this fixture. A harness deadline must exceed
+# their sum, not cut off a bounded retry and leave an incomplete scenario.
+for _ in $(seq 1 1800); do
+    if ! kill -0 "$DEPLOY" 2>/dev/null; then break; fi
+    sleep 1
+done
+if kill -0 "$DEPLOY" 2>/dev/null; then echo 'autodeploy did not finish within 1800 seconds'; exit 1; fi
+set +e
+wait "$DEPLOY"; RC=$?
+set -e
+cat "$D/autodeploy-outer.log"
+if [ "${KINGX2_DRY_ABORT_AFTER_OPEN:-0}" = 1 ] || [ "${KINGX2_DRY_STORE_RESULT_AFTER_OPEN:-0}" = 1 ]; then
+    printf '== forced post-open failure: real rollback outcome ==\n'
+    [ "$RC" = 1 ] || { echo "forced failure expected autodeploy rc=1, got $RC"; exit 1; }
+    grep 'public files not healthy' "$D/here/autodeploy.log"
+    if [ "${KINGX2_DRY_STORE_RESULT_AFTER_OPEN:-0}" = 1 ]; then
+        grep 'has sealed result(s) on lease(s)' "$D/here/autodeploy.log"
+        grep 'ROLLBACK FAILED: old commit/params not verified; no loop started under unrecovered code; watchdog remains disarmed' "$D/here/autodeploy.log"
+        [ ! -e "$D/state-loop.pid" ] || { echo 'sealed-result refusal must not start a false old loop' >&2; exit 1; }
+        [ "$(git -C "$D/repo" rev-parse HEAD)" = c525286580c84d795b3ca7cbdf2302e96fce31ba ]
+        [ "$($PY -I -c 'import sys; sys.path.insert(0,sys.argv[1]); from sn120_v2.state import load; print(load(sys.argv[2]).params.params_hash)' "$D/repo/v2" "$D/operator-state/journal.jsonl")" = "$($PY -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["new_params_hash"])' "$KIT/expect.json")" ]
+        [ -f "$D/private/rounds/r000087/r000087-l0/result.json" ]
+        if [ "${KINGX2_DRY_FAILED_LEASE:-0}" = 1 ]; then
+            $PY -I -c 'import sys; sys.path.insert(0,sys.argv[1]); from sn120_v2.state import load; state=load(sys.argv[2]); assert state.round is not None and state.round.round_id=="r000087"; assert state.round.leases[0].status=="failed"; print("failed lease remains open with its sealed result")' "$D/repo/v2" "$D/operator-state/journal.jsonl"
+        fi
+        printf '%s DRY STORED-RESULT AUTODEPLOY PASS: rollback refused, evidence/code/params preserved, no false recovery\n' "$(date -u +%FT%TZ)"
+        [ -e "$D/watchdog/DISARM" ]
+        grep 'watchdog remains DISARMED: recovery is blocked or unverified' "$D/here/autodeploy.log"
+    else
+        grep 'ended undecided r000087 with no_decision; no stored result was discarded' "$D/here/autodeploy.log"
+        grep 'old-code loop started after rollback' "$D/here/autodeploy.log"
+        [ "$(git -C "$D/repo" rev-parse HEAD)" = d368b2601f06458349cfe3e84adfbf691994fcb3 ]
+        # Old code cannot replay the journal's historical new-params record,
+        # even though rollback has restored old params. Check both fields with
+        # the compatible implementation schema, then verify old code's hash.
+        [ "$($PY -I -c 'import sys; sys.path.insert(0,sys.argv[1]); from sn120_v2.state import load; s=load(sys.argv[2]); assert s.round is None and s.rounds[-1].round_id == "r000087" and s.rounds[-1].outcome == "no_decision"; print(s.params.params_hash)' "$IMPL/v2" "$D/operator-state/journal.jsonl")" = 94f931588114f335814231409938f39f2056893708bc798e90f1f7676920a35c ]
+        [ "$(find "$D/private/rounds/r000087" -name result.json 2>/dev/null | wc -l)" = 0 ]
+        $D/here/check-reserve
+        $D/here/check-generator
+        printf '%s DRY ROLLBACK GENERATOR PRESERVATION PASS: same ingestd and reserve-live/generator state after old params/code restore\n' "$(date -u +%FT%TZ)"
+        [ "$("${OP[@]}" loop-count)" = 1 ]
+        printf '%s DRY POST-OPEN ROLLBACK PASS: no_decision only, old params then old code, one old loop\n' "$(date -u +%FT%TZ)"
+    fi
+    [ ! -e "$D/work/logs/run-loop.stop-after-round" ]
+    printf '%s DRY FAILURE RECOVERY PASS: expected nonzero, watchdog matches recovery outcome, stop request removed\n' "$(date -u +%FT%TZ)"
+    # Cleanup removes the synthetic pidfile. Assert the recovered old-loop
+    # marker now, not after that file has been deliberately deleted.
+    if [ "${KINGX2_DRY_ABORT_AFTER_OPEN:-0}" = 1 ]; then
+        [ "$("${OP[@]}" loop-count)" = 1 ] || { echo 'expected exactly one old-code loop after rollback' >&2; exit 1; }
+        [ -s "$D/state-loop.pid" ]
+    fi
+    exit 0
+fi
+[ "$RC" = 0 ] || { printf 'autodeploy failed rc=%s\n' "$RC"; exit "$RC"; }
+grep '^.* PASS: king-x2 ' "$D/here/autodeploy.log"
+$D/here/check-reserve
+$D/here/check-generator
+printf '%s DRY GENERATOR PRESERVATION PASS: same ingestd pid/start, reserve selector/state/inbox intact through apply\n' "$(date -u +%FT%TZ)"
+RID=$($PY -I -c 'import json,sys; from pathlib import Path; files=list(Path(sys.argv[1]).glob("health-r[0-9][0-9][0-9][0-9][0-9][0-9].json")); assert len(files)==1,files; row=json.loads(files[0].read_text()); assert row["ok"],row; assert row["eval_wall_s"]==6984 and row["run_log_eval_wall_s"]==6984 and row["eval_phase_wall_s"]==[],row; assert row["eval_timing_evidence"]=="run_log",row; print(row["round"])' "$D/here")
+[ ! -e "$D/work/logs/phases.jsonl" ]
+grep '^wall time: train .* | eval 116m24s | ' "$D/work/logs/run.log"
+ACTIVE_KEY=$($PY -I -c 'import json,sys; sys.path.insert(0,sys.argv[2]); from sn120_v2.journal import read_journal; rows=read_journal(sys.argv[1]); row=next(row for row in rows if row.kind=="round_opened" and row.data["round"]["round_id"]==sys.argv[3]); print("public/pool/active/"+row.data["round"]["rotation"]["active_sha"]+".json")' "$D/operator-state/journal.jsonl" "$D/repo/v2" "$RID")
+cp "$D/$ACTIVE_KEY" "$D/active-before.json"
+printf '["tampered-active-task"]\n' > "$D/$ACTIVE_KEY"
+"${OP[@]}" public-check "$RID" > "$D/public-tamper.json"
+grep -q 'active pool raw bytes do not match active_sha' "$D/public-tamper.json"
+cp "$D/active-before.json" "$D/$ACTIVE_KEY"
+$PY -I "$D/helpers/public_mirror.py" "$D"
+[ ! -e "$D/site/public/pool/state" ]
+printf '%s DRY PUBLIC-VISIBILITY GUARD PASS: private pool/state exists but is never publicly projected\n' "$(date -u +%FT%TZ)"
+printf '%s DRY PUBLIC-IDENTITY GUARD PASS: tampered active bytes rejected\n' "$(date -u +%FT%TZ)"
+printf '%s DRY AUTODEPLOY PASS: real wait/gate/apply/open/public/health/rearm; synthetic isolated loop only\n' "$(date -u +%FT%TZ)"
+# Preserve the successful new-code journal/code/params before exercising the
+# refusal below. The separate post-open-failure scenario tests actual rollback;
+# this scenario must never turn a sealed result into no_decision.
+SNAP="$D/stored-result-before"
+mkdir "$SNAP"
+cp "$D/operator-state/journal.jsonl" "$SNAP/journal.jsonl"
+# Capture both journal and object tree before the evidence exists. Using this
+# older journal with a post-evidence object tree would not be an undecided,
+# evidence-free rollback fixture.
+U="$D/undecided"
+mkdir "$U"
+cp -al "$D/public" "$U/public"
+cp -al "$D/site" "$U/site"
+cp -al "$D/private" "$U/private"
+cp -al "$D/reserve" "$U/reserve"
+mkdir -p "$U/state" "$U/here" "$U/work/logs"
+cp -al "$D/here/check-reserve" "$U/here/check-reserve"
+cp -al "$D/here/check-generator" "$U/here/check-generator"
+cp -al "$D/here/ingestd-before.json" "$U/here/ingestd-before.json"
+cp "$SNAP/journal.jsonl" "$U/state/journal.jsonl"
+cp "$D/here/expect.json" "$D/here/old-params.json" "$D/here/new-params.json" "$U/here/"
+printf '== rollback must preserve a stored result and its new-code journal ==\n'
+rm -f "$D/state-loop.pid" "$D/work/logs/run-loop.stop-after-round" "$D/work/logs/stored-result-refused"
+$PY -I "$D/helpers/replay.py" store-result "$D" "$D/operator-state" "$D/reserve"
+BEFORE=$(sha256sum "$D/operator-state/journal.jsonl" "$D/repo/v2/sn120_v2/params.py")
+SEALED="$D/private/rounds/r000088/r000088-l0/result.json"
+[ -f "$SEALED" ] || { echo 'stored-result fixture has no sealed result' >&2; exit 1; }
+BEFORE_RESULT=$(sha256sum "$SEALED")
+if "${OP[@]}" rollback > "$D/stored-result-rollback.log" 2>&1; then echo 'rollback must not discard a sealed result' >&2; exit 1; fi
+if [ "${KINGX2_DRY_FAILED_LEASE:-0}" = 1 ]; then
+    grep 'has sealed result(s) on lease(s)' "$D/stored-result-rollback.log"
+else
+    # The all-lease precheck can refuse before the CLI. Accept either that
+    # deterministic guard or a proven end-round race refusal, not a missing
+    # marker after an already-correct precheck refusal.
+    grep 'has sealed result(s) on lease(s)' "$D/stored-result-rollback.log" || [ -f "$D/work/logs/stored-result-refused" ]
+fi
+[ "$BEFORE" = "$(sha256sum "$D/operator-state/journal.jsonl" "$D/repo/v2/sn120_v2/params.py")" ]
+[ "$BEFORE_RESULT" = "$(sha256sum "$SEALED")" ]
+printf '%s DRY STORED-RESULT GUARD PASS: refused; journal, params, new code and sealed evidence unchanged\n' "$(date -u +%FT%TZ)"
+printf '== explicit rollback on a separate genuinely undecided fixture ==\n'
+# Keep the successful sealed-evidence journal and object tree immutable. This
+# independent copy starts before the guard stores its result, with r000088 open
+# and undecided. All store writes use atomic replacement, so hard-linked source
+# objects remain unchanged; rollback cannot see the sealed fixture's evidence.
+# Its own HERE avoids rollback-target and reserve-backup name collisions.
+[ ! -e "$U/private/rounds/r000088/r000088-l0/result.json" ]
+SEALED_JOURNAL=$(sha256sum "$D/operator-state/journal.jsonl")
+UOP=(env "KINGX2_HERE=$U/here" "KINGX2_STATE=$U/state" "KINGX2_OBJECT_ROOT=$U" "KINGX2_PUBLIC_ROOT=$U/site" "KINGX2_IDENTITY_DIR=undecided/here" "KINGX2_DRY_SET_PARAMS=$PY -I $D/helpers/cli.py set-params --state-dir $U/state --stack dry_stack:stack --params" "KINGX2_DRY_END_ROUND=$PY -I $D/helpers/replay.py end-round $U $U/state $D/reserve" "$PY" -I "$D/here/kx2_operator.py")
+"${UOP[@]}" rollback
+[ "$(git -C "$D/repo" rev-parse HEAD)" = d368b2601f06458349cfe3e84adfbf691994fcb3 ]
+$D/here/check-reserve
+$D/here/check-generator
+printf '%s DRY EXPLICIT-ROLLBACK GENERATOR PRESERVATION PASS: external reserve/generator unchanged\n' "$(date -u +%FT%TZ)"
+# params/code. Replay it with the compatible implementation schema, not old code.
+[ "$($PY -I -c 'import sys; sys.path.insert(0,sys.argv[1]); from sn120_v2.state import load; s=load(sys.argv[2]); assert s.round is None and s.rounds[-1].round_id=="r000088" and s.rounds[-1].outcome=="no_decision"; print(s.params.params_hash)' "$IMPL/v2" "$U/state/journal.jsonl")" = 94f931588114f335814231409938f39f2056893708bc798e90f1f7676920a35c ]
+[ ! -e "$D/watchdog/DISARM" ]
+[ "$SEALED_JOURNAL" = "$(sha256sum "$D/operator-state/journal.jsonl")" ] || { echo 'the separate rollback must not alter the preserved journal' >&2; exit 1; }
+[ "$BEFORE_RESULT" = "$(sha256sum "$SEALED")" ]
+printf '%s DRY ROLLBACK PASS: separate undecided fixture restored old params then old code; sealed fixture unchanged\n' "$(date -u +%FT%TZ)"
+printf '== decided round cannot be ended as no_decision by rollback ==\n'
+# The copied checkout is old code after rollback, but the journal retains its
+# historical new-params record. These synthetic follow-ups need the compatible
+# implementation schema. A second manual rollback on this recovered fixture
+# must also parse that history with a compatible schema: this is a read-only
+# probe of close_undecided_for_rollback's decided-round guard, not a claim that
+# old code can replay new-schema journals or that another rollback is valid.
+# The actual rollback above has already restored and verified old code/params.
+# kx2_operator.py imports its package explicitly from KINGX2_V2, so PYTHONPATH
+# alone cannot select the compatible schema. Override V2 only for this probe;
+# it must return at the decided-round guard, before any checkout or mutation.
+unset PYTHONPATH
+GUARDOP=(env "KINGX2_V2=$IMPL/v2" "${UOP[@]}")
+KINGX2_V2="$IMPL/v2" $PY -I "$D/helpers/replay.py" open-guard "$U" "$U/state" "$D/reserve"
+KINGX2_V2="$IMPL/v2" $PY -I "$D/helpers/replay.py" decide-open "$U" "$U/state" "$D/reserve"
+BEFORE=$(sha256sum "$U/state/journal.jsonl" "$D/repo/v2/sn120_v2/params.py")
+if "${GUARDOP[@]}" rollback > "$D/decided-rollback.log" 2>&1; then echo 'rollback must finish a decided round via run' >&2; exit 1; fi
+grep 'decided and must be finished by run' "$D/decided-rollback.log"
+[ "$BEFORE" = "$(sha256sum "$U/state/journal.jsonl" "$D/repo/v2/sn120_v2/params.py")" ]
+[ "$SEALED_JOURNAL" = "$(sha256sum "$D/operator-state/journal.jsonl")" ]
+[ "$BEFORE_RESULT" = "$(sha256sum "$SEALED")" ]
+printf '%s DRY DECIDED-ROUND GUARD PASS: normal finish required; no no_decision recovery shortcut\n' "$(date -u +%FT%TZ)"

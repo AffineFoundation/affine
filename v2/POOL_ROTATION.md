@@ -10,7 +10,11 @@
 - `withdrawn.jsonl`: append-only `{id, reason, added_at}`. A withdrawn reserve task is not admitted; a withdrawn active task is retired outside the `k` cap.
 - `MANIFEST.jsonl`: shard rows `{shard, sha256, count, added_at}` in admission order, followed by the current `{withdrawn: {sha256, count}}` pointer. `reserve_manifest_sha` is the SHA-256 of this file's bytes.
 
-The shipped reserve has zero shards. The loader checks every listed shard's bytes, canonical schema, unique ids and normalised problems. A later round must extend the shard history in the same positions and may only append withdrawals. Tampering fails closed with `ConfigError`; no round opens. `SN120_RESERVE_DIR` is a test-only override.
+The shipped reserve is an immutable packaged seed. The loader checks every listed shard's bytes, canonical schema, unique ids and normalised problems. A later round must extend the shard history in the same positions and may only append withdrawals. Tampering fails closed with `ConfigError`; no round opens.
+
+When `SN120_RESERVE_DIR` names a live directory, `PoolRuntime` seeds it from the packaged directory on first startup, including any untracked retired archive. Live shard history must extend the packaged prefix. If a later packaged deploy adds a suffix to a strict-prefix live directory, its new shards are copied forward; divergence is refused. Startup and each open use the shared/exclusive `<live>/.ingest.lock` with ingestion. An append-only, fully verified new manifest reloads before rotation. A bad candidate logs one line and keeps the last verified reserve. Without the variable, packaged behavior is unchanged.
+
+Production's run loop and `systemd/generator-ingestd.sh` read the absolute live directory from one line in `/root/sn120-run/reserve-live.path`; the run loop exports it as `SN120_RESERVE_DIR`. If that file is absent the run loop is unchanged. A typical deployment writes `/root/sn120-run/reserve-live` to this file. No environment setting is needed when the file is absent.
 
 The reserve is not in `env_pin` or `params_hash`. Each rotated round records the reserve manifest SHA in its journal, round file, public rotation artifact and IRT snapshot. Shards and the manifest are mirrored under `public/pool/reserve/`; miners need no git checkout. The active set is public before its round: `public/pool/active/<active_sha>.json`; the next-up queue is in each round's `pool` block. On a fresh checkout, `PoolRuntime` restores the mirrored shards and retired archive before reading the catalog; a newer local manifest may extend, but not replace, that history.
 
@@ -39,6 +43,37 @@ python -m sn120_v2.envs.reserve ingest ... --readmit omni:17 readmit.jsonl
 
 Its `source_id` must be the retired id, problem and answer must exactly match the archive, and the row carries `audit.readmit_of = <retire round>`. It is a new queue entry. Low-retired and withdrawn tasks cannot return.
 
+## Generator accepted-task feed
+
+Build the compact prior index once, in a tooling environment with `pyarrow` (install the `prior_index` extra), from the checksum-verified eight-parquet `sn120-math-prior-v1` release:
+
+```
+python -m sn120_v2.envs.tools.prior_index /path/to/prior-release /root/sn120-run/generator/prior-index.json
+```
+
+The index maps `sha256(normalise(problem))` to the prior's `source` (`dataset@revision`) and `license`; it is JSON, so production ingestion needs no `pyarrow`. The manifest and all eight shards are SHA-checked while building it. Ingest an epoch with the public result document:
+
+```
+python -m sn120_v2.envs.reserve ingest-generator accepted-EPOCH.jsonl \
+  --epoch EPOCH --results results-EPOCH.json \
+  --prior-index /root/sn120-run/generator/prior-index.json
+```
+
+The default active-set dedupe input is fetched from `SN120_PUBLIC_URL` (default `https://affine.io`); `--active` supplies a verified public id list for offline use. Completeness is `.done` first, then `results.json`; without either, ingestion refuses with exit 3. A marker is `accepted-EPOCH.done`, either `{"rows":N,"sha256":"hex"}` (extra keys such as `epoch` allowed) or one plain `N hex` line. A wrong row count or SHA exits 3 without writing. `results.json` checks epoch, accepted count and prior-pool SHA. Public v1 result files currently name their schema marker `version`, not `schema`. Accepted rows must include the exact `s/8` prior. Row `task_id` replaces `source_id` in Generator provenance when present. Row `license` takes precedence over the prior-index join; `source`/`license` pairs take precedence over the join for older files. `prior_king` or `king_revision` is recorded in audit and ledger, falling back to the result's king. A missing index match without row provenance is `not_in_prior`; NC, ND and unrecognized licenses are rejected.
+
+The proof filter is deliberately small: reject `prove`, `show`/`show that`, `demonstrate` or `证明` when there is no value request (`find`, `determine`, `calculate`, `compute`, `evaluate`, `value`, `solve for`, `how many/much`, `what is`, `求`, `计算`, `多少`, `值`). Normal dedupe covers active, base/archive, reserve, retired, same-file and earlier-epoch rows. The existing length, MANDATE, MC and grader self-check filters also run. IDs are continuous `gen:<n>`; shard names are `NNNN-sn120-generator-<lowercase epoch>-<license slug>.jsonl`, with no extra dots in the slug. Generator `audit.verdict` is the existing accepted value `keep`; the audit method/ref records the frozen-king band and public result URL.
+
+`<live>/generator-ingested.jsonl` has one row per epoch, including zero-kept epochs. The same input SHA is an idempotent no-op; another SHA exits 4 unless it is a recognized backfill, and an incomplete input/result/marker exits 3, both without a reserve write. The ledger records the normalized problem set. A backfilled file whose problems are a subset of that set adds a `backfill_seen` note and does not ingest. Genuinely new problems go through the normal dedupe/filter path into `-b1` shards; the single epoch ledger row accumulates history and backfill notes. Shards are verified in a staged generation before the manifest commit. The ledger is written last, atomically, under the exclusive lock. If a crash leaves a committed manifest without its local ledger, the exact same input can recover the ledger only when every recomputed shard name and SHA matches the listed history.
+
+Run the daemon from `v2/`, with its Python environment and the index:
+
+```
+systemd/generator-ingestd.sh /path/to/venv/bin/python \
+  /root/sn120-run/generator/prior-index.json
+```
+
+It polls `/root/sn120-run/generator/inbox/accepted-EPOCH.jsonl` every 120 seconds. If `accepted-EPOCH.done` exists it takes precedence; otherwise the daemon fetches `$SN120_PUBLIC_URL/generator/epochs/EPOCH/results.json` with retries. It never ingests without one of those completeness proofs, and logs one JSON line per epoch to `/root/sn120-run/generator/ingestd.log`. Both the daemon and run loop read the same `/root/sn120-run/reserve-live.path`. Start `PoolRuntime` once before the daemon to initialize `/root/sn120-run/reserve-live`. `SN120_GENERATOR_INBOX`, `SN120_GENERATOR_LOG`, `SN120_GENERATOR_POLL_S`, `SN120_GENERATOR_PRIOR_INDEX`, `SN120_GENERATOR_LOCK` and `SN120_RESERVE_PATH_FILE` are scratch/test overrides; production defaults are the paths above. The daemon does not publish: the next ordinary `publish_open` publishes the manifest and every shard, with readback verification.
+
 ## Rule (`affine-pool-rotation-v1`)
 
 At round open, before the draw, use the previous close's IRT snapshot and previous rotated active set `A_prev`. The first enabled round uses the 20,120 base-pool ids and an empty ledger. `A_initial` is the base-pool id set.
@@ -59,7 +94,7 @@ A_r = sorted((A_prev \\ W \\ retired) union Q[:n_admit])
 
 No high/low retirement happens with an empty queue. An above-target active set may shrink toward target without reserve admissions. Withdrawals can cause an otherwise empty reserve to change the set. `next_up` is the following `2*k` queue ids.
 
-The complete decision, its inputs, the ledger, last IRT rows and archive are public at `public/pool/rotation/<round_id>.json`. Its canonical hash is `state_sha`; `public/pool/state/<state_sha>.json` has the same bytes. `public/pool/retired.json` is the cumulative append-only-in-content archive; `retired_tasks.json` keeps complete Task rows for grading and exact readmission.
+The complete decision, its inputs, the opening ledger, last IRT rows and archive are public at `public/pool/rotation/<round_id>.json`. Its canonical hash is the opening `state_sha`. At close, the controller stores the ledger-updated state at `public/pool/state/<state_sha>.json` in its object store; the static public site does not serve that key. Public replay reconstructs and digest-checks the previous close from the named rotation, draw snapshot, round report and king outcomes, never requiring public `pool/state`. `public/pool/retired.json` is the cumulative append-only-in-content archive; `retired_tasks.json` keeps complete Task rows for grading and exact readmission.
 
 ## IRT and ledger
 
@@ -94,13 +129,13 @@ Retirements are ascending by score; admissions are descending. Every tie uses `s
 
 ### Public v2 files and replay
 
-In addition to the existing active, rotation, state, reserve and retired files:
+In addition to the existing active, rotation, reserve and retired files:
 
 - `public/pool/ranking/<round_id>.json` contains every candidate: `id`, previous `state`, `p`, `rounds_seen`, `score`, `flags`, `source_prefix`, `env`, `head_rollouts`, `head_passes`, and `admitted`/`retired`/`retire_reason` for this decision.
 - `public/pool/rotation/<round_id>.json` carries the same complete candidate ranking plus admitted IDs, retired IDs/reasons, `next_up`, `rule_params` and `retire_reason_counts`.
 - `public/pool/summary.json` aggregates the post-decision active composition and score histogram, reserve/retired counts, and the last 20 v2 rounds for the static `/pool` page (`pool.html`). The page has a top-50 upcoming queue and a client-side search over the complete latest ranking. All times are UTC.
 
-The first v1-to-v2 transition publishes the complete previous retired archive, candidate metadata and retired ledger it used. `python -m sn120_v2.replicate rotation --mining-json <mining.json> --round rNNNNNN` fetches the public decision, ranking, source snapshot and state lineage and compares the complete recomputed `Rotation`, including the full ranking. The early live v1 `r000066` state is byte-SHA addressed; the later `r000069` state uses the canonical digest. The loader verifies the exact public key's SHA-256 and permits that legacy v1 state at the transition, while new v2 states always use the canonical digest.
+The first v1-to-v2 transition publishes the complete previous retired archive, candidate metadata and retired ledger it used. `python -m sn120_v2.replicate rotation --mining-json <mining.json> --round rNNNNNN` fetches the public decision, ranking and source snapshot, reconstructs the previous close from public round evidence, and compares the complete recomputed `Rotation`, including the full ranking. The early live v1 `r000066` state is byte-SHA addressed; the later `r000069` state uses the canonical digest. Public-only replay reconstructs and authenticates both the early byte-SHA state encoding and canonical-digest rounds; new v2 states always use the canonical digest.
 
 Strict replayer schema additions (all optional and omitted on v1/old journals):
 
@@ -116,7 +151,7 @@ python -m sn120_v2.replicate rotation \
   --mining-json mining.json --round r000123 --work /data/affine
 ```
 
-The command downloads the public decision, previous state and source IRT snapshot and compares the complete recomputed Rotation. `replicate run` uses the rotated round's active artifact and mirrored reserve for its catalog. No file under `sn120_v2/gpu/` changes.
+The command downloads the public decision and source IRT snapshot, reconstructs the previous state from public round evidence as described above, and compares the complete recomputed Rotation. `replicate run` uses the rotated round's active artifact and mirrored reserve for its catalog. No file under `sn120_v2/gpu/` changes.
 
 ## Enable (only with Jacob's approval)
 

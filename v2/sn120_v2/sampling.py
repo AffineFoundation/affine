@@ -29,7 +29,8 @@ def make_round_seed(round_id: str, head_version_id: str, entropy: str) -> str:
 def rollout_seed(round_seed: str, task_id: str, sample: int) -> int:
     """Seed of one rollout: sha256("<round_seed>|<task_id>|<sample>") as a 63-bit integer.
 
-    Null M and every LoRA use this same seed for the same task and sample.
+    Sample 0 pairs null M with every LoRA on a task. Later king-only samples
+    use the same pure function at their own sample indices; no LoRA runs them.
     """
     text = f"{round_seed}|{task_id}|{sample}"
     return int(sha256_hex(text.encode("utf-8")), 16) >> (256 - SEED_BITS)

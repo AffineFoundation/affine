@@ -1,0 +1,23 @@
+{
+  "old_commit": "28c56f439c0c0fbf3554c8546cc86dbd88119125",
+  "new_commit": "d368b2601f06458349cfe3e84adfbf691994fcb3",
+  "old_hash": "94f931588114f335814231409938f39f2056893708bc798e90f1f7676920a35c",
+  "new_hash": "94f931588114f335814231409938f39f2056893708bc798e90f1f7676920a35c",
+  "digest": "64e7bd9c10bba7eeb139ca70a68c41711da882dbee42763890f85be59a4ea3f9",
+  "new_digest": "64e7bd9c10bba7eeb139ca70a68c41711da882dbee42763890f85be59a4ea3f9",
+  "pool_sha": "9c3010317c403da0f013e15d9420cab2c241d388f3325f3de8f0ad2cb5282a0a",
+  "pool_n": 20120,
+  "reserve_manifest_sha": "8aa166ff08ed34e291a10f1001ab86b332ca6075ce97586ac810e03b7226cf84",
+  "new_manifest_sha256": "8aa166ff08ed34e291a10f1001ab86b332ca6075ce97586ac810e03b7226cf84",
+  "reserve_total": 1746,
+  "reserve_path_file": "/root/sn120-run/reserve-live.path",
+  "reserve_dir": "/root/sn120-run/reserve-live",
+  "prior_index": "/root/sn120-run/generator/prior-index.json",
+  "prior_pool_sha": "45b793b4d00d1f7225d34fd35e58018612a0ded00d96a9c23b750cfb18994115",
+  "prior_index_sha256": "04301d0afac965907b8c03a7af6fe1254c0bd646f449cd14fee564439307da25",
+  "prior_index_bytes": 111176289,
+  "prior_index_rows": 811609,
+  "generator_inbox": "/root/sn120-run/generator/inbox",
+  "generator_ingestd_pid": "/root/sn120-run/generator/ingestd.pid",
+  "gate_round": "r000080"
+}

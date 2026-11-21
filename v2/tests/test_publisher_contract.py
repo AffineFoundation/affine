@@ -110,7 +110,12 @@ def test_every_number_follows_the_pinned_params(tmp_path):
     assert header == r2.PUT_HEADERS and "`Content-Type: application/octet-stream`" in " ".join(text.split())  # what the presigner signs
     assert f"rule code `{TIME_LIMIT}`" in text
     for field in dataclasses.fields(made.params) + dataclasses.fields(recipe):  # the full table and the full recipe
-        assert f"`{field.name}`" in text or field.name in ("recipe", "miner_bounds") or (field.name.startswith("rotation_") and field.name in made.params.LEFT_OUT_AT_DEFAULT and getattr(made.params, field.name) == field.default)
+        # This optional field is deliberately absent from default publication,
+        # like the default rotation fields; a selected king count is stated.
+        assert f"`{field.name}`" in text or field.name in ("recipe", "miner_bounds") or (field.name in made.params.LEFT_OUT_AT_DEFAULT and (field.name == "null_samples_per_task" or field.name.startswith("rotation_")) and getattr(made.params, field.name) == field.default)
+    selected = world(tmp_path / "selected", null_samples_per_task=2)
+    selected_text = published(selected.publisher.snapshots[-1])[1]
+    assert "`null_samples_per_task`" in selected_text
     for key in doc["contract"]["objects"].values():
         assert key.startswith("public/") and key in text
 

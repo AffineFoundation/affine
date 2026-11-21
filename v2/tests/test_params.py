@@ -33,6 +33,11 @@ def test_serving_defaults_preserve_old_json_params_and_ticket_digests():
     assert params.kv_cache_dtype == "auto" and params.max_num_seqs == 256
     assert params.params_hash == "10a121ec5a4ba830057e5510665fee1be7aad34dae259d3427e4547c393c2cf1"
     assert "kv_cache_dtype" not in params.to_dict() and "max_num_seqs" not in params.to_dict()
+    assert params.null_samples_per_task is None and params.null_samples == params.samples_per_task
+    assert "null_samples_per_task" not in params.to_dict()
+    two = dataclasses.replace(params, null_samples_per_task=2)
+    assert two.to_dict()["null_samples_per_task"] == 2 and Params.from_dict(two.to_dict()).null_samples == 2
+    assert two.params_hash != params.params_hash
     raw = json.dumps(params.to_dict(), sort_keys=True)
     assert Params.from_dict(json.loads(raw)).params_hash == params.params_hash
     assert dataclasses.replace(params, kv_cache_dtype="fp8", max_num_seqs=512).params_hash == "cf2da207288c978d9452fc5594d156efef6ab46f283cf45018c032073bbf81b1"
@@ -55,7 +60,7 @@ def test_changed_params_shows_left_out_at_default_fields_in_both_directions():
     assert changed_params(off, on) == {"rotation_enabled": {"before": False, "after": True}}
 
     default = Params()
-    changes = {"irt_draw_rule": "band", "kv_cache_dtype": "fp8", "max_num_seqs": 512,
+    changes = {"irt_draw_rule": "band", "kv_cache_dtype": "fp8", "max_num_seqs": 512, "null_samples_per_task": 2,
                "rotation_k": 31, "rotation_retire_p": 0.9, "rotation_n_min": 2,
                "rotation_retire_low_p": 0.1, "rotation_n_min_low": 7, "rotation_active_size": 20000}
     for name, value in changes.items():
@@ -115,6 +120,7 @@ def test_look_sizes_end_with_every_task():
         {"looks": (0.5, 0.25, 1.0)}, {"z_bar": float("nan")}, {"cap_hit_floor": 1.5}, {"min_cover": 0.0}, {"min_scored_tasks": 1},
         {"drop_alpha": 0.0}, {"fold_every_k": 0}, {"max_output_tokens": 70000}, {"max_num_seqs": 0}, {"lease_timeout_s": 0}, {"kings_window": 0},
         {"irt_draw_rule": "middle"}, {"irt_draw_rule": ""}, {"irt_draw_rule": "Fisher"}, {"irt_draw_rule": None},
+        {"null_samples_per_task": 0}, {"null_samples_per_task": -1}, {"null_samples_per_task": 1.5}, {"null_samples_per_task": True},
     ],
 )
 def test_an_invalid_setting_fails_closed(change):

@@ -7,20 +7,26 @@ the complete reserve queue and ledger at the previous round boundary.
 """
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import shutil
+import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from . import layout
 from .canonical import canonical_json, sha256_hex
 from .envs.math_pool import MathPool, Task, load_pool
-from .envs.reserve import Catalog, candidate_metadata, load_reserve, read_raw, reserve_dir
+from .envs.reserve import (
+    Catalog, atomic_write, candidate_metadata, extends_reserve, ingest_lock, load_reserve, prepare_live_reserve, read_raw, reserve_dir,
+)
 from .errors import ConfigError, VerifyError
 from .irt import IRTSampler
 from .params import Params
 from .rotation import INFO_RULE_VERSION, Reserve, Rotation, fold_ledger, rotate, rotate_info
 from .seams import ObjectStore
-from .state import State
+from .state import ABANDONED, NO_DECISION, State
 
 
 def load_active(store: ObjectStore, sha: str) -> tuple[str, ...]:
@@ -39,9 +45,9 @@ def load_rotation(store: ObjectStore, state_sha: str) -> Rotation:
         raise VerifyError("rotation state object does not match its content id")
     rotation = Rotation.from_json(raw)
     # The first live v1 state (r000066) was addressed by its byte hash;
-    # r000069 moved to the canonical digest. Both are strict, public, verified
-    # forms. A v2 lineage must use the canonical form, and a mixed v1->v2
-    # boundary is allowed to read the older state once.
+    # r000069 moved to the canonical digest. Both are strict, verified forms.
+    # A v2 lineage must use the canonical form, and a mixed v1->v2 boundary is
+    # allowed to read the older state once.
     if rotation.digest() != state_sha:
         if rotation.rule_version != INFO_RULE_VERSION:
             return rotation
@@ -49,14 +55,91 @@ def load_rotation(store: ObjectStore, state_sha: str) -> Rotation:
     return rotation
 
 
+def public_previous(store: ObjectStore, previous_id: str, previous_rid: str, fetch) -> Rotation:
+    """Reconstruct a previous close without requiring a public state object.
+
+    The fetch callback receives an object key. The raw-SHA first v1 state is
+    supported by an optional local cache; a public-only verifier rebuilds its
+    ledger from the previous round's public draw and king outcomes.
+    """
+    state_key = layout.pool_rotation_state(previous_id)
+    if store.exists(state_key):
+        previous = load_rotation(store, previous_id)
+        if previous.round_id != previous_rid:
+            raise VerifyError("previous state names a different round")
+        return previous
+    previous_key = layout.pool_rotation(previous_rid)
+    fetch(previous_key)
+    previous = Rotation.from_json(store.get(previous_key))
+    previous_doc = json.loads(store.get(previous_key))
+    if previous.round_id != previous_rid:
+        raise VerifyError("previous public rotation names a different round")
+    report_key = layout.round_file(previous_rid)
+    fetch(report_key)
+    report = json.loads(store.get(report_key))
+    if report.get("round_id") != previous_rid:
+        raise VerifyError("previous round report has the wrong identity")
+    snapshot_id = report.get("irt_snapshot_id")
+    if not snapshot_id:
+        raise VerifyError("previous round report has no draw snapshot")
+    fetch(layout.irt_snapshot(snapshot_id))
+    source = json.loads(store.get(layout.irt_snapshot(snapshot_id)))
+    from .irt import draw_from_snapshot
+    rebuilt = draw_from_snapshot(source, report["round_seed"], report["n_tasks"])
+    if source.get("snapshot_id") != snapshot_id:
+        raise VerifyError("previous draw snapshot id differs from its public object")
+    draw = report.get("draw")
+    if draw:
+        if any(draw.get(key) != value for key, value in rebuilt.to_dict().items()):
+            raise VerifyError("previous round draw differs from its public snapshot/seed")
+        draw_ids = draw["task_ids"]
+    else:
+        # Older public reports omitted the draw, but name its exact inputs.
+        draw_ids = rebuilt.task_ids
+    ledger = previous.ledger
+    for null in report.get("null_outcomes", {}).values():
+        ledger = fold_ledger(ledger, previous.active_ids, draw_ids, null)
+    closed = Rotation.from_dict(previous.to_dict() | {"ledger": ledger})
+    if closed.digest() != previous_id:
+        # Early states were addressed by the SHA of json.dumps on their public
+        # dictionary, before canonical Record JSON was adopted. Preserve that
+        # historical byte identity only when the complete reconstruction
+        # authenticates it; never reinterpret a modern digest as a raw hash.
+        legacy_raw = json.dumps(previous_doc | {"ledger": ledger}, sort_keys=True, separators=(",", ":")).encode()
+        if sha256_hex(legacy_raw) != previous_id:
+            raise VerifyError("reconstructed previous rotation does not match prev_state_sha")
+        store.put(state_key, legacy_raw)
+        return load_rotation(store, previous_id)
+    # Cache only after authentication. This is verifier-private state, not a
+    # claim that the static site serves pool/state.
+    store.put(state_key, closed.to_json())
+    return load_rotation(store, previous_id)
+
+
 def mirror_reserve(store: ObjectStore, root: str | Path | None = None) -> None:
     """Mirror verified reserve bytes; shards go before the manifest pointer."""
     root = reserve_dir() if root is None else Path(root)
     manifest, withdrawn, rows, _ = read_raw(root)
     for row in rows[:-1]:
-        store.put(layout.reserve_shard(row["shard"], row["sha256"]), (root / "shards" / row["shard"]).read_bytes())
-    store.put(layout.RESERVE_WITHDRAWN, withdrawn)
-    store.put(layout.RESERVE_MANIFEST, manifest)
+        sidecar = root / "shards" / (row["shard"] + ".rejected.json")
+        if sidecar.exists():
+            store.put(layout.reserve_shard(row["shard"] + ".rejected.json", sha256_hex(sidecar.read_bytes())), sidecar.read_bytes())
+        key = layout.reserve_shard(row["shard"], row["sha256"])
+        raw = (root / "shards" / row["shard"]).read_bytes()
+        if sha256_hex(raw) != row["sha256"]:
+            raise VerifyError(f"reserve shard {row['shard']} does not match its manifest sha256")
+        if not store.exists(key) or store.get(key) != raw:
+            store.put(key, raw)
+        if store.get(key) != raw:
+            raise VerifyError(f"published reserve shard {row['shard']} failed readback")
+    if not store.exists(layout.RESERVE_WITHDRAWN) or store.get(layout.RESERVE_WITHDRAWN) != withdrawn:
+        store.put(layout.RESERVE_WITHDRAWN, withdrawn)
+    if store.get(layout.RESERVE_WITHDRAWN) != withdrawn:
+        raise VerifyError("published reserve withdrawals failed readback")
+    if not store.exists(layout.RESERVE_MANIFEST) or store.get(layout.RESERVE_MANIFEST) != manifest:
+        store.put(layout.RESERVE_MANIFEST, manifest)
+    if store.get(layout.RESERVE_MANIFEST) != manifest:
+        raise VerifyError("published reserve manifest failed readback")
 
 
 def append_only(previous: Rotation | None, current: Rotation) -> None:
@@ -116,6 +199,21 @@ def active_file(store: ObjectStore, rotation: Rotation, catalog: MathPool | None
         store.put(layout.RETIRED_TASKS, canonical_json(rows))
 
 
+def unscored_rotation(previous: Rotation | None, snapshot: Mapping[str, Any], record: Any = None) -> bool:
+    """An unscored rotation keeps measured rows and treats new admits as fresh.
+
+    Its previous snapshot must be the source of that rotation. Live open gets
+    the close outcome from replayed State; public replay gets its stored report.
+    """
+    if previous is None or not previous.source_snapshot_id or snapshot.get("snapshot_id") != previous.source_snapshot_id:
+        return False
+    if record is None:
+        raise VerifyError("unscored rotation replay needs its round close record")
+    outcome = record.get("outcome") if isinstance(record, Mapping) else getattr(record, "outcome", None)
+    round_id = record.get("round_id") if isinstance(record, Mapping) else getattr(record, "round_id", None)
+    return round_id == previous.round_id and outcome in (NO_DECISION, ABANDONED)
+
+
 def pool_summary(rotation: Rotation, opened_at: int = 0) -> dict[str, Any]:
     """Small public aggregate of the full ranking, for the static pool page."""
     if rotation.rule_version != INFO_RULE_VERSION:
@@ -148,11 +246,14 @@ def pool_summary(rotation: Rotation, opened_at: int = 0) -> dict[str, Any]:
 class PoolRuntime:
     """A MathPool-compatible catalog plus the reserve rotation lifecycle."""
     def __init__(self, store: ObjectStore, params: Params, state: State, *, root: str | Path | None = None,
-                 base: MathPool | None = None, initial_ids: Sequence[str] | None = None) -> None:
+                 base: MathPool | None = None, initial_ids: Sequence[str] | None = None,
+                 seed: str | Path | None = None) -> None:
         self.store, self.params, self.state = store, params, state
         self.base = base or load_pool()
         self.initial_ids = tuple(sorted(initial_ids or self.base.task_ids))
-        self.root = root
+        self.root = Path(root) if root is not None else reserve_dir()
+        self.seed = Path(seed) if seed is not None else None
+        prepare_live_reserve(self.root, self.seed)
         self.previous: Rotation | None = None
         if state.rotation_state_sha:
             self.previous = load_rotation(store, state.rotation_state_sha)
@@ -162,9 +263,10 @@ class PoolRuntime:
             for task_id in current.admitted:
                 self.admitted_counts[task_id] = self.admitted_counts.get(task_id, 0) + 1
             current = load_rotation(self.store, current.prev_state_sha) if current.prev_state_sha else None
-        self._restore_public_cache()
-        self.reserve, self.catalog = load_reserve(root, with_catalog=True, allow_retired=self.params.rotation_rule == "info")
-        self.candidate_meta = candidate_metadata(root, self.reserve, self.catalog) if self.params.rotation_rule == "info" else {}
+        with ingest_lock(self.root, exclusive=False):
+            self._restore_public_cache()
+            self.reserve, self.catalog = load_reserve(self.root, with_catalog=True, allow_retired=self.params.rotation_rule == "info")
+            self.candidate_meta = candidate_metadata(self.root, self.reserve, self.catalog) if self.params.rotation_rule == "info" else {}
         self.active_rotation: Rotation | None = None
         if state.round is not None and state.round.rotation is not None:
             current = load_rotation(store, state.round.rotation["state_sha"])
@@ -177,20 +279,21 @@ class PoolRuntime:
         self._active_ids = self.active_rotation.active_ids if self.active_rotation else (
             self.previous.active_ids if self.previous else self.initial_ids
         )
-        self.admission_pool = self.catalog
+        self.admission_pool = self
         self.task_ids, self.sha256 = self.catalog.task_ids, self.catalog.sha256
+        self._loaded_manifest = (self.root / "MANIFEST.jsonl").read_bytes()
 
     @property
     def active_ids(self) -> tuple[str, ...]:
         return self._active_ids
 
-    def _restore_public_cache(self) -> None:
+    def _restore_public_cache(self, root: str | Path | None = None) -> None:
         """Restore consumed reserve and retired rows from durable mirrors.
 
         A fresh checkout has only the empty packaged reserve. A newer local
         ingest may extend the last public mirror, but it may not replace it.
         """
-        root = Path(self.root or reserve_dir())
+        root = self.root if root is None else Path(root)
         local = root / "shards"
         if not local.is_dir() or not (root / "MANIFEST.jsonl").is_file():
             return
@@ -199,8 +302,10 @@ class PoolRuntime:
             tasks = json.loads(self.store.get(layout.RETIRED_TASKS))
             if not isinstance(index, list) or not isinstance(tasks, list):
                 raise VerifyError("public retired archive is not a list")
-            (root / "retired.json").write_bytes(canonical_json(index))
-            (root / "retired_tasks.json").write_bytes(canonical_json(tasks))
+            for name, raw in (("retired.json", canonical_json(index)), ("retired_tasks.json", canonical_json(tasks))):
+                path = root / name
+                if not path.exists() or path.read_bytes() != raw:
+                    atomic_write(path, raw)
         if not self.store.exists(layout.RESERVE_MANIFEST):
             return
         manifest = self.store.get(layout.RESERVE_MANIFEST)
@@ -236,8 +341,8 @@ class PoolRuntime:
         prefix = "public/pool/reserve/shards/"
         mirrored: dict[str, bytes] = {}
         for key in self.store.list(prefix):
-            # Keys are <name>.jsonl.<sha256>.jsonl; the original name
-            # already includes its .jsonl suffix.
+            # <name>.jsonl.<sha256>.jsonl, or the optional
+            # <name>.jsonl.rejected.json.<sha256>.jsonl.
             name = key[len(prefix):].rsplit(".", 2)[0]
             mirrored[name] = self.store.get(key)
         for name, raw in mirrored.items():
@@ -245,7 +350,59 @@ class PoolRuntime:
             if target.exists() and target.read_bytes() != raw:
                 raise VerifyError(f"local reserve shard {name} differs from its public mirror")
         for name, raw in mirrored.items():
-            (local / name).write_bytes(raw)
+            target = local / name
+            if not target.exists() or target.read_bytes() != raw:
+                atomic_write(target, raw)
+
+    def _reload_at_open(self, *, locked: bool = False) -> None:
+        root = self.root
+        assert root is not None
+        manifest_path = root / "MANIFEST.jsonl"
+        if not manifest_path.is_file() or (manifest_path.exists() and manifest_path.read_bytes() == self._loaded_manifest):
+            return
+        with contextlib.nullcontext() if locked else ingest_lock(root, exclusive=False):
+            if manifest_path.read_bytes() == self._loaded_manifest:
+                return
+            candidate = root / f".reload-candidate-{os.getpid()}"
+            if candidate.exists():
+                shutil.rmtree(candidate)
+            shutil.copytree(root, candidate, ignore=shutil.ignore_patterns(".ingest.lock", ".reload-candidate-*", ".generator-stage-*"))
+            try:
+                self._restore_public_cache(candidate)
+                reserve, catalog = load_reserve(candidate, with_catalog=True, allow_retired=self.params.rotation_rule == "info")
+                extends_reserve(self.reserve, reserve)
+                if reserve.manifest_sha == self.reserve.manifest_sha:
+                    raise VerifyError("reserve manifest changed without a new shard or withdrawal")
+                # rotate_info itself requires the effective queue to be disjoint
+                # from active and retired; raw shards intentionally retain history.
+                meta = candidate_metadata(candidate, reserve, catalog) if self.params.rotation_rule == "info" else {}
+                for source in candidate.rglob("*"):
+                    if not source.is_file() or source.name == ".ingest.lock":
+                        continue
+                    target = root / source.relative_to(candidate)
+                    raw = source.read_bytes()
+                    if not target.exists() or target.read_bytes() != raw:
+                        atomic_write(target, raw)
+                self.reserve, self.catalog, self.candidate_meta = reserve, catalog, meta
+                self._loaded_manifest = manifest_path.read_bytes()
+                self.task_ids = catalog.task_ids
+                print(f"reserve reloaded: {len(reserve.shards)} shards, {len(reserve.queue)} queued, {reserve.manifest_sha}", file=sys.stderr, flush=True)
+            except (ConfigError, VerifyError, OSError, ValueError) as exc:
+                print(f"reserve reload refused; keeping loaded {self.reserve.manifest_sha}: {exc}", file=sys.stderr, flush=True)
+            finally:
+                shutil.rmtree(candidate, ignore_errors=True)
+
+    @contextlib.contextmanager
+    def _publication(self):
+        """One exclusive lock from reload through decision and publication."""
+        root = self.root
+        assert root is not None
+        with ingest_lock(root, exclusive=True):
+            try:
+                self._reload_at_open(locked=True)
+            except (ConfigError, VerifyError, OSError, ValueError) as exc:
+                print(f"reserve reload/restore failed; keeping loaded {self.reserve.manifest_sha}: {exc}", file=sys.stderr, flush=True)
+            yield
 
     def task(self, task_id: str) -> Task:
         return self.catalog.task(task_id)
@@ -279,8 +436,13 @@ class PoolRuntime:
         # v1->v2 transition carries the complete archive of the previous state.
         return previous.retired_archive if previous else ()
 
-    def open(self, round_id: str, snapshot: Mapping[str, Any], state: State | None = None) -> tuple[Rotation, IRTSampler]:
-        # Assembly constructs this runtime before the controller replaces its
+    def open_and_publish(self, round_id: str, snapshot: Mapping[str, Any], state: State | None = None) -> tuple[Rotation, IRTSampler, dict[str, Any]]:
+        """Controller boundary: one lock for reload, decision and publication."""
+        with self._publication():
+            decision, sampler = self.open(round_id, snapshot, state, reload_reserve=False)
+            return decision, sampler, self.publish_open(decision)
+
+    def open(self, round_id: str, snapshot: Mapping[str, Any], state: State | None = None, *, reload_reserve: bool = True) -> tuple[Rotation, IRTSampler]:
         # startup State by replay. Always take the controller's current state.
         state = self.state if state is None else state
         if self.active_rotation is not None:
@@ -289,7 +451,7 @@ class PoolRuntime:
             raise VerifyError("rotation source snapshot is not the last closed round's snapshot")
         previous = self.previous
         a_prev = previous.active_ids if previous else self.initial_ids
-        reserve = self._rule_reserve()
+        unscored = unscored_rotation(previous, snapshot, state.rounds[-1] if state.rounds else None)
         retired_archive = self._retired_inputs(previous)
         if self.params.rotation_rule == "info":
             previous_ledger = dict(previous.ledger if previous else {})
@@ -298,10 +460,14 @@ class PoolRuntime:
         else:
             previous_ledger = previous.ledger if previous else {}
             rotate_rule = rotate
+        if reload_reserve:
+            self._reload_at_open()
+        reserve = self._rule_reserve()
         decision = rotate_rule(round_id, a_prev, snapshot, previous_ledger, reserve, self.params,
                                initial_size=len(self.initial_ids), retired_archive=retired_archive,
                                source_snapshot_id=snapshot.get("snapshot_id", ""),
                                prev_state_sha=state.rotation_state_sha if previous and previous.rule_version != INFO_RULE_VERSION else previous.digest() if previous else "",
+                               **({"allow_unscored_previous": unscored} if self.params.rotation_rule == "info" else {}),
                                **({"initial_candidate_meta": self.candidate_meta, "initial_retired_ledger": previous.retired_ledger}
                                   if self.params.rotation_rule == "info" and previous and previous.rule_version != INFO_RULE_VERSION else {}))
         if self.params.rotation_rule == "info":
@@ -329,6 +495,9 @@ class PoolRuntime:
         if decision.rule_version == INFO_RULE_VERSION:
             decision = Rotation.from_dict(decision.to_dict() | {"opened_at": opened_at})
         active_file(self.store, decision, self.catalog)
+        root = Path(self.root or reserve_dir())
+        if decision.reserve_manifest_sha != sha256_hex((root / "MANIFEST.jsonl").read_bytes()):
+            raise VerifyError("reserve changed between rotation decision and publication")
         mirror_reserve(self.store, self.root)
         self._publish_retired_local(decision)
         block = decision.journal_block()
@@ -384,10 +553,14 @@ def replay_rotation(store: ObjectStore, round_id: str, snapshot: Mapping[str, An
         previous_ledger.update(expected.initial_retired_ledger)
         if not reserve.candidate_meta and expected.initial_candidate_meta:
             reserve = Reserve.from_dict(history | {"candidate_meta": expected.initial_candidate_meta})
+    unscored = False
+    if expected.rule_version == INFO_RULE_VERSION and previous and set(source["tasks"]) != set(previous.active_ids):
+        unscored = unscored_rotation(previous, source, json.loads(store.get(layout.round_file(previous.round_id))))
     actual = rotate_rule(round_id, previous.active_ids if previous else load_active(store, expected.initial_active_sha),
                          source, previous_ledger, reserve, params,
                          initial_size=len(load_active(store, expected.initial_active_sha)) if previous is None else len(previous.active_ids),
                          retired_archive=archive, source_snapshot_id=expected.source_snapshot_id, prev_state_sha=expected.prev_state_sha,
+                         **({"allow_unscored_previous": unscored} if expected.rule_version == INFO_RULE_VERSION else {}),
                          **({"initial_candidate_meta": expected.initial_candidate_meta or None,
                              "initial_retired_ledger": expected.initial_retired_ledger or None}
                             if expected.rule_version == INFO_RULE_VERSION else {}))
