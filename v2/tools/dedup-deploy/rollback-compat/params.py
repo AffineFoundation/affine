@@ -22,16 +22,16 @@ from .errors import BatchRejected, ConfigError
 
 # BEGIN GENERATED RELEASE PINS (repin.py)
 DEDUP_FIELDS = {
-    'train_seed_scope': 'round',
-    'dedup_enabled': True,
-    'dedup_rollout_overlap': 0.5,
-    'dedup_cos_shared_seed': 0.135,
-    'dedup_cos_own_seed': 0.002,
-    'min_signal_rollouts': 1,
-    'min_step_norm': 0.0,
-    'z_bar': 1.5,
-    'eval_merged': True,
+    "train_seed_scope": "round",
+    "dedup_enabled": True,
+    "dedup_rollout_overlap": 0.5,
+    "dedup_cos_shared_seed": 0.135,
+    "dedup_cos_own_seed": 0.002,
+    "min_signal_rollouts": 1,
+    "min_step_norm": 0.0,
+    "eval_merged": True,
 }
+RELEASE_FIELDS = DEDUP_FIELDS | {"z_bar": 1.5}
 REVIEWED_OLD_PARAMS_HASH = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"
 REVIEWED_OLD_CODE_DIGEST = "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47"
 HISTORICAL_NEW_PARAMS_HASH = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
@@ -390,19 +390,18 @@ class Params(Record):
         if not isinstance(data, Mapping):
             raise ConfigError("Params must be a JSON object")
         unknown = set(data) - {f.name for f in dataclasses.fields(cls)}
-        if set(data) & set(DEDUP_FIELDS) and unknown:
+        if set(data) & (set(RELEASE_FIELDS) | NEW_PARAMS_ONLY_FIELDS) and unknown:
+            if not unknown <= set(RELEASE_FIELDS) | NEW_PARAMS_ONLY_FIELDS:
+                return super().from_dict(data)
             params_hash = digest(data)
             if params_hash not in REVIEWED_NEW_PARAMS_HASHES:
-                raise ConfigError("historical params are not a reviewed dedup pin")
+                raise ConfigError("historical params are not a reviewed dedup or field-gate pin")
             if data.get("recipe", {}).get("code_digest") != REVIEWED_NEW_CODE_DIGESTS[params_hash]:
-                # Each reviewed release pins its own merged-evaluation worker code.
                 raise ConfigError("rollback compatibility accepts only the reviewed combined worker recipe")
-            if not unknown <= set(DEDUP_FIELDS) | NEW_PARAMS_ONLY_FIELDS:
-                raise ConfigError(f"historical params have unreviewed new fields: {sorted(unknown)}")
-            if {name: data[name] for name in DEDUP_FIELDS} != DEDUP_FIELDS:
+            if {name: data.get(name) for name in DEDUP_FIELDS} != DEDUP_FIELDS:
                 raise ConfigError("rollback compatibility accepts only the reviewed dedup parameter values")
             data = {key: value for key, value in data.items()
-                    if key not in DEDUP_FIELDS and key not in NEW_PARAMS_ONLY_FIELDS}
+                    if key not in RELEASE_FIELDS and key not in NEW_PARAMS_ONLY_FIELDS}
             # Historical replay exposes the old worker identity too. The full
             # combined pin above authorizes this translation; the journal bytes
             # themselves remain untouched and native release readers still see

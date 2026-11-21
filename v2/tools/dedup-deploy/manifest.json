@@ -3,11 +3,11 @@
     "rollback-compat/__init__.py": "8168ef96a2c7860323cfc17514d4f51403188079321a673c8042e02f452e04c1",
     "rollback-compat/canonical.py": "4618f09f4b5f11768b9d204afc3bdb35cdcf6acfff0f7f4401477104bce9cec3",
     "rollback-compat/controller.py": "905d0975e3587d9c06299b35190c3c4fd15c59fffbac4defba96218673010533",
-    "rollback-compat/dedup_compat.py": "fdeefef7832836354316e75ef19b9768fc9dc8c6ad8bc3501ed5902601a6de3c",
+    "rollback-compat/dedup_compat.py": "14795f1666d3c1fde598af903bedd09b165948b360fa4f78665f9b10e9e9f126",
     "rollback-compat/journal.py": "647843a03d044aa9bcf6a3903b8d211c977b4b1fb2690114addd96efcd3c5a66",
-    "rollback-compat/params.py": "ab95202f28ed79b2da599e08978ddbaea84435134712f83aa49d753415e2ab20",
+    "rollback-compat/params.py": "b9659f5ab648e2b1c24d8aa80f9b7ba56d0e71f12564bf1e1e61bd2b6bdbcd43",
     "rollback-compat/state.py": "46c6ca7dd93af02dfe1ccbf1b53251f8685d93760be04fc2793df6e4bde07819",
-    "rollback-compat/types.py": "25ebe6ec7ac957fba78e1428ccd45e8186cfe4c996cca70947be0ad2a43db8da"
+    "rollback-compat/types.py": "c90151b79716f43f5c5650525c0014d98318a3652e57eaccfd7b51bc27c15e6d"
   },
   "old_commit": "c525286580c84d795b3ca7cbdf2302e96fce31ba",
   "old_gpu_digest": "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47",

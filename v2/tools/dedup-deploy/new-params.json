@@ -7,6 +7,7 @@
   "calibration_tol": 0.003,
   "cap_hit_floor": 0.33,
   "cap_hit_margin": 0.02,
+  "crown_gate": "field_median",
   "dedup_cos_own_seed": 0.002,
   "dedup_cos_shared_seed": 0.135,
   "dedup_enabled": true,
@@ -60,7 +61,7 @@
   "reasoning_token_share": 0.5,
   "recipe": {
     "alpha": 32.0,
-    "code_digest": "07e946950889a1dfc9d8e59ce6b98fd955e2729b6ecf3b25912bf5660f556fda",
+    "code_digest": "22b2d191b32e394d4621ce477e702b50410a6ef7706cce6cfd20c60ff64e42e1",
     "derail_tail": 64,
     "derail_threshold": -3.0,
     "derail_window": 32,
@@ -201,5 +202,6 @@
   "train_time_budget_s": 2400,
   "weights_cadence_s": 3600,
   "weights_rate_limit_blocks": 100,
-  "z_bar": 1.5
+  "z_bar": 0.0,
+  "z_field_bar": 1.0
 }
