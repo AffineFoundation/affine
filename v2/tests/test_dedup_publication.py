@@ -49,6 +49,7 @@ def test_duplicate_and_null_publication_and_check_pair(tmp_path):
         "intersection size / the size of the smaller set",
         "greedy priority is (first_seen, queue_pos)",
         "past winner always keeps its position",
+        "Reusing a past winner's rollouts counts as a duplicate even from the same hotkey: a king resubmitting >= dedup_rollout_overlap of its own already-applied rollouts is dropped as `past_king_rollout`, or `past_king_exact` for the same batch bytes.",
         "cosine >= 0.135 (`dedup_cos_shared_seed`)",
         "threshold is 0.002 (`dedup_cos_own_seed`)",
         "Regenerated or rewritten rollouts are new evidence, not an exemption",
