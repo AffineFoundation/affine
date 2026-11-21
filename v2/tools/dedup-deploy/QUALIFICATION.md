@@ -237,7 +237,12 @@ ROLLBACK QUALIFICATION PASS: unmodified old loop uses the compatibility executab
 
 The replay assertion explicitly checks `state.params.z_bar == 1.0` after the
 reviewed z=1.5 history is decoded. This is working-kit development evidence;
-the final committed-kit rerun is still required. **Bare `c5252865` cannot
+the committed-kit rerun at `a8f5b5dcdaac2421c44b7ac399d40f0798874f54`
+also completed with exit 0. Its log is
+`/home/bb/scratch/dedup-z15-rollback-final.log`; its fixture journal SHA-256
+is `69fb00a5eca85f7fc4286dbe761e5a443d82440d4df8518765fb4c5c41e7a0dc`.
+It emitted the same six PASS lines above against the reviewed `8543962a…`
+history. **Bare `c5252865` cannot
 replay dedup history.** Rollback is code-first: finish open work under new
 code, check out `c5252865`, apply the complete old `bba7a409…` params through
 the hashed compatibility loader, and start exactly one old-code loop. Sealed
@@ -320,8 +325,16 @@ params identity.
 
 ## Final committed-kit qualification
 
-Pending at this source revision: clean normal and abort-after-open rehearsals,
-final rollback qualification, exact kit HEAD and every kit-file SHA-256.
+The z=1.5 normal development rehearsal completed with exit 0 and emitted
+`DRY DEVELOPMENT COMPLETE: real run/gate/apply/public/health; no final PASS`.
+Its health was 2,000 scored tasks, one duplicate, one charged null update,
+zero admission cuts, no lease failures, and a clean `r000093` second open.
+Its log is `/home/bb/scratch/dedup-z15-development-normal-v1.log`. This is
+fixture development evidence, not a final committed-kit PASS.
+
+Committed-kit rollback qualification is complete at `a8f5b5dc`, as recorded
+above. Pending at this source revision: clean normal and abort-after-open
+rehearsals, exact final kit HEAD and every kit-file SHA-256.
 Final rehearsal must compare the complete recursive 24-file kit and run without
 `DEDUP_DRY_DEVELOPMENT=1`. Only verbatim output from those runs may be added
 here or reported as final PASS evidence.
