@@ -71,10 +71,14 @@ pass.
 ## Replay and synthetic evidence
 
 - Historical report: `/home/bb/scratch/kingx2-genfeed-rebase/tests-agent/history-final/history.json`
-  (log: `history-final.log`). The old r000001-r000081 snapshot passed the
-  available-input identity checker: all 81 public draws, public entry fields,
-  public score fields and round metadata matched, along with 33 public winner
-  decisions, 14 rotations and the fully reconstructible r027 IRT update.
+  (log: `history-final.log`; report SHA-256
+  `747ffb01f47fb6b60f9cec05260e092248545d15d904807789e5f104dcd69329`).
+  The old r000001-r000081 snapshot passed the available-input identity checker
+  against its original historical round artifacts and params (the report's
+  `base_commit` labels that old snapshot, not this rebase's implementation
+  parent): all 81 public draws, public entry fields, public score fields and
+  round metadata matched, along with 33 public winner decisions, 14 rotations
+  and the fully reconstructible r027 IRT update.
   Sixty-nine rounds lack private scored-LoRA outcomes needed for complete IRT
   recomputation. No standalone score artifacts exist; score fields in
   `round.json` were compared instead. This is not complete private decision/IRT
