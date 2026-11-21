@@ -82,6 +82,18 @@ def upload_affine(world, hotkey, raw, quality):
                                         if world.store.exists(layout.miner_object(key)) else None)
 
 
+def incident_identity(value):
+    """Label the terminal real-controller round with the incident's identifiers."""
+    if isinstance(value, dict):
+        return {key: incident_identity(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [incident_identity(item) for item in value]
+    if isinstance(value, str):
+        if value.startswith("r") and value[1:7].isdigit():
+            return "r000092" + value[7:]
+    return value
+
+
 def lora_bytes(value: float, rank: int) -> bytes:
     """A valid rank-by-1 / 1-by-rank update in the recipe's declared rank."""
     header = json.dumps({
@@ -362,6 +374,53 @@ def main() -> int:
     lease = settled.leases[0]
     sealed = world.store.get(f"qualification/sealed/{settled.round_id}/{lease.lease_id}.json")
     assert b'"step_norm_nonfinite":"nan"' in sealed and b'"norm_before_cap_nonfinite":"inf"' in sealed
+    preincident_journal = (root / "journal.jsonl").read_bytes()
+    # A pre-scoring dedup infrastructure failure has no settlement or duplicate
+    # charge. It closes exactly like the old controller's no_decision: all seats
+    # return uncharged, no king changes, and every close accounting list is empty.
+    for uid in range(11, 17):
+        world.register(uid, None)
+    world.admission._read = lambda hotkey: valid_affine_read(world, hotkey)
+    for uid in range(11, 17):
+        raw = affine_batch(f"hk{uid}", [(f"independent-infra-{uid}-{i}", float(i % 2)) for i in range(128)])
+        world.store.put(layout.miner_object(f"hk{uid}"), raw)
+    tickets = world.controller.open_round(world.clock(), "infra-no-decision")
+    assert len(tickets) == 1 and len(tickets[0].entries) == 6
+    world.controller.fail_lease(tickets[0].lease_id, "InfraError: GPUs [4] are still in use; evaluation must not start", world.clock())
+    infra = world.controller.state.rounds[-1]
+    assert infra.outcome == "no_decision" and infra.decision is None and not infra.duplicate_decisions
+    assert world.controller.state.round is None
+    incident_queue = set(world.controller.state.queue)
+    assert len(incident_queue) == 6 and all(item.front for item in world.controller.state.queue.values())
+    from sn120_v2.journal import JournalRecord, read_journal
+    incident_tail = [row for row in read_journal(root / "journal.jsonl") if row.data.get("round_id") == infra.round_id
+                     or row.data.get("round", {}).get("round_id") == infra.round_id]
+    assert [row.kind for row in incident_tail] == ["round_opened", "lease_failed", "round_closed"]
+    assert all(not incident_tail[-1].data[name] for name in ("served", "front", "attempted", "held", "released"))
+    # Keep a complete replayable copy whose terminal identifiers and sequence
+    # numbers reproduce the incident. Synthetic leader records pad the prefix;
+    # no economic state is added or changed by that padding.
+    incident_root = root / "incident-seq601-603"
+    incident_root.mkdir()
+    incident_path = incident_root / "journal.jsonl"
+    prefix = list(read_journal(root / "journal.jsonl")[:-3])
+    while len(prefix) < 601:
+        row = JournalRecord(len(prefix), prefix[-1].fence, prefix[-1].at, "leader",
+                            {"owner": "synthetic-seq-padding"}, prefix[-1].checksum)
+        prefix.append(row)
+    incident_path.write_bytes(b"".join(row.line() + b"\n" for row in prefix))
+    with incident_path.open("ab") as handle:
+        previous = prefix[-1]
+        for offset, row in enumerate(incident_tail):
+            relabeled = dataclasses.replace(row, seq=601 + offset, data=incident_identity(row.data), prev=previous.checksum)
+            handle.write(relabeled.line() + b"\n")
+            previous = relabeled
+    assert [(row.seq, row.kind) for row in read_journal(incident_path)[-3:]] == [
+        (601, "round_opened"), (602, "lease_failed"), (603, "round_closed")]
+    from sn120_v2.state import replay
+    incident_state = replay(read_journal(incident_path))
+    assert incident_state.rounds[-1].round_id == "r000092" and incident_state.round is None
+
     # Additional old-code-only proof inputs: a valid open round on the current
     # head, then a decided-but-unclosed copy. Neither is ever run under old code.
     from sn120_v2.journal import Journal, read_journal
@@ -370,7 +429,7 @@ def main() -> int:
     import shutil
     open_root = root / "open-undecided"
     open_root.mkdir()
-    shutil.copyfile(root / "journal.jsonl", open_root / "journal.jsonl")
+    (open_root / "journal.jsonl").write_bytes(preincident_journal)
     probe = SimWorld(open_root, sim_params())
     for uid in (9, 10):
         probe.register(uid, 0.2)
@@ -397,6 +456,9 @@ def main() -> int:
         "journal_sha256": sha256_hex((root / "journal.jsonl").read_bytes()),
         "records": world.controller.state.last_seq + 1,
         "failed_lease": failed.round_id,
+        "infra_no_decision": infra.round_id,
+        "infra_lease_id": tickets[0].lease_id,
+        "infra_queue": sorted(incident_queue),
         "duplicate_only": duplicate_only.round_id,
         "settled_null_stage_b": settled.round_id,
         "queue": sorted(world.controller.state.queue),

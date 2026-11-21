@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
@@ -74,7 +75,8 @@ def main() -> int:
                     str(new_v2), str(KIT / "make-rollback-fixture.py"), str(fixture)],
                    cwd=new_v2.parent, env=env, check=True, timeout=900)
     summary = json.loads((fixture / "fixture.json").read_text())
-    assert summary["synthetic"] and summary["params_hash"] == NEW_PIN and not summary["queue"]
+    assert summary["synthetic"] and summary["params_hash"] == NEW_PIN
+    assert set(map(tuple, summary["queue"])) == set(map(tuple, summary["infra_queue"]))
     out("real new-controller fixture: failed lease, duplicate-only, null-update, Stage-B duplicate, sealed nonfinite evidence")
 
     # Read-only full-history compatibility replay, with exact queue accounting.
@@ -88,7 +90,37 @@ def main() -> int:
     from sn120_v2 import layout
     from sn120_v2.store import LocalStore
     from sn120_v2.types import TrainReport
-    rows = read_journal(fixture / "journal.jsonl")
+    incident_rows = read_journal(fixture / "incident-seq601-603/journal.jsonl")[-3:]
+    assert [(row.seq, row.kind) for row in incident_rows] == [(601, "round_opened"), (602, "lease_failed"), (603, "round_closed")]
+    assert incident_rows[0].data["round"]["round_id"] == "r000092"
+    assert incident_rows[0].data["round"]["params_hash"] == NEW_PIN
+    assert incident_rows[1].data["lease_id"] == "r000092-l0"
+    assert incident_rows[1].data["reason"].startswith("InfraError: GPUs [4]")
+    assert incident_rows[2].data["outcome"] == "no_decision"
+    assert all(not incident_rows[2].data[name] for name in ("served", "front", "attempted", "held", "released"))
+    incident_state = replay(read_journal(fixture / "incident-seq601-603/journal.jsonl"))
+    assert incident_state.round is None and incident_state.rounds[-1].round_id == "r000092"
+    assert incident_state.rounds[-1].decision is None and all(king.round_id != "r000092" for king in incident_state.kings)
+    out("real new-controller seq601-603 tail: r000092-l0 InfraError, no settlement, no charge, no king")
+
+    # This exception is not a blanket acceptance of unsettled no_decision closes.
+    from dataclasses import replace
+    for field, value in (("reason", "synthetic non-infrastructure failure"), ("served", [[99, 1099, "not-charged"]])):
+        damaged = replace(incident_rows[-1], data=incident_rows[-1].data | {field: value})
+        try:
+            require_closed_dedup_history([*read_journal(fixture / "incident-seq601-603/journal.jsonl")[:-1], damaged], incident_state)
+        except Exception as error:
+            assert "closes without exactly one valid decision" in str(error), error
+        else:
+            raise AssertionError(f"unsettled close with changed {field} was accepted")
+    try:
+        require_closed_dedup_history([*read_journal(fixture / "incident-seq601-603/journal.jsonl"), incident_rows[-1]], incident_state)
+    except Exception as error:
+        assert "closes without exactly one valid decision" in str(error), error
+    else:
+        raise AssertionError("a duplicate infrastructure close was accepted")
+    out("unsettled no_decision without InfraError, with accounting, or with a duplicate close still refuses")
+    rows = read_journal(fixture / "incident-seq601-603/journal.jsonl")
     state = replay(rows)
     require_closed_dedup_history(rows, state)
     assert state.params.params_hash == OLD_PIN and state.round is None and state.params.z_bar == 1.0
@@ -107,13 +139,22 @@ def main() -> int:
     assert set(at_failure.served_regs) == {(2, 1002)}
     assert set(at_failure.queue) == {(1, 1001), (3, 1003)}
     charged = {(entry.uid, entry.registration_block) for record in state.rounds
-               for entry in record.decision.entries if entry.charged}
+               for entry in (record.decision.entries if record.decision else ()) if entry.charged}
     assert state.served_regs == charged and len(charged) == 8, {"served": sorted(state.served_regs), "charged": sorted(charged)}
-    assert not state.queue, "later synthetic rounds consumed the returned genuine seats"
+    assert set(state.queue) == set(map(tuple, summary["infra_queue"]))
     assert {(1, 1001), (2, 1002), (3, 1003)} <= state.served_regs
     assert (4, 1004) in state.served_regs and (5, 1005) in state.served_regs
     assert (6, 1006) in state.served_regs and (8, 1008) in state.served_regs
     assert by_id[summary["duplicate_only"]].leases == ()
+    infra = by_id["r000092"]
+    assert infra.outcome == "no_decision" and infra.decision is None and not infra.duplicate_decisions
+    incident_tail = [row for row in rows if row.data.get("round_id") == infra.round_id
+                     or row.data.get("round", {}).get("round_id") == infra.round_id]
+    assert [row.kind for row in incident_tail] == ["round_opened", "lease_failed", "round_closed"]
+    assert all(not incident_tail[-1].data[name] for name in ("served", "front", "attempted", "held", "released"))
+    assert not any((entry.reg.uid, entry.reg.registration_block) in state.served_regs
+                   for lease in infra.leases for entry in lease.entries)
+    out("unsettled dedup infrastructure no_decision returns every seat uncharged, with no king or settlement")
     settled = by_id[summary["settled_null_stage_b"]]
     assert [entry.status for entry in settled.decision.entries] == ["null_update", "winner", "duplicate"]
     sealed_key = f"qualification/sealed/{settled.round_id}/{settled.leases[0].lease_id}.json"
@@ -180,7 +221,7 @@ else: raise AssertionError(mode)
         raise AssertionError("a different dedup pin was accepted")
     repin = output / "repin"
     repin.mkdir()
-    shutil.copyfile(fixture / "journal.jsonl", repin / "journal.jsonl")
+    shutil.copyfile(fixture / "incident-seq601-603/journal.jsonl", repin / "journal.jsonl")
     helper = output / "loop_helper.py"
     helper.write_text('''import os
 from sn120_v2.controller import Stack
@@ -322,6 +363,8 @@ print(json.dumps({"native_release_read":True,"compatibility_overlay":False,
     loop_work.mkdir()
     loop_store = output / "loop-store"
     loop_store.mkdir()
+    # The isolated store has no executable miner inputs. Missing files must leave
+    # this bounded run IDLE rather than ask the NoWorkRunner for a new round.
     loop_env = old_env | {
         "DEDUP_OLD_V2": str(old_v2), "DEDUP_ROLLBACK_PY": args.python,
         "DEDUP_LOOP_STORE": str(loop_store), "PYTHONPATH": f"{output}:{old_v2}",
@@ -334,9 +377,18 @@ print(json.dumps({"native_release_read":True,"compatibility_overlay":False,
         raise AssertionError(completed.stderr[-4000:] + completed.stdout[-4000:])
     runlog = (loop_work / "logs/run.log").read_text()
     assert runlog.count("run-loop: loop started") == 1, runlog
-    assert json.loads(status.stdout)["params_hash"] == OLD_PIN
+    summaries = [json.loads(match.group(0)) for match in re.finditer(r"(?ms)^\{\n.*?^\}$", runlog)]
+    assert summaries, runlog[-4000:]
+    run_summary = summaries[-1]
+    assert run_summary["phase"] == "IDLE" and run_summary["params_hash"] == OLD_PIN, run_summary
+    assert run_summary["last_outcomes"][-1] == "no_decision", run_summary
+    final_status = subprocess.run([str(KIT / "rollback-python"), "status", "--state-dir", str(loop_state)], cwd=old_v2.parent,
+                                  env=old_env | {"DEDUP_OLD_V2": str(old_v2), "DEDUP_ROLLBACK_PY": args.python},
+                                  capture_output=True, text=True, timeout=90)
+    assert final_status.returncode == 0, final_status.stderr
+    assert json.loads(final_status.stdout)["params_hash"] == OLD_PIN
     assert not (loop_state / "journal.jsonl").is_symlink()
-    out("unmodified old loop uses the compatibility executable and exits after exactly one bounded start")
+    out("old end-round/run starts after r000092: bounded run is IDLE at bba7a409; no new round or worker execution")
     (output / "qualification.json").write_text(json.dumps({
         "synthetic": True, "new_params_hash": NEW_PIN, "old_params_hash": OLD_PIN,
         "old_v2": str(old_v2), "journal_sha256": sha(fixture / "journal.jsonl"),

@@ -12,7 +12,7 @@ from typing import Iterable
 from .errors import JournalCorrupt, V2Error
 from .journal import JournalRecord
 from .params import DEDUP_FIELDS, REVIEWED_NEW_PARAMS_HASH, Params
-from .state import ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED, State
+from .state import LEASE_FAILED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED, State
 
 
 def _bad(message: str) -> None:
@@ -57,6 +57,7 @@ def require_closed_dedup_history(records: Iterable[JournalRecord], state: State)
         )
     opened = {}
     settlements = {}
+    failures = {}
     closes = {}
     for row in records:
         if row.kind == ROUND_OPENED:
@@ -73,6 +74,11 @@ def require_closed_dedup_history(records: Iterable[JournalRecord], state: State)
                 decision = row.data.get("decision", {})
                 _validate_settlement(opened[round_id], decision, row.data.get("results"))
                 settlements[round_id] = decision
+        elif row.kind == LEASE_FAILED:
+            round_id = row.data.get("round_id")
+            if round_id in opened:
+                if row.data.get("reason", "").startswith("InfraError:"):
+                    failures.setdefault(round_id, {})[row.data.get("lease_id")] = row.data.get("reason")
         elif row.kind == ROUND_CLOSED:
             round_id = row.data.get("round_id")
             if round_id in opened:
@@ -82,14 +88,23 @@ def require_closed_dedup_history(records: Iterable[JournalRecord], state: State)
                 if round_id not in settlements and isinstance(record.get("decision"), dict):
                     _validate_settlement(record, record["decision"], None)
                     settlements[round_id] = record["decision"]
-                if round_id in closes or round_id not in settlements:
+                if round_id in closes:
                     _bad(f"{round_id} closes without exactly one valid decision")
+                if round_id not in settlements:
+                    failed = failures.get(round_id, {})
+                    lease_ids = {lease["lease_id"] for lease in record["leases"]}
+                    if not (record.get("decision") is None and not record.get("duplicate_decisions")
+                            and lease_ids and lease_ids == set(failed)
+                            and row.data.get("outcome") == "no_decision"
+                            and row.data.get("reason") in failed.values()
+                            and all(not row.data.get(name) for name in ("served", "front", "attempted", "held", "released"))):
+                        _bad(f"{round_id} closes without exactly one valid decision")
                 closes[round_id] = row.data
     for round_id, record in opened.items():
         if round_id not in closes:
             # A decided-but-not-closed round must also finish with new code.
             continue
-        entries = settlements[round_id]["entries"]
+        entries = settlements.get(round_id, {}).get("entries", [])
         outcome = closes[round_id].get("outcome")
         expected_served = sorted(
             (entry["uid"], entry["registration_block"], entry["hotkey"])
