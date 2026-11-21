@@ -79,7 +79,7 @@ def install(kit: Path) -> None:
     # after mirror catch-up and under the writer lock, so even a refusal leaves
     # both local and durable journals byte-identical.
     from sn120_v2.journal import Journal
-    from sn120_v2.params import REVIEWED_NEW_PARAMS_HASH
+    from sn120_v2.params import REVIEWED_NEW_PARAMS_HASHES
     from sn120_v2.state import replay
     original = Journal.__init__
 
@@ -98,8 +98,8 @@ def install(kit: Path) -> None:
                 handle.truncate(covered)
                 journal._size = covered
                 journal.fence = (journal.records[-1].fence if journal.records else 0) + 1
-                if any(row.kind == "params_set" and row.data.get("params", {}).get("params_hash") == REVIEWED_NEW_PARAMS_HASH
-                       or row.kind == "round_opened" and row.data.get("round", {}).get("params_hash") == REVIEWED_NEW_PARAMS_HASH
+                if any(row.kind == "params_set" and row.data.get("params", {}).get("params_hash") in REVIEWED_NEW_PARAMS_HASHES
+                       or row.kind == "round_opened" and row.data.get("round", {}).get("params_hash") in REVIEWED_NEW_PARAMS_HASHES
                        for row in journal.records):
                     from sn120_v2.dedup_compat import require_closed_dedup_history
                     require_closed_dedup_history(journal.records, replay(journal.records))

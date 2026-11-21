@@ -23,6 +23,7 @@ import tempfile
 KIT = Path(__file__).resolve().parent
 EXPECT = json.loads((KIT / "expect.json").read_text())
 NEW_PIN = EXPECT["new_params_hash"]
+HISTORICAL_PIN = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 OLD_PIN = EXPECT["old_params_hash"]
 
 
@@ -90,31 +91,33 @@ def main() -> int:
     from sn120_v2 import layout
     from sn120_v2.store import LocalStore
     from sn120_v2.types import TrainReport
-    incident_rows = read_journal(fixture / "incident-seq601-603/journal.jsonl")[-3:]
+    all_incident_rows = read_journal(fixture / "incident-seq601-603/journal.jsonl")
+    incident_rows = all_incident_rows[601:604]
     assert [(row.seq, row.kind) for row in incident_rows] == [(601, "round_opened"), (602, "lease_failed"), (603, "round_closed")]
     assert incident_rows[0].data["round"]["round_id"] == "r000092"
-    assert incident_rows[0].data["round"]["params_hash"] == NEW_PIN
+    assert incident_rows[0].data["round"]["params_hash"] == HISTORICAL_PIN
     assert incident_rows[1].data["lease_id"] == "r000092-l0"
     assert incident_rows[1].data["reason"].startswith("InfraError: GPUs [4]")
     assert incident_rows[2].data["outcome"] == "no_decision"
     assert all(not incident_rows[2].data[name] for name in ("served", "front", "attempted", "held", "released"))
-    incident_state = replay(read_journal(fixture / "incident-seq601-603/journal.jsonl"))
-    assert incident_state.round is None and incident_state.rounds[-1].round_id == "r000092"
-    assert incident_state.rounds[-1].decision is None and all(king.round_id != "r000092" for king in incident_state.kings)
-    out("real new-controller seq601-603 tail: r000092-l0 InfraError, no settlement, no charge, no king")
+    incident_state = replay(all_incident_rows)
+    assert incident_state.round is None and incident_state.rounds[-2].round_id == "r000092"
+    assert incident_state.rounds[-2].decision is None and all(king.round_id != "r000092" for king in incident_state.kings)
+    assert incident_state.rounds[-1].round_id == "r000093" and incident_state.rounds[-1].params_hash == NEW_PIN
+    out("real new-controller seq601-603 tail: historical-pin r000092-l0 InfraError, then repaired-pin r000093, no settlement, charge or king")
 
     # This exception is not a blanket acceptance of unsettled no_decision closes.
     from dataclasses import replace
     for field, value in (("reason", "synthetic non-infrastructure failure"), ("served", [[99, 1099, "not-charged"]])):
         damaged = replace(incident_rows[-1], data=incident_rows[-1].data | {field: value})
         try:
-            require_closed_dedup_history([*read_journal(fixture / "incident-seq601-603/journal.jsonl")[:-1], damaged], incident_state)
+            require_closed_dedup_history([*all_incident_rows[:603], damaged], incident_state)
         except Exception as error:
             assert "closes without exactly one valid decision" in str(error), error
         else:
             raise AssertionError(f"unsettled close with changed {field} was accepted")
     try:
-        require_closed_dedup_history([*read_journal(fixture / "incident-seq601-603/journal.jsonl"), incident_rows[-1]], incident_state)
+        require_closed_dedup_history([*all_incident_rows, incident_rows[-1]], incident_state)
     except Exception as error:
         assert "closes without exactly one valid decision" in str(error), error
     else:
@@ -124,7 +127,8 @@ def main() -> int:
     state = replay(rows)
     require_closed_dedup_history(rows, state)
     assert state.params.params_hash == OLD_PIN and state.round is None and state.params.z_bar == 1.0
-    assert any(row.kind == "params_set" and digest_params(row.data.get("params")) == NEW_PIN for row in rows)
+    assert {digest_params(row.data.get("params")) for row in rows if row.kind == "params_set" and row.data["params"].get("dedup_enabled")} == {HISTORICAL_PIN, NEW_PIN}
+    assert {row.data["round"]["params_hash"] for row in rows if row.kind == "round_opened" and row.data["round"]["params_hash"] in (HISTORICAL_PIN, NEW_PIN)} == {HISTORICAL_PIN, NEW_PIN}
     by_id = {record.round_id: record for record in state.rounds}
     failed = by_id[summary["failed_lease"]]
     assert [entry.status for entry in failed.decision.entries] == ["no_decision", "duplicate", "no_decision"]
@@ -247,7 +251,7 @@ def stack(context):
                             env=old_env | {"DEDUP_OLD_V2": str(old_v2), "DEDUP_ROLLBACK_PY": args.python},
                             capture_output=True, text=True, timeout=90)
     assert json.loads(status.stdout)["params_hash"] == OLD_PIN, status.stderr
-    out(f"old-code compatibility CLI re-pins bba7a409 after historical {NEW_PIN[:8]}; unknown/newer params refused")
+    out(f"old-code compatibility CLI re-pins bba7a409 after historical {HISTORICAL_PIN[:8]} and repaired {NEW_PIN[:8]}; unknown/newer params refused")
 
     # The independent validator stays on native release code after this old-code
     # controller rollback. Prove that its journal/weights reader needs no shim:
@@ -263,13 +267,13 @@ from sn120_v2.state import load
 from sn120_v2.store import LocalStore
 from sn120_v2.types import TrainReport
 from sn120_v2.weights_writer import main,read_view
-root=pathlib.Path(sys.argv[2]); old_pin=sys.argv[3]; new_pin=sys.argv[4]
+root=pathlib.Path(sys.argv[2]); old_pin=sys.argv[3]; historical_pin=sys.argv[4]; new_pin=sys.argv[5]
 before=(root/"journal.jsonl").read_bytes()
 rows=read_journal(root/"journal.jsonl")
 history=[r for r in rows if r.kind=="params_set" and r.data["params"].get("dedup_enabled")]
 assert history and all(r.data["params"]["z_bar"]==1.5 and r.data["params"]["eval_merged"] is True for r in history)
 from sn120_v2.params import Params
-assert {Params.from_dict(r.data["params"]).params_hash for r in history}=={new_pin}
+assert {Params.from_dict(r.data["params"]).params_hash for r in history}=={historical_pin,new_pin}
 assert rows[-1].kind=="params_set" and not rows[-1].data["params"].get("dedup_enabled",False)
 state=load(root/"journal.jsonl"); view=read_view(root)
 assert state.params.params_hash==view.params.params_hash==old_pin
@@ -278,7 +282,7 @@ assert state.params.train_seed_scope=="batch" and state.round is None
 assert state.kings and any(e.status=="duplicate" for r in state.rounds for e in r.decision.entries)
 settled=next(r for r in state.rounds if any(e.status=="null_update" for e in r.decision.entries))
 assert any(r.data["round"].get("duplicate_decisions") for r in rows if r.kind=="round_opened")
-store=LocalStore(pathlib.Path(sys.argv[5]))
+store=LocalStore(pathlib.Path(sys.argv[6]))
 raw=json.loads(store.get(f"qualification/sealed/{settled.round_id}/{settled.leases[0].lease_id}.json"))
 report=next(e["lora"]["report"] for e in raw["entries"] if e["lora"]["report"].get("step_norm_nonfinite"))
 assert TrainReport.from_dict(report).step_norm_nonfinite=="nan"
@@ -301,7 +305,7 @@ print(json.dumps({"native_release_read":True,"compatibility_overlay":False,
                   "journal_unchanged":True,"chain_submissions":chain.submissions},sort_keys=True))
 ''')
     native_env = {"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1"}
-    completed = subprocess.run([args.python, "-I", str(native), str(new_v2), str(repin), OLD_PIN, NEW_PIN, str(fixture / "store")],
+    completed = subprocess.run([args.python, "-I", str(native), str(new_v2), str(repin), OLD_PIN, HISTORICAL_PIN, NEW_PIN, str(fixture / "store")],
                                cwd=output, env=native_env, capture_output=True, text=True, timeout=90)
     if completed.returncode:
         raise AssertionError(completed.stderr + completed.stdout)
@@ -390,7 +394,7 @@ print(json.dumps({"native_release_read":True,"compatibility_overlay":False,
     assert not (loop_state / "journal.jsonl").is_symlink()
     out("old end-round/run starts after r000092: bounded run is IDLE at bba7a409; no new round or worker execution")
     (output / "qualification.json").write_text(json.dumps({
-        "synthetic": True, "new_params_hash": NEW_PIN, "old_params_hash": OLD_PIN,
+        "synthetic": True, "historical_params_hash": HISTORICAL_PIN, "new_params_hash": NEW_PIN, "old_params_hash": OLD_PIN,
         "old_v2": str(old_v2), "journal_sha256": sha(fixture / "journal.jsonl"),
         "closed_records": len(state.rounds), "charged_seats": len(state.served_regs),
         "validator_physical_package": True, "validator_runtime_import_shim": False,

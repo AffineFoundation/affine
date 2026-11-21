@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Offline deployment rehearsal. Never uses production services, R2 or secrets.
-# The r000091 boundary and all rounds in this fixture are offline-only.
+# Round identities come from expect.json and exist only in this copied fixture.
 set -euo pipefail
 ROOT=${ROOT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}
-DRY_ROOT=${DRY_ROOT:-/home/bb/scratch/dedup-r091-genfeed}
+DRY_ROOT=${DRY_ROOT:-/home/bb/scratch/dedup-r093-combined-rehearsal}
 D=${D:-$DRY_ROOT/dedup-deploy-dry}
 SRC=${SRC:-/home/bb/scratch/kingx2-public-open-fix-d4f38380-normal/operator-state/journal.jsonl}
 STORE=${STORE:-/home/bb/scratch/kingx2-public-open-fix-d4f38380-normal}
@@ -17,9 +17,12 @@ mkdir -p "$D"/{here,helpers,operator-state,work/logs,watchdog,public,site,reserv
 mkdir -p "$D/generator/inbox" "$D/live-reserve"
 exec > >(tee "$D/dry-run.log") 2>&1
 export PYTHONDONTWRITEBYTECODE=1
-printf '%s DRY ONLY: offline r000091 gate; no production access or writes\n' "$(date -u +%FT%TZ)"
+printf '%s DRY ONLY: offline gate; no production access or writes\n' "$(date -u +%FT%TZ)"
 for path in "$SRC" "$STORE/public/pool/rotation/r000086.json" "$KIT/expect.json"; do [ -f "$path" ] || { echo "missing $path" >&2; exit 64; }; done
 HEAD=$(git -C "$ROOT" rev-parse HEAD)
+read -r NEW GATE HEALTH AFTER < <($PY -I -c 'import json,sys; d=json.load(open(sys.argv[1])); gate=int(d["gate_round"][1:]); health=int(d["first_health_round"][1:]); assert gate+1==health; print(d["new_commit"],d["gate_round"],d["first_health_round"],f"r{health+1:06d}")' "$KIT/expect.json")
+export NEW GATE HEALTH AFTER
+printf '%s DRY ONLY: offline %s gate; no production access or writes\n' "$(date -u +%FT%TZ)" "$GATE"
 if [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=all -- v2/tools/dedup-deploy)" ]; then
     [ "$DEV" = 1 ] || { echo 'kit has uncommitted changes; commit before final rehearsal' >&2; exit 64; }
     echo 'DEVELOPMENT ONLY: working-tree kit; no final qualification PASS will be emitted'
@@ -27,12 +30,12 @@ fi
 BRANCH=$(git -C "$ROOT" symbolic-ref --quiet --short HEAD)
 git clone -q --no-checkout --branch "$BRANCH" "$ROOT" "$D/repo"
 git -C "$D/repo" checkout -q --detach c525286580c84d795b3ca7cbdf2302e96fce31ba
-git -C "$D/repo" merge-base --is-ancestor c525286580c84d795b3ca7cbdf2302e96fce31ba 50afaca32ea982796728a0b07cb6e3c579ef378b
+git -C "$D/repo" merge-base --is-ancestor c525286580c84d795b3ca7cbdf2302e96fce31ba "$NEW"
 # Pre-apply admission validation must never import from the still-old checkout.
 mkdir -p "$D/new-release"
-git -C "$D/repo" archive 50afaca32ea982796728a0b07cb6e3c579ef378b v2/sn120_v2 | tar -x -C "$D/new-release"
+git -C "$D/repo" archive "$NEW" v2/sn120_v2 | tar -x -C "$D/new-release"
 [ "$(git -C "$D/repo" rev-parse HEAD)" = c525286580c84d795b3ca7cbdf2302e96fce31ba ]
-[ "$(git -C "$ROOT" rev-parse 50afaca32ea982796728a0b07cb6e3c579ef378b:v2/sn120_v2/admission.py)" = "$(git -C "$ROOT" hash-object "$D/new-release/v2/sn120_v2/admission.py")" ]
+[ "$(git -C "$ROOT" rev-parse "$NEW:v2/sn120_v2/admission.py")" = "$(git -C "$ROOT" hash-object "$D/new-release/v2/sn120_v2/admission.py")" ]
 if [ "$DEV" = 1 ]; then cp -a "$KIT/." "$D/here/"; else git -C "$D/repo" archive "$HEAD" v2/tools/dedup-deploy | tar -x -C "$D/here" --strip-components=3; fi
 $PY -I -c 'import hashlib,pathlib,sys; a,b=map(pathlib.Path,sys.argv[1:]); left={str(p.relative_to(a)):hashlib.sha256(p.read_bytes()).hexdigest() for p in a.rglob("*") if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("set-params-")}; right={str(p.relative_to(b)):hashlib.sha256(p.read_bytes()).hexdigest() for p in b.rglob("*") if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("set-params-")}; assert left==right,{"missing":sorted(set(right)-set(left)),"added":sorted(set(left)-set(right)),"changed":sorted(k for k in set(left)&set(right) if left[k]!=right[k])}; print("complete recursive kit comparison:",len(right),"files identical")' "$D/here" "$KIT"
 cp "$SRC" "$D/operator-state/journal.jsonl"
@@ -381,6 +384,8 @@ fi
 cat > "$D/helpers/drive.py" <<'PY'
 """A disposable run-loop supervisor; every round is the real CLI run."""
 import json,os,pathlib,subprocess,sys,time
+first_health=os.environ["DEDUP_FIRST_HEALTH"]
+second_open=os.environ["DEDUP_SECOND_OPEN"]
 root=pathlib.Path(sys.argv[1]); state=root/"operator-state"; work=root/"work"; logs=work/"logs"
 pidfile=root/"state-loop.pid"; stop=logs/"run-loop.stop-after-round"; runlog=logs/"run.log"
 def journal_state():
@@ -400,8 +405,8 @@ def run_bounded():
         process=subprocess.Popen(cli,env=env,stdout=out,stderr=subprocess.STDOUT)
         while process.poll() is None:
             state_now=journal_state()
-            if state_now["round"]=="r000092":
-                unexpected.write_text("r000092\n")
+            if state_now["round"]==os.environ["DEDUP_FIRST_HEALTH"]:
+                unexpected.write_text(first_health+"\n")
                 process.terminate()
                 raise RuntimeError("gate stop-after-round opened a successor")
             time.sleep(.03)
@@ -417,31 +422,31 @@ def new_loop():
     deadline=time.monotonic()+1200
     while time.monotonic()<deadline:
         state_now=journal_state()
-        if state_now["round"]=="r000093":
-            print("real new-code run opened r000093; second worker is held",flush=True)
-            (logs/"second-open-observed").write_text("r000093\n")
+        if state_now["round"]==second_open:
+            print(f"real new-code run opened {second_open}; second worker is held",flush=True)
+            (logs/"second-open-observed").write_text(second_open+"\n")
             return process
-        if (os.environ.get("DEDUP_DRY_ABORT_AFTER_OPEN")=="1" and state_now["round"]=="r000092"
+        if (os.environ.get("DEDUP_DRY_ABORT_AFTER_OPEN")=="1" and state_now["round"]==first_health
                 and (logs/"abort-worker-started").exists()):
-            (logs/"abort-open-observed").write_text("r000092\n")
+            (logs/"abort-open-observed").write_text(first_health+"\n")
             process.wait(timeout=30)
             if process.poll() is None: process.kill(); process.wait()
             assert state_now["decided"] is False,state_now
             pidfile.unlink(missing_ok=True)
             with runlog.open("a") as out: out.write("run-loop: isolated crash after open\n")
-            print("undecided-open crash left r000092 open",flush=True)
+            print(f"undecided-open crash left {first_health} open",flush=True)
             return None
         if process.poll() is not None:
             if os.environ.get("DEDUP_DRY_STORE_RESULT_AFTER_OPEN")=="1" or os.environ.get("DEDUP_DRY_DECIDED_OPEN")=="1":
                 code='import json,os,sys;sys.path.insert(0,sys.argv[1]);from sn120_v2.state import load;from sn120_v2.store import LocalStore;from sn120_v2 import layout;s=load(sys.argv[2]);r=s.round;store=LocalStore(os.environ["DEDUP_OBJECT_ROOT"]);print(json.dumps({"round":None if r is None else r.round_id,"decided":r is not None and r.decision is not None,"sealed":[] if r is None else [l.lease_id for l in r.leases if store.exists(layout.sealed_result(r.round_id,l.lease_id))]}))'
                 result=subprocess.run([sys.executable,"-I","-c",code,str(root/"repo/v2"),str(state/"journal.jsonl")],capture_output=True,text=True,check=True,timeout=60)
                 proof=json.loads(result.stdout)
-                assert proof["round"]=="r000092" and proof["sealed"],proof
+                assert proof["round"]==first_health and proof["sealed"],proof
                 decided=os.environ.get("DEDUP_DRY_DECIDED_OPEN")=="1"
                 assert proof["decided"] is decided,proof
                 (logs/("decided-open-proof.json" if decided else "sealed-result-proof.json")).write_text(json.dumps(proof,indent=2)+"\n")
                 pidfile.unlink(missing_ok=True)
-                print(("decided-open" if decided else "sealed-result")+" crash left r000092 open",flush=True)
+                print(("decided-open" if decided else "sealed-result")+f" crash left {first_health} open",flush=True)
                 return None
             raise RuntimeError(f"new run exited early {process.returncode}")
         time.sleep(.05)
@@ -474,7 +479,7 @@ export DEDUP_OBJECT_ROOT="$D" DEDUP_PUBLIC_ROOT="$D/site" DEDUP_WORK_DIR="$D/wor
 export DEDUP_RESERVE_PATH_FILE="$D/reserve-live.path" DEDUP_RESERVE_DIR="$D/live-reserve"
 export DEDUP_GENERATOR_ROOT="$D" DEDUP_GENERATOR_INBOX="$D/generator/inbox" DEDUP_GENERATOR_PID="$D/generator/ingestd.pid" DEDUP_PRIOR_INDEX="$D/generator/prior-index.json"
 export SN120_RESERVE_PATH_FILE="$D/reserve-live.path" SN120_GENERATOR_INBOX="$D/generator/inbox" SN120_GENERATOR_LOG="$D/generator/ingestd.log" SN120_GENERATOR_LOCK="$D/generator/ingestd.lock" SN120_GENERATOR_POLL_S=120 SN120_PUBLIC_URL=http://127.0.0.1:9
-export DEDUP_FIRST_HEALTH=r000092 DEDUP_SECOND_OPEN=r000093 DEDUP_GATE_ROUND=r000091
+export DEDUP_FIRST_HEALTH="$HEALTH" DEDUP_SECOND_OPEN="$AFTER" DEDUP_GATE_ROUND="$GATE"
 # Every no-op-floor fixture is admitted. The selected stored-null seat keeps
 # its waiting queue position and exercises min(minibatches, active rows)=58.
 export DEDUP_DRY_STORED_NULL_POS=3
@@ -495,7 +500,7 @@ SH
 chmod +x "$D/here/set-params"
 export DEDUP_HELPERS="$D/helpers" DEDUP_DRY_SET_PARAMS="$D/here/set-params"
 # Shorten only the isolated publication retry; all production pins stay intact.
-$PY -I -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text()); assert d["new_commit"]=="50afaca32ea982796728a0b07cb6e3c579ef378b"; d["public_retry_seconds"]=int(__import__("os").environ.get("DEDUP_DRY_PUBLIC_SECONDS","8")); p.write_text(json.dumps(d,indent=2,sort_keys=True)+"\n")' "$D/here/expect.json"
+$PY -I -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text()); assert d["new_commit"]==__import__("os").environ["NEW"]; d["public_retry_seconds"]=int(__import__("os").environ.get("DEDUP_DRY_PUBLIC_SECONDS","8")); p.write_text(json.dumps(d,indent=2,sort_keys=True)+"\n")' "$D/here/expect.json"
 $PY -I -c 'import sys;sys.path.insert(0,sys.argv[1]);from sn120_v2.state import load;s=load(sys.argv[2]);assert s.round and s.round.round_id=="r000086" and s.params.batch_cap==6' "$D/repo/v2" "$D/operator-state/journal.jsonl"
 "${OP[@]}" work-dir; "${OP[@]}" loop-count; "${OP[@]}" journal-close r000086 > "$D/entrypoint-journal-close.json"; "${OP[@]}" facts
 $PY -I "$D/helpers/mirror_public.py"
@@ -553,13 +558,13 @@ printf '#!/usr/bin/env bash\nsleep 1200\n' > "$D/work/competitor/genfeed-deploy/
 bash "$D/work/competitor/genfeed-deploy/autodeploy.sh" > "$D/competing.log" 2>&1 & COMPETITOR=$!
 if "${OP[@]}" deployment-guard > "$D/competing-guard.log" 2>&1; then echo 'competing deployment not detected' >&2; exit 1; fi
 grep 'another genfeed/dedup deploy is alive' "$D/competing-guard.log"
-kill -TERM "$COMPETITOR"; wait "$COMPETITOR" 2>/dev/null || true
+kill -TERM "$COMPETITOR" 2>/dev/null || true; wait "$COMPETITOR" 2>/dev/null || true
 
 # Advance copied r86-r90 using real old-code runs. Re-pin the complete old file
 # immediately after r86 closes and before r87 opens.
 run_old(){ "$PY" -I "$D/helpers/cli.py" run --state-dir "$D/operator-state" --stack dry_stack:stack --rounds 1 --max-idle 1 --idle-sleep 0 >> "$D/work/logs/run.log" 2>&1; }
 open_old(){ "$PY" -I "$D/helpers/open_only.py" "$1" >> "$D/work/logs/run.log" 2>&1; }
-printf 'open: round r000091 is open\n' > "$D/work/logs/run.log"
+printf 'open: copied predecessor gate %s is open\n' "$GATE" > "$D/work/logs/run.log"
 run_old
 [ "$("${OP[@]}" journal-open r000087 | "$PY" -I -c 'import json,sys;print(json.load(sys.stdin)["round"] is None)')" = True ]
 DEDUP_OLD_V2="$D/repo/v2" DEDUP_ROLLBACK_PY="$PY" "$D/here/set-params" "$D/here/old-params.json" > "$D/old-repin-before-r87.json"
@@ -568,17 +573,21 @@ open_old r000088; run_old
 open_old r000089; run_old
 open_old r000090; run_old
 open_old r000091
+for round in r000092 r000093 r000094; do
+    if [ "$round" = "$GATE" ]; then break; fi
+    run_old; open_old "$round"
+done
 "${OP[@]}" journal-close r000090 > "$D/dispatch-journal-close.json"
 # These files were not consumed by old-code rounds. New params admit both
 # formerly rejected fixtures; the health round cuts one duplicate and one
 # separately simulated stored null update, not an admission-floor case.
 $PY -I "$D/helpers/synthesize.py" > "$D/synthetic-inputs.json"
-"${OP[@]}" journal-open r000092 > "$D/dispatch-journal-open.json"
+"${OP[@]}" journal-open "$GATE" > "$D/dispatch-journal-open.json"
 
 # The old gate stops through the genuine stop-after-round CLI mechanism.
 $PY -I "$D/helpers/drive.py" "$D" > "$D/driver.log" 2>&1 & DRIVER=$!
 printf '%s\n' "$DRIVER" > "$D/state-loop.pid" "$D/driver.pid"
-export H="$D/here" V2DIR="$D/repo/v2" RUNLOG="$D/work/logs/run.log" STOPF="$D/work/logs/run-loop.stop-after-round" WD="$D/watchdog"
+export H="$D/here" V2DIR="$D/repo/v2" RUNLOG="$D/work/logs/run.log" STOPF="$D/work/logs/run-loop.stop-after-round" WD="$D/watchdog" NEW GATE HEALTH AFTER
 export S=0.002 POLL=1 STOP_WAIT=120 FIRST_OPEN_WAIT=180 HEALTH_WAIT=180
 bash "$D/here/autodeploy" > "$D/autodeploy-outer.log" 2>&1 & DEPLOY=$!
 # Create both distinct offline approvals before releasing the driver's gate
@@ -602,15 +611,15 @@ if [ "${DEDUP_DRY_ABORT_AFTER_OPEN:-0}" = 1 ] || [ "${DEDUP_DRY_STORE_RESULT_AFT
     grep 'public files not healthy' "$D/here/autodeploy.log"
     if [ "${DEDUP_DRY_ABORT_AFTER_OPEN:-0}" = 1 ]; then
         [ -f "$D/work/logs/abort-open-observed" ]
-        grep 'undecided-open crash left r000092 open' "$D/driver.log"
+        grep 'undecided-open crash left '"$HEALTH"' open' "$D/driver.log"
     fi
     if [ "${DEDUP_DRY_STORE_RESULT_AFTER_OPEN:-0}" = 1 ]; then
         [ -f "$D/work/logs/sealed-result-proof.json" ]
-        $PY -I -c 'import json,sys; s=json.load(open(sys.argv[1])); assert s["round"]=="r000092" and s["sealed"] and not s["decided"],s; print("durable sealed result survived before undecided recovery")' "$D/work/logs/sealed-result-proof.json"
+        $PY -I -c 'import json,os,sys; s=json.load(open(sys.argv[1])); assert s["round"]==os.environ["DEDUP_FIRST_HEALTH"] and s["sealed"] and not s["decided"],s; print("durable sealed result survived before undecided recovery")' "$D/work/logs/sealed-result-proof.json"
     fi
     if [ "${DEDUP_DRY_DECIDED_OPEN:-0}" = 1 ]; then
         [ -f "$D/work/logs/decided-open-proof.json" ]
-        $PY -I -c 'import json,sys; s=json.load(open(sys.argv[1])); assert s["round"]=="r000092" and s["sealed"] and s["decided"],s; print("round_settled survived before decided-open recovery")' "$D/work/logs/decided-open-proof.json"
+        $PY -I -c 'import json,os,sys; s=json.load(open(sys.argv[1])); assert s["round"]==os.environ["DEDUP_FIRST_HEALTH"] and s["sealed"] and s["decided"],s; print("round_settled survived before decided-open recovery")' "$D/work/logs/decided-open-proof.json"
     fi
     grep 'reviewed new-code run finished' "$D/here/autodeploy.log"
     grep 'old-code loop started after rollback' "$D/here/autodeploy.log"
@@ -626,9 +635,9 @@ fi
 [ "$RC" = 0 ] || { cat "$D/here/autodeploy.log"; exit "$RC"; }
 grep '^.* PASS: dedup ' "$D/here/autodeploy.log"
 "$D/here/check-preserved"
-[ -f "$D/site/public/rounds/r000092/round.json" ]
+[ -f "$D/site/public/rounds/$HEALTH/round.json" ]
 [ ! -e "$D/site/public/pool/state" ]
-$PY -I -c 'import json,pathlib,sys; root=pathlib.Path(sys.argv[1]); h=json.loads((root/"here/health-r000092.json").read_text()); assert h["ok"],h; assert h["admission_cut_counts"]=={"min_rollouts":0,"null_update":0},h["admission_cut_counts"]; assert h["cut_counts"]["duplicate"]>=1 and h["cut_counts"]["null_update"]>=1 and h["surviving_batches"]>0,h; assert h["eval_wall_s"]==1234; assert (root/"operator-state/journal.jsonl").is_file(); plan=json.loads((root/"synthetic-inputs.json").read_text()); assert plan["admission_rejects"]=={"min_rollouts":0,"null_update":0}; assert plan["new_code_admission_checks"]==["accepted"]*8; print("health evidence verified",h["cut_counts"],h["admission_cut_counts"],"no-op admission fixtures accepted")' "$D"
+$PY -I -c 'import json,os,pathlib,sys; root=pathlib.Path(sys.argv[1]); h=json.loads((root/"here"/("health-"+os.environ["DEDUP_FIRST_HEALTH"]+".json")).read_text()); assert h["ok"],h; assert h["admission_cut_counts"]=={"min_rollouts":0,"null_update":0},h["admission_cut_counts"]; assert h["cut_counts"]["duplicate"]>=1 and h["cut_counts"]["null_update"]>=1 and h["surviving_batches"]>0,h; assert h["eval_wall_s"]==1234; assert (root/"operator-state/journal.jsonl").is_file(); plan=json.loads((root/"synthetic-inputs.json").read_text()); assert plan["admission_rejects"]=={"min_rollouts":0,"null_update":0}; assert plan["new_code_admission_checks"]==["accepted"]*8; print("health evidence verified",h["cut_counts"],h["admission_cut_counts"],"no-op admission fixtures accepted")' "$D"
 touch "$D/work/logs/driver-release"
 wait "$DRIVER"
-if [ "$DEV" = 1 ]; then echo 'DRY DEVELOPMENT COMPLETE: real run/gate/apply/public/health; no final PASS'; else printf '%s DRY AUTODEPLOY PASS: real dedup/no-op-floor/z1.5 run/gate/apply/open/public/health; r000091 boundary was offline-only\n' "$(date -u +%FT%TZ)"; fi
+if [ "$DEV" = 1 ]; then echo 'DRY DEVELOPMENT COMPLETE: real run/gate/apply/public/health; no final PASS'; else printf '%s DRY AUTODEPLOY PASS: real dedup/no-op-floor/z1.5 run/gate/apply/open/public/health; %s boundary was offline-only\n' "$(date -u +%FT%TZ)" "$GATE"; fi

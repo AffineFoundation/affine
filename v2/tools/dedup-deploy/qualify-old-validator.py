@@ -115,10 +115,10 @@ from sn120_v2.state import load
 from sn120_v2.store import LocalStore
 from sn120_v2.types import TrainReport
 root=pathlib.Path(sys.argv[2]); store=pathlib.Path(sys.argv[3])
-old_pin,new_pin=sys.argv[4:6]
+old_pin,historical_pin,new_pin=sys.argv[4:7]
 rows=read_journal(root/"journal.jsonl")
 history=[r for r in rows if r.kind=="params_set" and r.data["params"].get("dedup_enabled")]
-assert history and {digest_params(r.data["params"]) for r in history}=={new_pin}
+assert history and {digest_params(r.data["params"]) for r in history}=={historical_pin,new_pin}
 assert all(r.data["params"]["z_bar"]==1.5 and r.data["params"]["eval_merged"] is True for r in history)
 assert {Params.from_dict(r.data["params"]).params_hash for r in history}=={old_pin}
 state=load(root/"journal.jsonl")
@@ -132,7 +132,8 @@ report=next(e["lora"]["report"] for e in raw["entries"] if e["lora"]["report"].g
 assert TrainReport.from_dict(report).step_norm_nonfinite=="nan"
 print(json.dumps({"kings":len(state.kings),"king_hotkeys":{str(k.uid):k.hotkey for k in state.kings}}))
 ''')
-    details = subprocess.run([args.python, str(detail), str(stage), str(root), str(store), old_pin, new_pin],
+    details = subprocess.run([args.python, str(detail), str(stage), str(root), str(store), old_pin,
+                              "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c", new_pin],
                              cwd=fixture, env=environment | {"PYTHONPATH": str(stage)}, capture_output=True, text=True, timeout=90)
     if details.returncode:
         raise AssertionError(details.stderr + details.stdout)

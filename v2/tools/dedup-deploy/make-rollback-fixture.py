@@ -82,15 +82,16 @@ def upload_affine(world, hotkey, raw, quality):
                                         if world.store.exists(layout.miner_object(key)) else None)
 
 
-def incident_identity(value):
-    """Label the terminal real-controller round with the incident's identifiers."""
+def incident_identity(value, *, incident=None, following=None):
+    """Relabel only the incident and its successor, preserving lease suffixes."""
     if isinstance(value, dict):
-        return {key: incident_identity(item) for key, item in value.items()}
+        return {key: incident_identity(item, incident=incident, following=following) for key, item in value.items()}
     if isinstance(value, list):
-        return [incident_identity(item) for item in value]
+        return [incident_identity(item, incident=incident, following=following) for item in value]
     if isinstance(value, str):
-        if value.startswith("r") and value[1:7].isdigit():
-            return "r000092" + value[7:]
+        for original, label in ((incident, "r000092"), (following, "r000093")):
+            if original and value.startswith(original):
+                return label + value[len(original):]
     return value
 
 
@@ -153,7 +154,10 @@ def main() -> int:
     # The journal carries the exact reviewed production pin. The isolated CPU
     # fixture adapts worker evidence only; it never changes that historical pin.
     full = Params.from_dict(production)
-    assert full.params_hash == "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
+    assert full.params_hash == "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
+    historical = dataclasses.replace(full, recipe=dataclasses.replace(
+        full.recipe, code_digest="28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"))
+    assert historical.params_hash == "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
     world.controller.set_params(full, world.clock())
     world.params = full
     assert world.controller.open_round(world.clock(), "backoff-probe") == []
@@ -384,17 +388,39 @@ def main() -> int:
     for uid in range(11, 17):
         raw = affine_batch(f"hk{uid}", [(f"independent-infra-{uid}-{i}", float(i % 2)) for i in range(128)])
         world.store.put(layout.miner_object(f"hk{uid}"), raw)
+    # r000092 was opened under the incident release's pin, not the repaired pin.
+    world.controller.set_params(historical, world.clock())
+    world.params = historical
+    historical_set = world.controller.journal.records[-1]
+    assert historical_set.kind == "params_set"
     tickets = world.controller.open_round(world.clock(), "infra-no-decision")
     assert len(tickets) == 1 and len(tickets[0].entries) == 6
     world.controller.fail_lease(tickets[0].lease_id, "InfraError: GPUs [4] are still in use; evaluation must not start", world.clock())
     infra = world.controller.state.rounds[-1]
     assert infra.outcome == "no_decision" and infra.decision is None and not infra.duplicate_decisions
     assert world.controller.state.round is None
-    incident_queue = set(world.controller.state.queue)
-    assert len(incident_queue) == 6 and all(item.front for item in world.controller.state.queue.values())
+    # The repaired release then re-pins and opens its next round on the same
+    # immutable history. A second real infrastructure close keeps the bounded
+    # old-code rehearsal idle without introducing synthetic economics.
+    world.controller.set_params(full, world.clock())
+    world.params = full
+    world.now += full.apply_retry_s + 1
+    post_incident_tickets = world.controller.open_round(world.clock(), "post-incident-new-pin")
+    assert len(post_incident_tickets) == 1
+    assert post_incident_tickets[0].params.params_hash == full.params_hash
+    world.controller.fail_lease(post_incident_tickets[0].lease_id,
+                                "InfraError: GPUs [4] are still in use; post-incident rehearsal", world.clock())
+    post_incident = world.controller.state.rounds[-1]
+    assert post_incident.round_id != infra.round_id and post_incident.outcome == "no_decision"
     from sn120_v2.journal import JournalRecord, read_journal
     incident_tail = [row for row in read_journal(root / "journal.jsonl") if row.data.get("round_id") == infra.round_id
                      or row.data.get("round", {}).get("round_id") == infra.round_id]
+    post_incident_tail = [row for row in read_journal(root / "journal.jsonl")
+                          if row.seq > incident_tail[-1].seq]
+    assert [row.kind for row in post_incident_tail] == ["params_set", "round_opened", "lease_failed", "round_closed"]
+    incident_queue = set(world.controller.state.queue)
+    assert len(incident_queue) == 6 and all(item.front for item in world.controller.state.queue.values())
+    assert [row.kind for row in incident_tail] == ["round_opened", "lease_failed", "round_closed"]
     assert [row.kind for row in incident_tail] == ["round_opened", "lease_failed", "round_closed"]
     assert all(not incident_tail[-1].data[name] for name in ("served", "front", "attempted", "held", "released"))
     # Keep a complete replayable copy whose terminal identifiers and sequence
@@ -403,23 +429,28 @@ def main() -> int:
     incident_root = root / "incident-seq601-603"
     incident_root.mkdir()
     incident_path = incident_root / "journal.jsonl"
-    prefix = list(read_journal(root / "journal.jsonl")[:-3])
-    while len(prefix) < 601:
+    prefix = list(read_journal(root / "journal.jsonl")[:historical_set.seq])
+    while len(prefix) < 600:
         row = JournalRecord(len(prefix), prefix[-1].fence, prefix[-1].at, "leader",
                             {"owner": "synthetic-seq-padding"}, prefix[-1].checksum)
         prefix.append(row)
     incident_path.write_bytes(b"".join(row.line() + b"\n" for row in prefix))
     with incident_path.open("ab") as handle:
         previous = prefix[-1]
-        for offset, row in enumerate(incident_tail):
-            relabeled = dataclasses.replace(row, seq=601 + offset, data=incident_identity(row.data), prev=previous.checksum)
+        for offset, row in enumerate([historical_set, *incident_tail, *post_incident_tail]):
+            relabeled = dataclasses.replace(row, seq=600 + offset,
+                                            data=incident_identity(row.data, incident=infra.round_id, following=post_incident.round_id),
+                                            prev=previous.checksum)
             handle.write(relabeled.line() + b"\n")
             previous = relabeled
-    assert [(row.seq, row.kind) for row in read_journal(incident_path)[-3:]] == [
-        (601, "round_opened"), (602, "lease_failed"), (603, "round_closed")]
+    assert [(row.seq, row.kind) for row in read_journal(incident_path)[600:604]] == [
+        (600, "params_set"), (601, "round_opened"), (602, "lease_failed"), (603, "round_closed")]
+    assert read_journal(incident_path)[601].data["round"]["params_hash"] == historical.params_hash
+    assert read_journal(incident_path)[-3].data["round"]["params_hash"] == full.params_hash
     from sn120_v2.state import replay
     incident_state = replay(read_journal(incident_path))
-    assert incident_state.rounds[-1].round_id == "r000092" and incident_state.round is None
+    assert incident_state.rounds[-2].round_id == "r000092" and incident_state.round is None
+    assert incident_state.rounds[-1].params_hash == full.params_hash
 
     # Additional old-code-only proof inputs: a valid open round on the current
     # head, then a decided-but-unclosed copy. Neither is ever run under old code.
@@ -457,6 +488,7 @@ def main() -> int:
         "records": world.controller.state.last_seq + 1,
         "failed_lease": failed.round_id,
         "infra_no_decision": infra.round_id,
+        "post_incident_new_pin": post_incident.round_id,
         "infra_lease_id": tickets[0].lease_id,
         "infra_queue": sorted(incident_queue),
         "duplicate_only": duplicate_only.round_id,

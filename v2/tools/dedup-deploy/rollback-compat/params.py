@@ -37,9 +37,16 @@ DEDUP_FIELDS = {
     "z_bar": 1.5,
     "eval_merged": True,
 }
-REVIEWED_NEW_PARAMS_HASH = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
+HISTORICAL_NEW_PARAMS_HASH = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
+REVIEWED_NEW_PARAMS_HASH = "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
+REVIEWED_NEW_PARAMS_HASHES = frozenset((HISTORICAL_NEW_PARAMS_HASH, REVIEWED_NEW_PARAMS_HASH))
 REVIEWED_OLD_PARAMS_HASH = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"
-REVIEWED_NEW_CODE_DIGEST = "28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"
+HISTORICAL_NEW_CODE_DIGEST = "28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"
+REVIEWED_NEW_CODE_DIGEST = "2f7fd4ecaa8fa26800d8a3f54063d6286d614e309fcdffd9af59bfffeb7824fa"
+REVIEWED_NEW_CODE_DIGESTS = {
+    HISTORICAL_NEW_PARAMS_HASH: HISTORICAL_NEW_CODE_DIGEST,
+    REVIEWED_NEW_PARAMS_HASH: REVIEWED_NEW_CODE_DIGEST,
+}
 REVIEWED_OLD_CODE_DIGEST = "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47"
 
 # Identity of the launch model. The base hash is the manifest digest of the
@@ -385,11 +392,12 @@ class Params(Record):
                 return super().from_dict(data)
             if {name: data[name] for name in DEDUP_FIELDS} != DEDUP_FIELDS:
                 raise ConfigError("rollback compatibility accepts only the reviewed dedup parameter values")
-            if data.get("recipe", {}).get("code_digest") != REVIEWED_NEW_CODE_DIGEST:
-                # The combined release pins its merged-evaluation worker code.
+            params_hash = digest(data)
+            if params_hash not in REVIEWED_NEW_PARAMS_HASHES:
+                raise ConfigError("historical params are not a reviewed dedup pin")
+            if data.get("recipe", {}).get("code_digest") != REVIEWED_NEW_CODE_DIGESTS[params_hash]:
+                # Each reviewed release pins its own merged-evaluation worker code.
                 raise ConfigError("rollback compatibility accepts only the reviewed combined worker recipe")
-            if digest(data) != REVIEWED_NEW_PARAMS_HASH:
-                raise ConfigError("historical params are not the reviewed dedup pin")
             data = {key: value for key, value in data.items() if key not in DEDUP_FIELDS}
             # Historical replay exposes the old worker identity too. The full
             # combined pin above authorizes this translation; the journal bytes

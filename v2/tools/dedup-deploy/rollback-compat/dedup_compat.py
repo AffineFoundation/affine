@@ -11,7 +11,7 @@ from typing import Iterable
 
 from .errors import JournalCorrupt, V2Error
 from .journal import JournalRecord
-from .params import DEDUP_FIELDS, REVIEWED_NEW_PARAMS_HASH, Params
+from .params import DEDUP_FIELDS, REVIEWED_NEW_PARAMS_HASHES, Params
 from .state import LEASE_FAILED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED, State
 
 
@@ -24,11 +24,12 @@ def historical_params(data: dict) -> Params:
     if not isinstance(data, dict):
         _bad("params_set does not contain an object")
     if set(data) & (set(DEDUP_FIELDS) - {"z_bar"}):
-        if digest_params(data) != REVIEWED_NEW_PARAMS_HASH:
+        params_hash = digest_params(data)
+        if params_hash not in REVIEWED_NEW_PARAMS_HASHES:
             _bad("historical params differ from the reviewed dedup pin")
         recipe = data.get("recipe")
-        from .params import REVIEWED_NEW_CODE_DIGEST
-        if not isinstance(recipe, dict) or recipe.get("code_digest") != REVIEWED_NEW_CODE_DIGEST:
+        from .params import REVIEWED_NEW_CODE_DIGESTS
+        if not isinstance(recipe, dict) or recipe.get("code_digest") != REVIEWED_NEW_CODE_DIGESTS[params_hash]:
             _bad("historical params do not pin the reviewed combined worker recipe")
     return Params.from_dict(data)
 
@@ -49,7 +50,7 @@ def require_closed_dedup_history(records: Iterable[JournalRecord], state: State)
     for row in records:
         if row.kind == "params_set":
             historical_params(row.data.get("params"))
-    if state.round is not None and state.round.params_hash == REVIEWED_NEW_PARAMS_HASH:
+    if state.round is not None and state.round.params_hash in REVIEWED_NEW_PARAMS_HASHES:
         stage = "decided" if state.round.decision is not None else "undecided"
         raise V2Error(
             f"rollback blocked: {state.round.round_id} is {stage} under dedup params; "
@@ -62,7 +63,7 @@ def require_closed_dedup_history(records: Iterable[JournalRecord], state: State)
     for row in records:
         if row.kind == ROUND_OPENED:
             record = row.data["round"]
-            if record.get("params_hash") == REVIEWED_NEW_PARAMS_HASH:
+            if record.get("params_hash") in REVIEWED_NEW_PARAMS_HASHES:
                 if record["round_id"] in opened:
                     _bad(f"{record['round_id']} opens twice")
                 opened[record["round_id"]] = record

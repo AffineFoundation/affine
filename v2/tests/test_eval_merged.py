@@ -7,6 +7,7 @@ import json
 import os
 import runpy
 import shutil
+import sys
 import textwrap
 import threading
 from collections import Counter
@@ -27,7 +28,7 @@ from sn120_v2.gpu.merged import assert_fold_matches, build_candidate_base
 from sn120_v2.gpu.resident import hash_tree
 from sn120_v2.gpu.solo import SoloRunner, SoloScheduler, SoloSettings, SoloWorker, choose_claim
 from sn120_v2.sampling import rollout_seed
-from sn120_v2.types import EntryResult, NOT_RUN, NULL_MODEL, PASS, SCORED
+from sn120_v2.types import EntryResult, FAIL, NOT_RUN, NULL_MODEL, PASS, SCORED, WINNER
 
 
 def tiny_model(root: Path, rank: int = 2):
@@ -119,6 +120,49 @@ def _candidate_build_observer(shim: Path, observation: Path, fail: bool) -> None
 def _candidate_tiny(root: Path):
     root.mkdir()
     return tiny_model(root)
+
+
+def _controller_fold_observer(shim: Path, observation: Path) -> None:
+    """Fake the incident GPU's per-PID CUDA context at the real fold boundary."""
+    shim.mkdir()
+    package = Path(__file__).parents[1]
+    (shim / "sitecustomize.py").write_text(textwrap.dedent(f"""
+        import json
+        import os
+        from pathlib import Path
+        import sys
+        sys.path.insert(0, {str(package)!r})
+        from sn120_v2 import fold_kernel
+
+        state_path = Path(os.environ["SN120_TEST_DRIVER_STATE"])
+        driver = json.loads(state_path.read_text())
+        real_fold = fold_kernel.replay_fold
+        def observe(*args, **kwargs):
+            pid = str(os.getpid())
+            # Map the surviving candidate to the incident's GPU 4 driver slot.
+            # The real build and real SoloRunner path are otherwise unchanged.
+            assert kwargs.get("device") == "cuda:4", kwargs
+            record = {{"pid": os.getpid(), "ppid": os.getppid(), "device": "cuda:4"}}
+            Path({str(observation)!r}).write_text(json.dumps(record))
+            driver[pid] = {{"ppid": os.getppid(), "cuda": {{"4": 1316}}}}
+            state_path.write_text(json.dumps(driver, sort_keys=True))
+            kwargs["device"] = "cpu"  # CPU stands in for the driver's arithmetic
+            result = real_fold(*args, **kwargs)
+            # A spawned builder exits and releases its context. The original
+            # inline builder keeps the run PID's context for the GPU guard.
+            if os.environ.get("SN120_TEST_OBSERVE_INLINE") != "1":
+                del driver[pid]
+                state_path.write_text(json.dumps(driver, sort_keys=True))
+            return result
+        fold_kernel.replay_fold = observe
+        """), encoding="utf-8")
+    # The original inline builder executes in the controller/run process. This
+    # is the same test-only driver substitution at the same real fold boundary.
+    if os.environ.get("SN120_TEST_OBSERVE_INLINE") == "1":
+        import sn120_v2.fold_kernel
+        import runpy
+        sys.path.insert(0, str(package))
+        runpy.run_path(str(shim / "sitecustomize.py"))
 
 
 def _candidate_evaluator(tmp_path: Path, build, master: Path, base: Path, lora: Path):
@@ -341,6 +385,200 @@ def test_real_solo_runner_serves_merged_models_and_cleans_round_dirs(build, tmp_
     assert set(tested) <= servers.models_bound
     planned = {(body["model"], body["messages"][-1]["content"], body["seed"]) for _, body in servers.bodies}
     assert len(planned) == 24 * 8
+    assert not (tmp_path / "work" / "merged-candidates" / ticket.round_id).exists()
+
+
+def test_real_controller_merged_lease_has_no_controller_cuda_context(tmp_path, build, monkeypatch):
+    """Real open/train/build/eval/submit, with a PID-accounted fake CUDA driver.
+
+    SN120_TEST_OBSERVE_INLINE=1 runs the same fixture against 50afaca3. Its
+    inline builder leaves this run PID with 1316 MiB and the lease must fail.
+    """
+    import dataclasses as dc
+    import time
+    from sn120_v2 import layout
+    from sn120_v2.canonical import canonical_json, manifest_digest, sha256_hex
+    from sn120_v2.gpu import plan
+    from sn120_v2.gpu.evaluator import ServeSettings, VllmEvaluator
+    from sn120_v2.gpu.procs import wait_gpus_free
+    from sn120_v2.params import Recipe
+    from sn120_v2.sim import sim_params
+    from sn120_v2.sim_head import ChainWorld, tiny_lora
+    from sn120_v2.store import LocalStore
+    from sn120_v2.types import EntryResult, NO_DECISION, TrainReport
+
+    now = int(time.time())
+    params = sim_params(n_min_start=1, n_gpus=5, n_tasks=4, min_scored_tasks=4, batch_cap=6,
+                        looks=(1.0,), null_samples_per_task=1, eval_chunk_tasks=4,
+                        train_seed_scope="round", z_bar=1.5, eval_merged=True,
+                        min_step_norm=0.0, min_signal_rollouts=1, dedup_enabled=True,
+                        dedup_rollout_overlap=0.5, dedup_cos_own_seed=0.002, dedup_cos_shared_seed=0.135,
+                        lease_timeout_s=12000, round_time_limit_s=10800, train_time_budget_s=2400,
+                        recipe=Recipe(rank=2, image_digests=(build.image,)))
+    world = ChainWorld(tmp_path / "world", params, now=now)
+    # Only the synthetic rollout bytes are adapted; admission, freezing,
+    # dedup, ticket construction and controller result sealing stay real.
+    raw = canonical_json({"version": "affine-batch-v3", "hotkey": "hk5", "train": {},
+                          "groups": [{"prompt": f"prompt-{i}", "rollouts": [
+                              {"output": f"independent-{i}", "reward": 0.0},
+                              {"output": f"independent-other-{i}", "reward": 1.0},
+                          ]} for i in range(4)]})
+    raws = {}
+    for uid in range(1, 6):
+        body = json.loads(raw)
+        body["hotkey"] = f"hk{uid}"
+        for group in body["groups"]:
+            for rollout in group["rollouts"]:
+                rollout["output"] = f"uid-{uid}-{rollout['output']}"
+        raws[f"hk{uid}"] = canonical_json(body)
+    raw = raws["hk5"]
+    world.store.put("miners/hk5.json", raw)
+    world.admission._read = lambda hotkey: (raws[hotkey], {"valid": True, "quality": 0.0,
+                                                           "cap_rate": 0.0, "train": {}})
+    for uid in range(1, 6):
+        world.register(uid, None)
+    # Controller open uses its real clock and real 12,000-second lease.
+    tickets = world.controller.open_round(world.clock(), "faithful-merged-lease")
+    assert len(tickets) == 1 and tickets[0].entries[4].batch.batch_sha256 == sha256_hex(raw)
+    ticket = tickets[0]
+    assert ticket.params.params_hash == params.params_hash and ticket.expires_at > now + 5000
+
+    master = world.folder.resident.tree(layout.public_master_prefix(world.head.head.base_fp32_master_digest), world.head.head.base_fp32_master_digest)
+    base = world.folder.resident.tree(layout.public_base_prefix(world.head.head.base_hash), world.head.head.base_hash)
+    rank = params.recipe.rank
+    observer = tmp_path / "observer"
+    observation = tmp_path / "fold-observation.json"
+    driver_path = tmp_path / "driver.json"
+    driver_log = tmp_path / "driver-report.jsonl"
+    driver_path.write_text("{}")
+    monkeypatch.setenv("SN120_TEST_DRIVER_STATE", str(driver_path))
+    monkeypatch.setenv("PYTHONPATH", str(observer))
+    monkeypatch.setenv("SN120_HEAD_PUBLISH", "chain")
+    monkeypatch.setenv("SN120_FOLD_THREADS", "1")
+    monkeypatch.setenv("SN120_FOLD_TWICE", "0")
+    _controller_fold_observer(observer, observation)
+    controller_pid = os.getpid()
+
+    lease_errors = []
+
+    def driver_report():
+        states = json.loads(driver_path.read_text())
+        with driver_log.open("a") as log:
+            log.write(json.dumps({"pid": os.getpid(), "controller": controller_pid,
+                                  "inline": os.environ.get("SN120_TEST_OBSERVE_INLINE"), "states": states}) + "\n")
+        by_gpu = {str(gpu): 6 for gpu in range(8)}
+        for pid, process in states.items():
+            for gpu, memory in process["cuda"].items():
+                # Include the surviving trainer's GPU in the same driver report.
+                by_gpu[str(gpu)] = max(by_gpu[str(gpu)], memory)
+        # Include every process, including the run PID. The free-GPU guard must
+        # see the original inline context rather than having the test hide it.
+        if os.environ.get("SN120_TEST_OBSERVE_INLINE") != "1":
+            for pid, process in states.items():
+                assert pid != str(controller_pid), f"controller retains CUDA: {process}"
+        return "\n".join(f"{gpu}, {used}" for gpu, used in by_gpu.items())
+
+    servers = MergedServers()
+    pool = SimpleNamespace(task=lambda task: SimpleNamespace(messages=lambda: [{"role": "user", "content": task}]))
+    # Keep real generation, grading and paired-delta scoring. Alternate the
+    # null replies so the standard error is estimable; four identical paired
+    # improvements have se=0 and the protocol deliberately assigns them z=0.
+    original_http = servers.http
+
+    task_indexes = {task: index for index, task in enumerate(ticket.draw.task_ids)}
+
+    def improving_http(url, body, timeout_s):
+        reply = original_http(url, body, timeout_s)
+        if url.endswith("/v1/chat/completions"):
+            task_index = task_indexes[body["messages"][-1]["content"]]
+            if body["model"] != NULL_MODEL:
+                reply["choices"][0]["message"]["content"] = "candidate answer"
+            elif task_index % 2:
+                reply["choices"][0]["message"]["content"] = "null wrong answer"
+        return reply
+
+    servers.http = improving_http
+
+    def grade(jobs):
+        return [SimpleNamespace(code=PASS if text in (PASS, "candidate answer") else FAIL, machine_cause=None)
+                for _, text, _ in jobs]
+
+    grader = SimpleNamespace(grade_many=grade, close=lambda: None)
+    evaluator = VllmEvaluator(LocalStore(tmp_path / "eval-store"),
+                              plan.BoxConfig(tmp_path / "work", build.image), pool, grader,
+                              spawn=servers.spawn, http=servers.http,
+                              settings=ServeSettings(start_timeout_s=1, clients_per_server=2),
+                              sleep=lambda _: None, room=lambda sockets, spare: sockets)
+    evaluator.capture = None
+    paths = {ticket.head.base_hash: base, ticket.head.base_fp32_master_digest: master}
+    evaluator.resident = SimpleNamespace(tree=lambda prefix, identity: paths[identity], prune=lambda keep: None)
+    monkeypatch.setattr("sn120_v2.gpu.evaluator.nvidia_smi", driver_report)
+    original_wait = wait_gpus_free
+
+    def record_lease_error(limit, timeout, **kwargs):
+        try:
+            original_wait(limit, timeout, **kwargs)
+        except InfraError as error:
+            lease_errors.append(str(error))
+            raise
+
+    monkeypatch.setattr("sn120_v2.gpu.evaluator.wait_gpus_free", record_lease_error)
+
+    training = threading.Barrier(5)
+
+    def train(request):
+        # Only trainer arithmetic is replaced; SoloRunner owns GPU assignment,
+        # merged construction, evaluation and the returned BoxResult.
+        # Keep all five real training workers in flight, so queue position 4
+        # is genuinely assigned to GPU 4 (the production incident's GPU).
+        training.wait(timeout=10)
+        if request.entry.queue_pos != 4:
+            return EntryResult(request.entry.queue_pos, NO_DECISION, reason="one real candidate is sufficient for the GPU incident fixture")
+        trained_lora = tmp_path / f"trained-lora-{request.entry.queue_pos}"
+        trained_lora.mkdir()
+        blobs = tiny_lora(f"{request.head.version_id}|{request.entry.batch.batch_sha256}|{request.seed}", rank, params.recipe.alpha)
+        for name, blob in blobs.items():
+            (trained_lora / name).write_bytes(blob)
+            world.store.put(request.out_prefix + "/" + name, blob)
+        files = {name: sha256_hex(world.store.get(request.out_prefix + "/" + name)) for name in ("adapter_config.json", "adapter_model.safetensors")}
+        paths[manifest_digest(files)] = trained_lora
+        artifact = build.artifact(request.head, request.entry, request.params)
+        assert artifact.rank == rank == 2
+        return dc.replace(artifact, lora_hash=manifest_digest(files), files=files,
+                          sizes={name: len(world.store.get(request.out_prefix + "/" + name)) for name in files},
+                          prefix=request.out_prefix,
+                          report=TrainReport(request.seed, 1, 0.5, 0.1, 100, 0.1, "cpu", build.image))
+
+    trainer = SimpleNamespace(train=train, close=lambda: None)
+    try:
+        result = SoloRunner(trainer, evaluator, lambda: int(time.time()), build.image,
+                            settings=SoloSettings(prewarm=False, steal_block_tasks=4, clients_while_training=2),
+                            poll_s=0.01).run(ticket)
+    except InfraError as error:
+        assert os.environ.get("SN120_TEST_OBSERVE_INLINE") == "1"
+        assert str(error) == "GPUs [4] are still in use; evaluation must not start"
+        world.controller.fail_lease(ticket.lease_id, f"InfraError: {error}", world.clock())
+        assert world.controller.state.round is None
+        assert world.controller.state.rounds[-1].outcome == "no_decision"
+        assert str(controller_pid) in json.loads(driver_path.read_text())
+        return
+    assert os.environ.get("SN120_TEST_OBSERVE_INLINE") != "1"
+    assert observation.exists()
+    folded = json.loads(observation.read_text())
+    assert folded["ppid"] == controller_pid and folded["pid"] != controller_pid
+    assert str(controller_pid) not in json.loads(driver_path.read_text())
+    assert result.entries[4].status == SCORED
+    assert result.entries[4].outcomes == (PASS * len(ticket.draw.task_ids),)
+    assert result.entries[4].lora.rank == 2
+    assert result.entries[4].tested_base_hash
+    assert servers.bound[8104] == result.entries[4].lora.lora_hash
+    assert any(body["model"] == result.entries[4].lora.lora_hash for _, body in servers.bodies)
+    assert result.null_outcomes == ("".join(PASS if i % 2 == 0 else FAIL for i in range(len(ticket.draw.task_ids))),)
+    world.controller.submit_result(result, world.clock())
+    assert world.controller.state.round is None
+    assert world.controller.state.rounds[-1].outcome == "applied"
+    assert world.controller.state.rounds[-1].decision.entries[4].status == WINNER
+    evaluator.cleanup_merged(ticket.round_id)
     assert not (tmp_path / "work" / "merged-candidates" / ticket.round_id).exists()
 
 

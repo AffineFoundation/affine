@@ -166,9 +166,9 @@ class Journal:
             # A physical compatibility install has no runtime import shim.
             # Keep this complete check here so the ordinary ``python -m`` CLI
             # cannot fence an open dedup round that only new code may finish.
-            from .params import REVIEWED_NEW_PARAMS_HASH
-            if any(row.kind == "params_set" and row.data.get("params", {}).get("params_hash") == REVIEWED_NEW_PARAMS_HASH
-                   or row.kind == "round_opened" and row.data.get("round", {}).get("params_hash") == REVIEWED_NEW_PARAMS_HASH
+            from .params import REVIEWED_NEW_PARAMS_HASHES
+            if any(row.kind == "params_set" and row.data.get("params", {}).get("params_hash") in REVIEWED_NEW_PARAMS_HASHES
+                   or row.kind == "round_opened" and row.data.get("round", {}).get("params_hash") in REVIEWED_NEW_PARAMS_HASHES
                    for row in self.records):
                 from .dedup_compat import require_closed_dedup_history
                 from .state import replay

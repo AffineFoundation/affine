@@ -44,7 +44,7 @@ from .errors import BatchRejected, ConfigError, HeadMismatchError, InfraError, L
 from .headlog import apply_lora, fold_due, fold_head, genesis_head, lora_ref
 from .journal import JOURNAL_FILE, Journal, pull
 from .judging import check_result, decide
-from .params import GenesisSpec, Params, REVIEWED_NEW_PARAMS_HASH
+from .params import GenesisSpec, Params, REVIEWED_NEW_PARAMS_HASHES
 from .public import public_text, round_report, snapshot
 from .queue import SyncPlan, plan_sync, select_round, split_among_boxes, squat_trim, waiting
 from .sampling import make_round_seed
@@ -203,8 +203,8 @@ class Controller:
         self.journal, self.store, self.admission, self.sampler, self._params = journal, store, admission, sampler, params
         self.folder, self.publisher, self.pins, self.head = folder, publisher, pins, head or HeadPublish()
         self.state: State = replay(journal.records)
-        self._dedup_rollback = any(row.kind == PARAMS_SET and row.data.get("params", {}).get("params_hash") == REVIEWED_NEW_PARAMS_HASH
-                                   or row.kind == ROUND_OPENED and row.data.get("round", {}).get("params_hash") == REVIEWED_NEW_PARAMS_HASH
+        self._dedup_rollback = any(row.kind == PARAMS_SET and row.data.get("params", {}).get("params_hash") in REVIEWED_NEW_PARAMS_HASHES
+                                   or row.kind == ROUND_OPENED and row.data.get("round", {}).get("params_hash") in REVIEWED_NEW_PARAMS_HASHES
                                    for row in journal.records)
         if self._dedup_rollback:
             # The compatibility loader proves this complete historical pin, not
@@ -558,7 +558,7 @@ class Controller:
                 self._log(ROUND_SETTLED, {"round_id": record.round_id, "decision": decision.to_dict(), "results": {}}, now)
                 return self._close(NULL, [], now, self._lease_failures())
             return self._close(NO_DECISION, [], now, self._lease_failures())
-        if record.params_hash == REVIEWED_NEW_PARAMS_HASH:
+        if record.params_hash in REVIEWED_NEW_PARAMS_HASHES:
             # This should have been refused before a writer fence. Never
             # re-judge an already-trained new-code result with old semantics.
             raise V2Error("an undecided dedup round has a sealed result; finish it with the reviewed new code")
