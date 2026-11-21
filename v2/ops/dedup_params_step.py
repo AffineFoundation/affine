@@ -24,14 +24,18 @@ import os
 import sys
 from pathlib import Path
 
-# Resolve this checkout even under python -I or with a different editable install.
-_package = Path(__file__).resolve().parents[1] / "sn120_v2"
-_spec = importlib.util.spec_from_file_location(
-    "sn120_v2", _package / "__init__.py", submodule_search_locations=[str(_package)]
-)
-assert _spec is not None and _spec.loader is not None
-sys.modules[__package__ or "sn120_v2"] = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(sys.modules[__package__ or "sn120_v2"])
+# Resolve this checkout under python -I or with a different editable install,
+# without replacing an already-loaded package (and losing its submodule attrs).
+_package_dir = Path(__file__).resolve().parents[1] / "sn120_v2"
+_package = sys.modules.get("sn120_v2")
+if _package is None:
+    _spec = importlib.util.spec_from_file_location(
+        "sn120_v2", _package_dir / "__init__.py", submodule_search_locations=[str(_package_dir)]
+    )
+    assert _spec is not None and _spec.loader is not None
+    _package = importlib.util.module_from_spec(_spec)
+    sys.modules["sn120_v2"] = _package
+    _spec.loader.exec_module(_package)
 
 from sn120_v2.canonical import canonical_json
 from sn120_v2.cli import changed_params

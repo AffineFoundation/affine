@@ -4,10 +4,12 @@ from __future__ import annotations
 import dataclasses
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
+import sn120_v2
 from sn120_v2.cli import changed_params, main as cli_main
 from sn120_v2.journal import JOURNAL_FILE, read_journal
 from sn120_v2.params import Params
@@ -19,6 +21,7 @@ _spec = importlib.util.spec_from_file_location("dedup_params_step", SCRIPT)
 assert _spec is not None and _spec.loader is not None
 step = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(step)
+assert sys.modules["sn120_v2"] is sn120_v2
 
 
 @pytest.mark.parametrize("king_samples", [None, 2])
