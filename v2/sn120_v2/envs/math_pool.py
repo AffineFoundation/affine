@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ..canonical import sha256_hex
 from ..errors import ContractError, VerifyError
+from ..gpu.batch import MANDATE, chat_messages
 
 ENV_ID = "math"
 POOL_FILE = Path(__file__).with_name("math_pool_v2_1.jsonl")
@@ -23,11 +24,6 @@ POOL_V2_0_FILE = Path(__file__).parent / "archive" / "math_pool_v2.jsonl"
 POOL_V2_0_SHA256 = "8d34d276bd777c2b48506687ee902041e40f68073ce71cf60f79b27471d06ebc"
 POOL_V2_1_FILE, POOL_V2_1_SHA256 = POOL_FILE, POOL_SHA256
 
-# The instruction every prompt carries. Scoring sends it as the system message.
-MANDATE = (
-    "Solve the math problem. Reason step by step in plain text, then end your response with the final answer "
-    "in `\\boxed{}`. Emit exactly one `\\boxed{}` block and nothing after it."
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,10 +37,10 @@ class Task:
 
     def messages(self) -> list[dict[str, str]]:
         """The scoring prompt, as chat messages: system ``MANDATE``, then the problem as the user."""
-        return [{"role": "system", "content": MANDATE}, {"role": "user", "content": self.problem}]
+        return chat_messages(self.problem)
 
     def batch_prompt(self) -> str:
-        """The prompt of a miner batch row: one user message, ``MANDATE``, a blank line, the problem."""
+        """The pool batch form: ``MANDATE``, a blank line and the problem, before chat rendering."""
         return MANDATE + "\n\n" + self.problem
 
 
