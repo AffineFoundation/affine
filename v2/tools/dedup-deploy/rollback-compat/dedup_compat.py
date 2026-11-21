@@ -11,7 +11,7 @@ from typing import Iterable
 
 from .errors import JournalCorrupt, V2Error
 from .journal import JournalRecord
-from .params import DEDUP_FIELDS, REVIEWED_NEW_PARAMS_HASHES, Params
+from .params import DEDUP_FIELDS, NEW_PARAMS_ONLY_FIELDS, REVIEWED_NEW_PARAMS_HASHES, Params
 from .state import LEASE_FAILED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED, State
 
 
@@ -23,7 +23,7 @@ def historical_params(data: dict) -> Params:
     """Validate the complete old/reviewed-new pin and return old behavior."""
     if not isinstance(data, dict):
         _bad("params_set does not contain an object")
-    if set(data) & (set(DEDUP_FIELDS) - {"z_bar"}):
+    if set(data) & (set(DEDUP_FIELDS) - {"z_bar"} | NEW_PARAMS_ONLY_FIELDS):
         params_hash = digest_params(data)
         if params_hash not in REVIEWED_NEW_PARAMS_HASHES:
             _bad("historical params differ from the reviewed dedup pin")

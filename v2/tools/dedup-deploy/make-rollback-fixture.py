@@ -14,7 +14,7 @@ from pathlib import Path
 import struct
 
 from sn120_v2 import layout
-from sn120_v2.canonical import canonical_json, manifest_digest, sha256_hex
+from sn120_v2.canonical import canonical_json, digest, manifest_digest, sha256_hex
 from sn120_v2.sim import SimAdmission, SimWorld, sim_params
 from sn120_v2.sampling import train_seed
 from sn120_v2.types import EntryDecision
@@ -82,14 +82,14 @@ def upload_affine(world, hotkey, raw, quality):
                                         if world.store.exists(layout.miner_object(key)) else None)
 
 
-def incident_identity(value, *, incident=None, following=None):
+def incident_identity(value, *, incident=None, following=None, labels=("r000092", "r000093")):
     """Relabel only the incident and its successor, preserving lease suffixes."""
     if isinstance(value, dict):
-        return {key: incident_identity(item, incident=incident, following=following) for key, item in value.items()}
+        return {key: incident_identity(item, incident=incident, following=following, labels=labels) for key, item in value.items()}
     if isinstance(value, list):
-        return [incident_identity(item, incident=incident, following=following) for item in value]
+        return [incident_identity(item, incident=incident, following=following, labels=labels) for item in value]
     if isinstance(value, str):
-        for original, label in ((incident, "r000092"), (following, "r000093")):
+        for original, label in zip((incident, following), labels):
             if original and value.startswith(original):
                 return label + value[len(original):]
     return value
@@ -154,10 +154,14 @@ def main() -> int:
     # The journal carries the exact reviewed production pin. The isolated CPU
     # fixture adapts worker evidence only; it never changes that historical pin.
     full = Params.from_dict(production)
-    assert full.params_hash == "4c83d52f7489f8eae22e550e226edc17fb6f2f0d9f6dce5a4d333369e5b1a3be"
-    historical = dataclasses.replace(full, recipe=dataclasses.replace(
-        full.recipe, code_digest="28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"))
-    assert historical.params_hash == "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
+    expect = json.loads((Path(__file__).parent / "expect.json").read_text())
+    labels = (f"r{int(expect['gate_round'][1:]) - 1:06d}", expect["gate_round"])
+    assert full.params_hash == expect["new_params_hash"]
+    historical_record = json.loads((Path(__file__).parent / "incident_new-params.json").read_text())
+    assert digest(historical_record) == expect["incident_params_hash"]
+    assert historical_record["recipe"]["code_digest"] == expect["incident_digest"]
+    historical = Params.from_dict(historical_record)
+    assert historical.params_hash == expect["incident_params_hash"]
     world.controller.set_params(full, world.clock())
     world.params = full
     assert world.controller.open_round(world.clock(), "backoff-probe") == []
@@ -390,8 +394,8 @@ def main() -> int:
         world.store.put(layout.miner_object(f"hk{uid}"), raw)
     # r000092 was opened under the incident release's pin, not the repaired pin.
     world.controller.set_params(historical, world.clock())
-    world.params = historical
     historical_set = world.controller.journal.records[-1]
+    world.params = historical
     assert historical_set.kind == "params_set"
     tickets = world.controller.open_round(world.clock(), "infra-no-decision")
     assert len(tickets) == 1 and len(tickets[0].entries) == 6
@@ -421,7 +425,6 @@ def main() -> int:
     incident_queue = set(world.controller.state.queue)
     assert len(incident_queue) == 6 and all(item.front for item in world.controller.state.queue.values())
     assert [row.kind for row in incident_tail] == ["round_opened", "lease_failed", "round_closed"]
-    assert [row.kind for row in incident_tail] == ["round_opened", "lease_failed", "round_closed"]
     assert all(not incident_tail[-1].data[name] for name in ("served", "front", "attempted", "held", "released"))
     # Keep a complete replayable copy whose terminal identifiers and sequence
     # numbers reproduce the incident. Synthetic leader records pad the prefix;
@@ -438,8 +441,11 @@ def main() -> int:
     with incident_path.open("ab") as handle:
         previous = prefix[-1]
         for offset, row in enumerate([historical_set, *incident_tail, *post_incident_tail]):
+            data = row.data
+            if row is historical_set:
+                data = dict(data, params=historical_record)
             relabeled = dataclasses.replace(row, seq=600 + offset,
-                                            data=incident_identity(row.data, incident=infra.round_id, following=post_incident.round_id),
+                                            data=incident_identity(data, incident=infra.round_id, following=post_incident.round_id, labels=labels),
                                             prev=previous.checksum)
             handle.write(relabeled.line() + b"\n")
             previous = relabeled
@@ -449,7 +455,7 @@ def main() -> int:
     assert read_journal(incident_path)[-3].data["round"]["params_hash"] == full.params_hash
     from sn120_v2.state import replay
     incident_state = replay(read_journal(incident_path))
-    assert incident_state.rounds[-2].round_id == "r000092" and incident_state.round is None
+    assert incident_state.rounds[-2].round_id == labels[0] and incident_state.round is None
     assert incident_state.rounds[-1].params_hash == full.params_hash
 
     # Additional old-code-only proof inputs: a valid open round on the current

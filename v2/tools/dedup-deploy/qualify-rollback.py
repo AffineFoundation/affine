@@ -23,7 +23,9 @@ import tempfile
 KIT = Path(__file__).resolve().parent
 EXPECT = json.loads((KIT / "expect.json").read_text())
 NEW_PIN = EXPECT["new_params_hash"]
-HISTORICAL_PIN = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
+HISTORICAL_PIN = EXPECT["incident_params_hash"]
+INCIDENT_ROUND = f"r{int(EXPECT['gate_round'][1:]) - 1:06d}"
+GATE_ROUND = EXPECT["gate_round"]
 OLD_PIN = EXPECT["old_params_hash"]
 
 
@@ -94,17 +96,17 @@ def main() -> int:
     all_incident_rows = read_journal(fixture / "incident-seq601-603/journal.jsonl")
     incident_rows = all_incident_rows[601:604]
     assert [(row.seq, row.kind) for row in incident_rows] == [(601, "round_opened"), (602, "lease_failed"), (603, "round_closed")]
-    assert incident_rows[0].data["round"]["round_id"] == "r000092"
+    assert incident_rows[0].data["round"]["round_id"] == INCIDENT_ROUND
     assert incident_rows[0].data["round"]["params_hash"] == HISTORICAL_PIN
-    assert incident_rows[1].data["lease_id"] == "r000092-l0"
+    assert incident_rows[1].data["lease_id"] == f"{INCIDENT_ROUND}-l0"
     assert incident_rows[1].data["reason"].startswith("InfraError: GPUs [4]")
     assert incident_rows[2].data["outcome"] == "no_decision"
     assert all(not incident_rows[2].data[name] for name in ("served", "front", "attempted", "held", "released"))
     incident_state = replay(all_incident_rows)
-    assert incident_state.round is None and incident_state.rounds[-2].round_id == "r000092"
-    assert incident_state.rounds[-2].decision is None and all(king.round_id != "r000092" for king in incident_state.kings)
-    assert incident_state.rounds[-1].round_id == "r000093" and incident_state.rounds[-1].params_hash == NEW_PIN
-    out("real new-controller seq601-603 tail: historical-pin r000092-l0 InfraError, then repaired-pin r000093, no settlement, charge or king")
+    assert incident_state.round is None and incident_state.rounds[-2].round_id == INCIDENT_ROUND
+    assert incident_state.rounds[-2].decision is None and all(king.round_id != INCIDENT_ROUND for king in incident_state.kings)
+    assert incident_state.rounds[-1].round_id == GATE_ROUND and incident_state.rounds[-1].params_hash == NEW_PIN
+    out(f"real new-controller seq601-603 tail: historical-pin {INCIDENT_ROUND}-l0 InfraError, then repaired-pin {GATE_ROUND}, no settlement, charge or king")
 
     # This exception is not a blanket acceptance of unsettled no_decision closes.
     from dataclasses import replace
@@ -150,7 +152,7 @@ def main() -> int:
     assert (4, 1004) in state.served_regs and (5, 1005) in state.served_regs
     assert (6, 1006) in state.served_regs and (8, 1008) in state.served_regs
     assert by_id[summary["duplicate_only"]].leases == ()
-    infra = by_id["r000092"]
+    infra = by_id[INCIDENT_ROUND]
     assert infra.outcome == "no_decision" and infra.decision is None and not infra.duplicate_decisions
     incident_tail = [row for row in rows if row.data.get("round_id") == infra.round_id
                      or row.data.get("round", {}).get("round_id") == infra.round_id]
@@ -392,7 +394,7 @@ print(json.dumps({"native_release_read":True,"compatibility_overlay":False,
     assert final_status.returncode == 0, final_status.stderr
     assert json.loads(final_status.stdout)["params_hash"] == OLD_PIN
     assert not (loop_state / "journal.jsonl").is_symlink()
-    out("old end-round/run starts after r000092: bounded run is IDLE at bba7a409; no new round or worker execution")
+    out(f"old end-round/run starts after {INCIDENT_ROUND}: bounded run is IDLE at bba7a409; no new round or worker execution")
     (output / "qualification.json").write_text(json.dumps({
         "synthetic": True, "historical_params_hash": HISTORICAL_PIN, "new_params_hash": NEW_PIN, "old_params_hash": OLD_PIN,
         "old_v2": str(old_v2), "journal_sha256": sha(fixture / "journal.jsonl"),
