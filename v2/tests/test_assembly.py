@@ -328,7 +328,7 @@ def test_the_smoke_copy_with_the_real_parts_writes_a_small_valid_file_and_needs_
     capsys.readouterr()
     assert smoke.main(["copy", "--state-dir", str(tmp_path / "state")]) == 0
     out = capsys.readouterr()
-    assert out.out.startswith("copied hk1 63 of 64 groups, 126 rollouts, longest 44 tokens") and "1 of 1 files copied" in out.err
-    assert json.loads(box.get(layout.miner_object("hk1")))["groups"] == groups[1:], "whole groups, unchanged; the long group is left out"
+    assert out.out.startswith("copied hk1 32 of 64 groups, 64 rollouts, longest 44 tokens") and "1 of 1 files copied" in out.err
+    assert json.loads(box.get(layout.miner_object("hk1")))["groups"] == groups[1:33], "whole groups, unchanged; stop once the 64-active floor is met"
     assert main(["status", *common]) == 0
     assert json.loads(capsys.readouterr().out)["queued_files"] == {"valid": 1, "no file": 1}
