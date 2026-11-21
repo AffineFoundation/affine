@@ -4,8 +4,9 @@ import dataclasses
 import json
 
 from sn120_v2 import layout
-from sn120_v2.params import Params
+from sn120_v2.admission import check_batch
 from sn120_v2.canonical import canonical_json
+from sn120_v2.params import Params
 from sn120_v2.dedup import dryrun
 from sn120_v2.errors import ContractError
 from sn120_v2.public import snapshot
@@ -165,6 +166,23 @@ def test_dryrun_is_read_only_and_counts_real_advantages(tmp_path, capsys):
     with pytest.raises(ContractError):
         dryrun([batch, batch], Params(), first_seen_unix=(1,))
     assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")) == before
+
+
+def test_dryrun_matches_admission_when_active_rows_are_fewer_than_minibatches(tmp_path):
+    raw = canonical_json({
+        "version": "affine-batch-v3", "hotkey": "miner",
+        "train": {"group_size": 2, "minibatches": 71},
+        "groups": [{"prompt": "one", "rollouts": [
+            {"output": "a", "reward": 1.0}, {"output": "b", "reward": 0.0}]}],
+    })
+    params = Params(min_signal_rollouts=1, min_step_norm=0.0)
+    assert check_batch(raw, "miner", params).n_rollouts == 2
+    batch = tmp_path / "batch.json"
+    batch.write_bytes(raw)
+    row = dryrun([batch], params)["entries"][0]
+    assert row["nonzero_advantage_rollouts"] == 2
+    assert row["min_signal_rollouts"] == 1
+    assert row["admission"] is None and row["would_fail_min_rollouts"] is False
 
 
 def test_partial_duplicate_selection_charges_copies_and_returns_survivors(tmp_path):

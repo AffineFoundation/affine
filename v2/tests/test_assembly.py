@@ -322,11 +322,18 @@ def test_the_smoke_copy_with_the_real_parts_writes_a_small_valid_file_and_needs_
     for name in ("V1_R2_ENDPOINT", "V1_R2_BUCKET", "V1_R2_ACCESS_KEY_ID", "V1_R2_SECRET_ACCESS_KEY"):
         monkeypatch.setenv(name, "x")
     monkeypatch.setenv("SN120_R2_PREFIX", "smoke-test")
-    (tmp_path / "small.json").write_text(json.dumps({"batch_cap": 1, "max_output_tokens": 100, "min_pool_prompt_frac": 1.0, "recipe": {"image_digests": [IMAGE]}}))
+    # This fixture deliberately exercises the real production assembly. State
+    # the disabled legacy fields explicitly; omission must never enable dedup.
+    legacy = dict(train_seed_scope="batch", dedup_enabled=False,
+                  dedup_rollout_overlap=0.5, dedup_cos_shared_seed=0.135,
+                  dedup_cos_own_seed=0.002, min_signal_rollouts=1, min_step_norm=0.0)
+    (tmp_path / "small.json").write_text(json.dumps(legacy | {"batch_cap": 1, "max_output_tokens": 100, "min_pool_prompt_frac": 1.0, "recipe": {"image_digests": [IMAGE]}}))
     assert main(["set-params", *common, "--params", str(tmp_path / "small.json")]) == 0
     box.delete(layout.CURRENT)  # the checker takes the head from the journal, so the place of the pointer in the store does not matter
     capsys.readouterr()
-    assert smoke.main(["copy", "--state-dir", str(tmp_path / "state")]) == 0
+    # Keep this original smoke-size check independent of the release's
+    # no-op admission floor: explicitly select 32 complete groups (64 rows).
+    assert smoke.main(["copy", "--state-dir", str(tmp_path / "state"), "--groups", "32"]) == 0
     out = capsys.readouterr()
     assert out.out.startswith("copied hk1 32 of 64 groups, 64 rollouts, longest 44 tokens") and "1 of 1 files copied" in out.err
     assert json.loads(box.get(layout.miner_object("hk1")))["groups"] == groups[1:33], "whole groups, unchanged; stop once the 64-active floor is met"

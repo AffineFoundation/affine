@@ -428,7 +428,10 @@ def dryrun(paths: Sequence[Path], params: Params, first_seen_unix: Sequence[int]
             batch, error = None, {"rule": exc.rule, "reason": str(exc)}
         train = body.get("train", {}) if isinstance(body, dict) else {}
         recipe = params.recipe.for_miner(train)
-        floor = max(params.min_signal_rollouts, recipe.minibatches)
+        # Report the same explicit floor that check_batch enforces. The trainer
+        # uses fewer nonempty minibatches when active rows are fewer; it does
+        # not turn recipe.minibatches into an admission requirement.
+        floor = params.min_signal_rollouts
         # Read-only diagnostics: even a rejected file gets its actual activity count.
         # This is not a second admission path; ``admission`` retains the real rejection.
         active = signal_counts(batch.groups, recipe)[0] if batch is not None else None

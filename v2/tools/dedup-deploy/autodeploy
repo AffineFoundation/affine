@@ -245,4 +245,4 @@ limits=$(python3 -I -c 'import json,sys; print(json.dumps(json.load(open(sys.arg
 log "EVAL WALL: $FIRST evaluation=${eval_wall}s; eval phase records=${phase_wall}; limits=${limits}"
 FINISHED=1
 rearm
-log "PASS: dedup ${new:0:8}; $FIRST closed n_tasks=2000 with exactly 2 null strings x 2000 chars for every box, no lease_failed, eval wall ${eval_wall}s; duplicate/null-update decision cut counts logged; both admission floors are no-ops; crown threshold z_bar=1.5; $SECOND opened in the same single loop; public files healthy"
+log "PASS: dedup ${new:0:8}; merged evaluation enabled; $FIRST closed n_tasks=2000 with exactly 2 null strings x 2000 chars for every box, no lease_failed, eval wall ${eval_wall}s; duplicate/null-update decision cut counts logged; both admission floors are no-ops; crown threshold z_bar=1.5; $SECOND opened in the same single loop; public files healthy"

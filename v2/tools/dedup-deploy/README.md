@@ -6,8 +6,9 @@ qualifying this kit makes no production change.
 
 ## Approved release and rehearsal boundary
 
-The approved release enables dedup, round-scoped training seeds and charged
-null updates, raises the crown threshold to **`z_bar = 1.5`**, and makes **both
+The approved release enables dedup, round-scoped training seeds, charged
+null updates and **merged-candidate evaluation**, raises the crown threshold to
+**`z_bar = 1.5`**, and makes **both
 admission floors no-ops**:
 
 - `min_signal_rollouts = 1` preserves the legacy requirement for at least one
@@ -20,6 +21,10 @@ admission floors no-ops**:
 `z_bar` is the existing crown threshold. Final judging requires a strictly
 larger `z`, and early-look elimination uses the same threshold. The publisher
 renders this value in `llms.txt`; `mining.json` includes it in `params`.
+Merged evaluation builds each candidate with the install-fold arithmetic
+`round_bf16(fp32 king master + LoRA update)`, rather than scoring a runtime LoRA
+on an already-rounded bf16 base. Scored merged results must carry their tested
+base hash and fold kernel, and install-fold promotion checks that identity.
 
 Thus the previous concerns about UID 488's `global_norm_cap = 0.01` and
 58-rollout batches no longer block admission. Dedup duplicates and non-finite
@@ -40,15 +45,19 @@ production access.
 | Old commit | `c525286580c84d795b3ca7cbdf2302e96fce31ba` |
 | Old GPU source digest | `5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47` |
 | Old canonical params hash | `bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a` |
-| New commit | `5e9df83842f34cc3204d8003169d72f5ed4121ab` |
-| New GPU source digest | `b68a3005fd9837e9474349ca086088d9a7649406772e141b169952e7ef7f6e01` |
-| New canonical params hash | `8543962a34e8fecb0da3663e05b0c222ae612cbe4a8cef44fedf24f42f0504e5` |
+| New commit | `50afaca32ea982796728a0b07cb6e3c579ef378b` |
+| Integrated AFF-5 PR #310 head | `1fa67a9770884eb679ffeb91fd133ac49575d117` |
+| New GPU source digest | `28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a` |
+| New canonical params hash | `d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c` |
 | `old-params.json` file-byte SHA-256 | `86c9cd5b5e696c6c10411fd828b7e26a641d06bd39f94a4ea98eb69de3e78f56` |
-| `new-params.json` file-byte SHA-256 | `f8073812849133f5d0e81728ef361d3e98b0466b4b76e3b6259a4a858d891d4b` |
+| `new-params.json` file-byte SHA-256 | `4acb73b3cf45e2240c147150e854ac27ab3f80851903b7adbb15b08452bc2784` |
 
 A canonical `Params.params_hash` is not the SHA-256 of a pretty-printed params
-file. The new params intentionally retain the old worker recipe code digest;
-the release's own GPU source digest is a different identity.
+file. The new params pin the combined worker recipe
+`28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a`.
+AFF-5 supplies the merged-candidate worker change; the release contains the
+floor correction and no-op-floor publication as well. Its GPU tree has no diff
+from `1fa67a97`.
 
 The effective production-copy changes are exactly:
 
@@ -56,6 +65,8 @@ The effective production-copy changes are exactly:
 dedup_enabled        false -> true
 train_seed_scope     batch -> round
 z_bar                1.0 -> 1.5
+eval_merged          false -> true
+recipe.code_digest   5027620615... -> 28f1fb8b...
 ```
 
 The other five explicit dedup fields retain their legacy-effective values.
@@ -69,8 +80,8 @@ Production `autodeploy` uses the **ordinary journaled `set-params` CLI**, only
 after the sole loop has stopped and `apply` has independently refused to run if
 a loop is alive. It runs against the real production state directory with the
 normal `sn120_v2.assembly:stack`, not with the copied-state isolation wrapper.
-The complete seven-field dedup record plus `z_bar=1.5` is required; the
-incomplete legacy file is never parsed by new code.
+The complete seven-field dedup record plus `z_bar=1.5` and `eval_merged=true`
+is required; the incomplete legacy file is never parsed by new code.
 
 This is not an unjournaled local edit. `Journal` synchronizes against the one
 existing R2 journal prefix, appends its leader and `params_set` records there,
@@ -125,9 +136,14 @@ Recovery is code-first:
    legacy file; omission of new fields must not activate defaults.
 5. Verify the old params hash through the same compatibility loader used by the
    old loop. The loader first validates the historical new pin, then exposes
-   old behavior without changing historical records. The reviewed historical
-   `z_bar=1.5` override is removed along with the seven dedup fields, restoring
-   the old `z_bar=1.0` behavior; unknown or newer parameters remain refused.
+   old behavior without changing historical records. The complete new pin
+   includes `eval_merged=true` and the combined worker digest. After validating
+   that pin, replay removes the seven dedup fields, historical `z_bar=1.5`
+   override and `eval_merged=true`, and translates the reviewed combined worker digest to the reviewed
+   old worker digest **in memory**. Journal bytes are never rewritten; native
+   release readers still see the original new worker identity. The restored
+   old behavior has `z_bar=1.0` and the old worker recipe. Unknown or newer
+   parameters remain refused.
 6. Start exactly one old loop through `rollback-loop.sh` and preserve its
    existing transaction cursor, UID mapping, best-assessment cadence and
    six-hour contribution half-life. Never enable burn or owner-only fallback
@@ -141,7 +157,7 @@ leader fence. This is replay compatibility, not permission for old code to
 finish a dedup ticket.
 
 The separate validator/weights reader can **remain on native release
-`5e9df838` after this rollback**; it does not need to revert to `c5252865`.
+`50afaca3` after this rollback**; it does not need to revert to `c5252865`.
 `qualify-rollback.py` proves the complete post-repin journal with no overlay:
 historical dedup params/round fields and duplicate/null-update decisions,
 tagged non-finite sealed evidence, and final IDLE params `bba7a409…`,
@@ -203,7 +219,10 @@ DEDUP_DRY_DECIDED_OPEN=1 D=/home/bb/scratch/dedup-dry-decided \
 The normal dry run uses real controller, admission, worker/result, CLI,
 journal, stop-after-round and public-rotation code over an isolated copied
 fixture. Training/evaluation and wall-clock behavior are deterministic local
-seams; this is not a GPU throughput test. The fixture intentionally preserves
+seams; this is not a GPU throughput test. Merged worker results carry
+deterministic tested-base proofs and the simulated install fold supplies the
+matching base bytes. The real `assert_tested_result` and `assert_fold_matches`
+checks remain mandatory; neither is bypassed. The fixture intentionally preserves
 an expired copied `r000086` lease as a genuine `no_decision`; it does not
 fabricate a clean close for that lease. Fresh predecessor rounds are driven
 through real worker/result behavior.
@@ -242,8 +261,9 @@ The local qualification source journal had SHA-256
 `1a7475525b8c176b445927fe864b1df6e7abf31b8083e011e9a3e4c2c3acf1ca`, 574
 records, and an open `r000088`. A separate copy was legitimately advanced to
 IDLE before the guarded transition: 577 records became 579 and the params
-changed `bba7a409… -> 8543962a…`. The effective diff was exactly `dedup_enabled`,
-`train_seed_scope` and `z_bar`. No production journal or R2 object was written. See
+changed `bba7a409… -> d5979c30…`. The effective diff was exactly
+`dedup_enabled`, `train_seed_scope`, `z_bar`, `eval_merged` and
+`recipe.code_digest`. No production journal or R2 object was written. See
 `QUALIFICATION.md` for the actual evidence and limitations.
 
 ## Frozen inputs: separate, GET-only operator fetch

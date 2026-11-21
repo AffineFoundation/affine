@@ -27,12 +27,12 @@ fi
 BRANCH=$(git -C "$ROOT" symbolic-ref --quiet --short HEAD)
 git clone -q --no-checkout --branch "$BRANCH" "$ROOT" "$D/repo"
 git -C "$D/repo" checkout -q --detach c525286580c84d795b3ca7cbdf2302e96fce31ba
-git -C "$D/repo" merge-base --is-ancestor c525286580c84d795b3ca7cbdf2302e96fce31ba 5e9df83842f34cc3204d8003169d72f5ed4121ab
+git -C "$D/repo" merge-base --is-ancestor c525286580c84d795b3ca7cbdf2302e96fce31ba 50afaca32ea982796728a0b07cb6e3c579ef378b
 # Pre-apply admission validation must never import from the still-old checkout.
 mkdir -p "$D/new-release"
-git -C "$D/repo" archive 5e9df83842f34cc3204d8003169d72f5ed4121ab v2/sn120_v2 | tar -x -C "$D/new-release"
+git -C "$D/repo" archive 50afaca32ea982796728a0b07cb6e3c579ef378b v2/sn120_v2 | tar -x -C "$D/new-release"
 [ "$(git -C "$D/repo" rev-parse HEAD)" = c525286580c84d795b3ca7cbdf2302e96fce31ba ]
-[ "$(git -C "$ROOT" rev-parse 5e9df83842f34cc3204d8003169d72f5ed4121ab:v2/sn120_v2/admission.py)" = "$(git -C "$ROOT" hash-object "$D/new-release/v2/sn120_v2/admission.py")" ]
+[ "$(git -C "$ROOT" rev-parse 50afaca32ea982796728a0b07cb6e3c579ef378b:v2/sn120_v2/admission.py)" = "$(git -C "$ROOT" hash-object "$D/new-release/v2/sn120_v2/admission.py")" ]
 if [ "$DEV" = 1 ]; then cp -a "$KIT/." "$D/here/"; else git -C "$D/repo" archive "$HEAD" v2/tools/dedup-deploy | tar -x -C "$D/here" --strip-components=3; fi
 $PY -I -c 'import hashlib,pathlib,sys; a,b=map(pathlib.Path,sys.argv[1:]); left={str(p.relative_to(a)):hashlib.sha256(p.read_bytes()).hexdigest() for p in a.rglob("*") if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("set-params-")}; right={str(p.relative_to(b)):hashlib.sha256(p.read_bytes()).hexdigest() for p in b.rglob("*") if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("set-params-")}; assert left==right,{"missing":sorted(set(right)-set(left)),"added":sorted(set(left)-set(right)),"changed":sorted(k for k in set(left)&set(right) if left[k]!=right[k])}; print("complete recursive kit comparison:",len(right),"files identical")' "$D/here" "$KIT"
 cp "$SRC" "$D/operator-state/journal.jsonl"
@@ -60,7 +60,7 @@ from sn120_v2.canonical import canonical_json, manifest_digest, sha256_hex
 from sn120_v2.controller import HeadPublish, Stack, stored_irt_snapshot
 from sn120_v2.irt import IRTSampler
 from sn120_v2.pool_runtime import PoolRuntime
-from sn120_v2.sim import SimEvaluator, SimFolder, SimTrainer
+from sn120_v2.sim import SIM_IMAGE, SimEvaluator, SimFolder, SimTrainer
 from sn120_v2.store import LocalStore, promote_fold
 from sn120_v2.worker import LocalRunner
 
@@ -112,7 +112,23 @@ class Runner:
         clock=lambda:next(ticks,ticket.issued_at+1235)
         return LocalRunner(AffineTrainer(self.store),AffineEvaluator(self.store,image),clock,image,poll_s=.01)
     def _finish(self,ticket,result):
-        return dataclasses.replace(result,started_at=ticket.issued_at+1,finished_at=ticket.issued_at+1236,phase_s={"training":1,"evaluation":1234})
+        def proven(entry):
+            # The old-code predecessor rounds predate merged.py. Import and
+            # require merged proofs only under the new release params.
+            if not getattr(ticket.params,"eval_merged",False) or entry.status != "scored":
+                return entry
+            from sn120_v2.gpu.merged import assert_tested_result
+            from sn120_v2.headchain import FIXED_ORDER
+            # This simulated worker scores a deterministic merged base. The
+            # production proof check remains mandatory at result submission.
+            assert entry.lora is not None
+            base=f"tested base of {entry.lora.lora_hash}".encode()
+            proof=manifest_digest({"model.bin":sha256_hex(base)})
+            entry=dataclasses.replace(entry,tested_base_hash=proof,tested_fold_kernel=FIXED_ORDER)
+            assert_tested_result(ticket.params,entry)
+            return entry
+        return dataclasses.replace(result,started_at=ticket.issued_at+1,finished_at=ticket.issued_at+1236,
+                                   phase_s={"training":1,"evaluation":1234},entries=tuple(proven(entry) for entry in result.entries))
     def run(self,ticket):
         mode=os.environ.get("DEDUP_DRY_ABORT_AFTER_OPEN")=="1"
         abort=pathlib.Path(os.environ["DEDUP_WORK_DIR"])/"logs/abort-open-observed"
@@ -135,6 +151,26 @@ class Runner:
         result=self._runner(ticket).run(ticket)
         return self._finish(ticket,result)
 
+class MergedSimFolder(SimFolder):
+    def fold(self, head, params, out_prefix, tested=None, **kwargs):
+        if not getattr(params,"eval_merged",False):
+            return super().fold(head,params,out_prefix)
+        from sn120_v2.gpu.merged import assert_fold_matches
+        from sn120_v2.types import FoldArtifact
+        # The simulated install writes the exact tested base bytes; the real
+        # merged-evaluation guard must accept that identity before promotion.
+        assert tested is not None and tested.status == "scored" and tested.lora is not None
+        assert len(head.loras) == 1 and head.loras[0].lora_hash == tested.lora.lora_hash
+        base=f"tested base of {tested.lora.lora_hash}".encode()
+        master=f"tested master of {tested.lora.lora_hash}".encode()
+        self.store.put(f"{out_prefix}/base/model.bin",base)
+        self.store.put(f"{out_prefix}/master/master.bin",master)
+        base_files,master_files={"model.bin":sha256_hex(base)},{"master.bin":sha256_hex(master)}
+        fold=FoldArtifact(head.version_id,manifest_digest(base_files),base_files,
+                          manifest_digest(master_files),master_files,out_prefix,SIM_IMAGE)
+        assert_fold_matches(params,tested,fold.base_hash)
+        return fold
+
 def stack(context):
     # Each real CLI process sees the checkout that launches it. The helper's
     # initial path is only a bootstrap; rollback must not retain new Params.
@@ -144,7 +180,7 @@ def stack(context):
     pool=PoolRuntime(store,state.params,state,root=store.root/"reserve")
     sampler=IRTSampler(pool.active_ids,state.params,snapshot=stored_irt_snapshot(store,state))
     admission=StoreAdmission(store,state.params,tokens=None,grader=None,streams=1)
-    return Stack(store,admission,sampler,Runner(store),SimFolder(store),pool=pool,
+    return Stack(store,admission,sampler,Runner(store),MergedSimFolder(store),pool=pool,
                  entropy=lambda:"dry-unpredictable-fixture-entropy",head=HeadPublish(promote=promote_fold),mirror=False)
 PY
 # The injected journal boundary is real: Controller._settle has appended and
@@ -459,7 +495,7 @@ SH
 chmod +x "$D/here/set-params"
 export DEDUP_HELPERS="$D/helpers" DEDUP_DRY_SET_PARAMS="$D/here/set-params"
 # Shorten only the isolated publication retry; all production pins stay intact.
-$PY -I -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text()); assert d["new_commit"]=="5e9df83842f34cc3204d8003169d72f5ed4121ab"; d["public_retry_seconds"]=int(__import__("os").environ.get("DEDUP_DRY_PUBLIC_SECONDS","8")); p.write_text(json.dumps(d,indent=2,sort_keys=True)+"\n")' "$D/here/expect.json"
+$PY -I -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text()); assert d["new_commit"]=="50afaca32ea982796728a0b07cb6e3c579ef378b"; d["public_retry_seconds"]=int(__import__("os").environ.get("DEDUP_DRY_PUBLIC_SECONDS","8")); p.write_text(json.dumps(d,indent=2,sort_keys=True)+"\n")' "$D/here/expect.json"
 $PY -I -c 'import sys;sys.path.insert(0,sys.argv[1]);from sn120_v2.state import load;s=load(sys.argv[2]);assert s.round and s.round.round_id=="r000086" and s.params.batch_cap==6' "$D/repo/v2" "$D/operator-state/journal.jsonl"
 "${OP[@]}" work-dir; "${OP[@]}" loop-count; "${OP[@]}" journal-close r000086 > "$D/entrypoint-journal-close.json"; "${OP[@]}" facts
 $PY -I "$D/helpers/mirror_public.py"

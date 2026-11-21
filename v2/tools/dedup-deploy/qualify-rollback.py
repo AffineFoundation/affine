@@ -226,7 +226,7 @@ root=pathlib.Path(sys.argv[2]); old_pin=sys.argv[3]; new_pin=sys.argv[4]
 before=(root/"journal.jsonl").read_bytes()
 rows=read_journal(root/"journal.jsonl")
 history=[r for r in rows if r.kind=="params_set" and r.data["params"].get("dedup_enabled")]
-assert history and all(r.data["params"]["z_bar"]==1.5 for r in history)
+assert history and all(r.data["params"]["z_bar"]==1.5 and r.data["params"]["eval_merged"] is True for r in history)
 from sn120_v2.params import Params
 assert {Params.from_dict(r.data["params"]).params_hash for r in history}=={new_pin}
 assert rows[-1].kind=="params_set" and not rows[-1].data["params"].get("dedup_enabled",False)

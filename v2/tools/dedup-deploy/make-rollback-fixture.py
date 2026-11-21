@@ -17,7 +17,7 @@ from sn120_v2 import layout
 from sn120_v2.canonical import canonical_json, manifest_digest, sha256_hex
 from sn120_v2.sim import SimAdmission, SimWorld, sim_params
 from sn120_v2.sampling import train_seed
-from sn120_v2.types import EntryDecision, EntryResult
+from sn120_v2.types import EntryDecision
 
 
 def affine_batch(hotkey: str, rows: list[tuple[str, float]]) -> bytes:
@@ -132,13 +132,16 @@ def main() -> int:
     world = SimWorld(root, sim_params(n_min_start=2, fold_every_k=2))
     affine_metadata = affine_sim_batches(world)
     affine_metadata.__enter__()
+    from sn120_v2.sim import SimTrainer
+    sim_train = SimTrainer.train
+    real_affine_train = world.trainer.train
     from sn120_v2.sim import SIM_IMAGE
     production = json.loads((Path(__file__).parent / "new-params.json").read_text())
     from sn120_v2.params import Params
     # The journal carries the exact reviewed production pin. The isolated CPU
     # fixture adapts worker evidence only; it never changes that historical pin.
     full = Params.from_dict(production)
-    assert full.params_hash == "8543962a34e8fecb0da3663e05b0c222ae612cbe4a8cef44fedf24f42f0504e5"
+    assert full.params_hash == "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
     world.controller.set_params(full, world.clock())
     world.params = full
     assert world.controller.open_round(world.clock(), "backoff-probe") == []
@@ -150,7 +153,7 @@ def main() -> int:
     world.clock = lambda: world.now
     world.runner.clock = world.clock
     assert full.dedup_enabled and full.train_seed_scope == "round" and full.min_step_norm == 0.0
-    assert full.min_signal_rollouts == 1 and full.z_bar == 1.5
+    assert full.min_signal_rollouts == 1 and full.z_bar == 1.5 and full.eval_merged
     # Stage A plus no-result survivor accounting: three seats, one charged copy,
     # two uncharged genuine seats returned to the queue after a failed lease.
     for uid, quality in ((1, 0.9), (2, 0.0), (3, 0.0)):
@@ -181,13 +184,88 @@ def main() -> int:
     # Advance only the simulated wall clock past the lease-failure backoff.
     # The next ticket receives the unmodified production training budget.
     world.now += full.apply_retry_s + 1
-    real_king_train = world.trainer.train
+    # SimWorld's old runtime-LoRA result cannot meet merged-mode validation.
+    # Supply only the tested-base proof and the matching simulated install fold;
+    # training, scoring, judging and journal promotion still use the real code.
+    from sn120_v2.gpu import merged as merged_module
+    from sn120_v2.headchain import FIXED_ORDER
+    from sn120_v2.types import FoldArtifact
+
+    def proof_files(entry):
+        assert entry.status == "scored" and entry.lora is not None
+        return {"model.bin": sha256_hex(f"tested base of {entry.lora.lora_hash}".encode())}
+
+    def simulated_proof(entry):
+        if entry.status != "scored" or not full.eval_merged:
+            return entry
+        return dataclasses.replace(
+            entry,
+            tested_base_hash=manifest_digest(proof_files(entry)),
+            tested_fold_kernel=FIXED_ORDER,
+        )
+
+    original_result = merged_module.assert_tested_result
+
+    def require_fixture_proof(params, entry):
+        original_result(params, entry)
+        if params.eval_merged and entry.status == "scored":
+            assert entry.tested_base_hash == manifest_digest(proof_files(entry))
+            assert entry.tested_fold_kernel == FIXED_ORDER
+
+    merged_module.assert_tested_result = require_fixture_proof
+
+    def fold_merged(head, params, out_prefix, tested=None, **kwargs):
+        if not params.eval_merged:
+            return world.folder.__class__.fold(world.folder, head, params, out_prefix)
+        assert tested is not None and len(head.loras) == 1
+        assert head.loras[0].lora_hash == tested.lora.lora_hash
+        base = f"tested base of {tested.lora.lora_hash}".encode()
+        master = f"tested master of {tested.lora.lora_hash}".encode()
+        world.store.put(f"{out_prefix}/base/model.bin", base)
+        world.store.put(f"{out_prefix}/master/master.bin", master)
+        base_files = {"model.bin": sha256_hex(base)}
+        master_files = {"master.bin": sha256_hex(master)}
+        fold = FoldArtifact(
+            head.version_id,
+            manifest_digest(base_files), base_files,
+            manifest_digest(master_files), master_files,
+            out_prefix, SIM_IMAGE,
+        )
+        merged_module.assert_fold_matches(params, tested, fold.base_hash)
+        return fold
+
+    world.folder.fold = fold_merged
+    real_run = world.runner.run
+
+    def merged_run(ticket):
+        result = real_run(ticket)
+        result = dataclasses.replace(
+            result, entries=tuple(simulated_proof(entry) for entry in result.entries)
+        )
+        for entry in result.entries:
+            merged_module.assert_tested_result(ticket.params, entry)
+        return result
+
+    world.runner.run = merged_run
+    real_submit = world.controller.submit_result
+
+    def merged_submit(result, at):
+        # Validate the simulated worker proof at the real sealed-result boundary.
+        for entry in result.entries:
+            merged_module.assert_tested_result(full, entry)
+        return real_submit(result, at)
+
+    world.controller.submit_result = merged_submit
+
+    def king_train(request):
+        return synthetic_lora(world, real_affine_train(request), 0.2, SIM_IMAGE)
+
     try:
-        world.trainer.train = lambda request: synthetic_lora(world, real_king_train(request), 0.2, SIM_IMAGE)
+        world.trainer.train = king_train
         with simulated_worker_identity():
             king = world.round()
     finally:
-        world.trainer.train = real_king_train
+        world.trainer.train = real_affine_train
     assert king and king.outcome == "applied"
     winner_raw = world.store.get(layout.winner_batch(king.round_id))
     world.admission._read = lambda hotkey: (winner_raw, {"valid": True, "quality": 0.0, "cap_rate": 0.0, "train": {}})
@@ -202,7 +280,6 @@ def main() -> int:
 
     # A settled null update with a tagged non-finite norm and a real Stage-B
     # duplicate. Both charged statuses and both evidence forms reach the journal.
-    import sn120_v2.controller as controller_module
     params = dataclasses.replace(full, fold_every_k=1)
     assert params.params_hash == full.params_hash
     # The old rollback is tested against the latest historical reviewed pin.
@@ -221,12 +298,28 @@ def main() -> int:
     # Invalidate cached miner-file raw bytes left by the past-king duplicate
     # fixture. All three stage-B entries are independent at Stage A.
     world.admission._read = lambda hotkey: valid_affine_read(world, hotkey)
-    real_train = world.trainer.train
+    # Call the explicit base trainer, not the bound method already wrapped for
+    # the king. The real affine file remains the frozen batch in the store.
+    affine_metadata.__exit__(None, None, None)
+
+    def base_train(request):
+        # Supply only the simulator's quality sidecar for this unwrapped call;
+        # the real affine batch bytes and their hash stay unchanged.
+        real_read = world.store.get
+        quality = world.sim_qualities.get(request.entry.batch.batch_sha256, 0.0)
+        sidecar = canonical_json({"quality": quality, "cap_rate": 0.0,
+                                  "train": request.entry.batch.train})
+        world.store.get = lambda key: sidecar if key == request.entry.batch.uri else real_read(key)
+        try:
+            artifact = sim_train(world.trainer, request)
+        finally:
+            world.store.get = real_read
+        return artifact
 
     def train(request):
-        artifact = real_train(request)
         # Match the two comparable seats' seed as well as their direction. The
         # first seat is excluded as null_update and never supplies an anchor.
+        artifact = base_train(request)
         if request.entry.queue_pos == 2:
             record = world.controller.state.round
             entry = record.leases[0].entries[1]
@@ -242,12 +335,11 @@ def main() -> int:
     # Normal close deletes the round's pending prefix. Preserve an independent
     # byte-for-byte evidence archive at submit_result, without changing close.
     from sn120_v2.store import put_record
-    real_submit = world.controller.submit_result
+    archive_base = merged_submit
 
     def archive_result(result, at):
         put_record(world.store, f"qualification/sealed/{result.round_id}/{result.lease_id}.json", result)
-        return real_submit(result, at)
-
+        return archive_base(result, at)
     world.controller.submit_result = archive_result
     with simulated_worker_identity():
         settled = world.round()

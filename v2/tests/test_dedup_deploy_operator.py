@@ -143,21 +143,21 @@ def test_health_cut_semantics_and_duplicate_only_open_decision(tmp_path, monkeyp
     assert out["outcome"] == "null"
 
 
-def test_apply_requires_reviewed_old_worker_recipe(tmp_path, monkeypatch):
+def test_apply_requires_reviewed_combined_worker_recipe(tmp_path, monkeypatch):
     op = operator(tmp_path, monkeypatch)
-    # This assertion is pinned explicitly so a release-source digest cannot
-    # accidentally replace the retained king-x2 worker recipe in apply checks.
+    # Merged evaluation requires the worker digest from the combined GPU tree.
     from sn120_v2.params import load_params
     params = load_params(KIT / "new-params.json")
-    assert params.recipe.code_digest == op.EXPECT["old_digest"]
-    assert params.recipe.code_digest != op.EXPECT["new_digest"]
+    assert params.recipe.code_digest == op.EXPECT["new_digest"]
+    assert params.recipe.code_digest != op.EXPECT["old_digest"]
+    assert params.eval_merged is True
     assert (params.min_signal_rollouts, params.min_step_norm, params.z_bar) == (1, 0.0, 1.5)
-    assert op.EXPECT["new_commit"] == "5e9df83842f34cc3204d8003169d72f5ed4121ab"
+    assert op.EXPECT["new_commit"] == "50afaca32ea982796728a0b07cb6e3c579ef378b"
     assert (op.EXPECT["gate_round"], op.EXPECT["first_health_round"]) == ("r000091", "r000092")
     assert params.params_hash == op.EXPECT["new_params_hash"]
     assert all(field in json.loads((KIT / "new-params.json").read_text()) for field in (
         "train_seed_scope", "dedup_enabled", "dedup_rollout_overlap", "dedup_cos_shared_seed",
-        "dedup_cos_own_seed", "min_signal_rollouts", "min_step_norm", "z_bar"))
+        "dedup_cos_own_seed", "min_signal_rollouts", "min_step_norm", "z_bar", "eval_merged"))
 
 
 def test_legacy_params_require_old_head(tmp_path, monkeypatch):

@@ -7,19 +7,21 @@ no development completion line is promoted to a final PASS.
 
 ## Current approved release
 
-The approved design enables dedup, `train_seed_scope=round` and charged null
-updates, raises the crown threshold to `z_bar=1.5`, and makes both admission
-floors no-ops:
+The approved design enables dedup, `train_seed_scope=round`, charged null
+updates and merged-candidate evaluation, raises the crown threshold to
+`z_bar=1.5`, and makes both admission floors no-ops:
 
 ```text
-dedup_enabled        true
-train_seed_scope     round
-dedup_rollout_overlap 0.5
-dedup_cos_shared_seed 0.135
-dedup_cos_own_seed    0.002
-min_signal_rollouts  1
-min_step_norm        0.0
-z_bar                1.5
+dedup_enabled          true
+train_seed_scope       round
+dedup_rollout_overlap  0.5
+dedup_cos_shared_seed  0.135
+dedup_cos_own_seed     0.002
+min_signal_rollouts    1
+min_step_norm          0.0
+z_bar                  1.5
+eval_merged            true
+recipe.code_digest     28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a
 ```
 
 The default offline gate is `r000091`, with `r000092` as the first health round
@@ -38,22 +40,30 @@ nonempty minibatches. Therefore setting `min_signal_rollouts=1` is not enough
 at the previous release candidate `e9656634`, which incorrectly used
 `max(min_signal_rollouts, recipe.minibatches)`.
 
-The minimal correction is commit
+The original minimal correction was commit
 `8afd574736f6a2bac351cd3aa0edcd6295c35e44`, directly on
 `e96566341dfa463d0a2f1853f038dac9877b2c9a`. It changes only
 `v2/sn120_v2/admission.py` and `v2/tests/test_min_rollouts.py`, removing the
-implicit minibatch floor and retaining the explicit configured floor.
-`git diff e0ab853a 8afd5747 -- v2/sn120_v2/gpu` is empty. Release commit
-`5e9df83842f34cc3204d8003169d72f5ed4121ab` sits directly on `8afd5747` and
-updates only `publisher.py` and its tests: the `llms.txt`/`mining.json` contract
-now states the explicit signal floor, disabled norm floors and dynamic `z_bar`.
-The release pin in `expect.json` selects this commit, independently of the kit
-commit, so it can later be re-pinned to AFF-5's combined rounding-fix release.
-The GPU source manifest remains:
+implicit minibatch floor and retaining the explicit configured floor. The
+combined lineage retains that functional correction through `39cc17cf`; the
+only admission-code delta from `8afd5747` is explanatory rule text.
+
+Release commit `50afaca32ea982796728a0b07cb6e3c579ef378b` combines the dedup
+release, no-op-floor publication and AFF-5 PR #310 head
+`1fa67a9770884eb679ffeb91fd133ac49575d117`. Its GPU tree has no diff from that
+AFF-5 head. Merged evaluation uses the install arithmetic
+`round_bf16(fp32 king master + LoRA update)`; the GPU source manifest is:
 
 ```text
-b68a3005fd9837e9474349ca086088d9a7649406772e141b169952e7ef7f6e01
+28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a
 ```
+
+The offline diagnostic `dedup.dryrun` now reports the same explicit
+`min_signal_rollouts` floor as `admission.check_batch`. It no longer reports
+`max(min_signal_rollouts, recipe.minibatches)`. This non-GPU diagnostic change
+does not change the release commit, GPU digest or params identity. A regression
+uses two active rollouts with `minibatches=71`, `min_signal_rollouts=1` and
+`min_step_norm=0.0`; both real admission and the diagnostic accept it.
 
 At `min_step_norm=0.0`, static admission accepts every valid nonnegative cap
 because `cap >= 0.0`. Judging rejects no finite stored norm because a
@@ -70,16 +80,23 @@ The generated full params artifact is byte-identical to `new-params.json`:
 
 ```text
 source                 v2/ops/dedup_params_step.py -> params_dedup_full.json
-file SHA-256           f8073812849133f5d0e81728ef361d3e98b0466b4b76e3b6259a4a858d891d4b
-canonical params_hash  8543962a34e8fecb0da3663e05b0c222ae612cbe4a8cef44fedf24f42f0504e5
+file SHA-256           4acb73b3cf45e2240c147150e854ac27ab3f80851903b7adbb15b08452bc2784
+canonical params_hash  d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c
 old file SHA-256       86c9cd5b5e696c6c10411fd828b7e26a641d06bd39f94a4ea98eb69de3e78f56
 old canonical hash     bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a
 ```
 
 A canonical `Params.params_hash` is not the SHA-256 of the pretty JSON file.
-The full params retain king-x2's worker recipe digest
-`5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47`;
-that is distinct from the release's GPU source digest above.
+The full params pin the combined worker recipe
+`28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a`,
+which enables merged evaluation. The old params pin worker recipe
+`5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47`.
+
+Independent generation from the reconstructed original IDLE copied journal at
+`/home/bb/scratch/dedup-combined-50afaca3-v1/from-original-idle.json` was
+byte-identical to the full params artifact. The five effective changes are
+`dedup_enabled`, `train_seed_scope`, `z_bar`, `eval_merged` and
+`recipe.code_digest`. All disabled-floor values remain explicitly present.
 
 The earlier `5fd2ea0c…` file contained `min_signal_rollouts=64` and
 `min_step_norm=0.02`, with canonical hash `0b2f390b…`. The intermediate
@@ -95,13 +112,13 @@ SHA-256 1a7475525b8c176b445927fe864b1df6e7abf31b8083e011e9a3e4c2c3acf1ca
 574 records, sequence 0..573, r000088 open
 ```
 
-The source SHA-256 was unchanged after testing. Evidence for this approved
-z=1.5 transition is under `/home/bb/scratch/dedup-z15-actual.fIOu3YMp`, in
-particular `guarded-result.json`.
+The source SHA-256 was unchanged after testing. Combined-release isolation
+artifacts are under `/home/bb/scratch/dedup-combined-50afaca3-v1`.
 
 An independent copied open journal was tested with the real guarded isolation
 script. The refusal returned exit 2 and left its journal byte-identical at the
-source SHA-256 above:
+source SHA-256 above. Its captured stdout and stderr are
+`open-refusal.stdout` and `open-refusal.stderr` in that artifact directory:
 
 ```text
 a round is open; set the parameters when it has closed (a decided round takes new digests only)
@@ -113,7 +130,7 @@ guarded transition, which produced:
 
 ```json
 {
-  "after_params_hash": "8543962a34e8fecb0da3663e05b0c222ae612cbe4a8cef44fedf24f42f0504e5",
+  "after_params_hash": "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c",
   "before_params_hash": "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a",
   "exit": 0,
   "isolated": true,
@@ -131,7 +148,12 @@ The effective changes are exactly:
 {
   "dedup_enabled": {"before": false, "after": true},
   "train_seed_scope": {"before": "batch", "after": "round"},
-  "z_bar": {"before": 1.0, "after": 1.5}
+  "z_bar": {"before": 1.0, "after": 1.5},
+  "eval_merged": {"before": false, "after": true},
+  "recipe.code_digest": {
+    "before": "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47",
+    "after": "28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"
+  }
 }
 ```
 
@@ -152,133 +174,146 @@ is created. Consequently this route creates no stray R2 journal copies.
 The isolated wrapper is only for copied-state qualification, never a command
 to point at production state.
 
-## Regression evidence for the z=1.5/no-op-floor revision
+## Regression evidence for the combined release
 
-On 2026-11-21, the focused 30-test selection passed:
+Earlier z=1.5-only focused 30-test and broader 97-test runs passed against the
+superseded `5e9df838`/`8543962a…` proposal. They are **not current
+combined-release or final-suite evidence**.
 
-```bash
-env PYTHONPATH="$PWD/v2" PYTHONDONTWRITEBYTECODE=1 \
-  /home/bb/scratch/kingx2-genfeed-rebase/testenv/bin/python -m pytest -q \
-  v2/tests/test_dedup_params_step.py \
-  v2/tests/test_dedup_publication.py \
-  v2/tests/test_dedup_deploy_operator.py \
-  v2/tests/test_dedup_isolated_set_params.py \
-  v2/tests/test_min_rollouts.py
-```
+The combined focused params/operator/publication/min-rollouts selection passed
+27 tests with exit 0. After the merged-fixture and diagnostic-floor corrections,
+a combined focused controller/operator/params/publication/isolation/admission
+selection passed 46 tests with exit 0. Its log is
+`/home/bb/scratch/dedup-combined-focused-after-fix-v2.log`, with complete output
+`.............................................. [100%]`. The preceding four-test
+failure was a dropped `layout` import in the test module, not a controller
+failure; restoring that import fixed all four. A later expanded selection of
+frozen inputs, isolation, params, operator, controller, minimum-rollouts,
+merged evaluation and publisher modules passed 80 tests with exit 0. Its log
+is `/home/bb/scratch/dedup-kit-combined-focused-final-v1.log`. These focused
+runs do not replace the required final complete suite against the final
+committed source.
 
-Output:
+AFF-5 reported its uninterrupted suite at `1fa67a97`: **1 failed, 1,691 passed,
+1 skipped**. Its actual terminal traceback identifies
+`test_public_queue_files.py::test_every_key_that_the_snapshot_had_before_is_the_same_byte_for_byte`,
+not the different public-queue test suggested by an earlier positional
+estimate. The expected compatibility hash is `a5ffb03f…`; the actual hash is
+`7b07d90a…`. AFF-5 and this qualification session independently reproduced the
+same test failure and hashes on an untouched archive of `4d337954`; the
+combined-tree public-queue module has the same single failure. This supports
+its classification as pre-existing rather than an AFF-5 regression. It remains
+a recorded suite failure, not a green suite or a justification for weakening
+the public-queue contract. The local release-base log is
+`/home/bb/scratch/dedup-base-4d337954-public-snapshot-v1.log`; the combined
+module log is `/home/bb/scratch/dedup-kit-public-queue-isolated-v1.log`.
+The earlier AFF-5 Generator-recovery failures did not recur in its final run.
 
-```text
-..............................                                           [100%]
-```
+The first integrated-kit suite was stopped after its known smoke-copy fixture
+failure and before terminal output; it is not complete-suite evidence. A new
+corrected integrated-kit suite and a clean `50afaca3` release suite are running.
+The complete-suite failure above remains expected until separately reconciled;
+its presence must not be omitted from final counts.
 
-The broader selection also completed with exit 0 and all 97 tests passed:
-
-```bash
-env PYTHONPATH="$PWD/v2" PYTHONDONTWRITEBYTECODE=1 \
-  /home/bb/scratch/kingx2-genfeed-rebase/testenv/bin/python -m pytest -q \
-  v2/tests/test_dedup.py v2/tests/test_dedup_controller.py \
-  v2/tests/test_dedup_params_step.py v2/tests/test_dedup_publication.py \
-  v2/tests/test_dedup_deploy_operator.py \
-  v2/tests/test_dedup_isolated_set_params.py \
-  v2/tools/dedup-deploy/test_frozen_inputs.py v2/tests/test_min_rollouts.py
-```
-
-Output:
-
-```text
-........................................................................ [ 74%]
-.........................                                                [100%]
-```
+The corrected assembly module passed all 20 tests with exit 0 in
+`/home/bb/scratch/dedup-kit-assembly-explicit-legacy-and-groups-v1.log`. An
+earlier ordinal estimate incorrectly attributed the integrated-suite failure
+marker to the round-seed test; the exact two-test run and assembly traceback
+identified the smoke-copy test instead. The production set-params guard
+correctly rejected its incomplete fixture. The test now serializes all seven
+explicit disabled legacy dedup/seed fields and requests 32 groups explicitly,
+preserving its original 64-rollout smoke coverage independently of the
+release's no-op admission floor. This module result does not replace the final
+complete suite.
 
 Coverage includes no implicit minibatch floor, finite zero/small norms at the
-zero floor, charged non-finite stored updates, only three effective params
-changes for a legacy king-x2 record, explicit seven-field dedup serialization
-plus `z_bar=1.5`, stopped-loop isolation, public-only authenticated checks,
-404/5xx/timeout retries, and health using journal decision cuts plus
-`run.log`/public `eval_wall_s`. Publication tests verify the dedup rules, round
-training-seed formula, both no-op floors and the literal `z=1.5` final/early-look
-rules in `llms.txt`, the `z_bar=1.5` value in `mining.json`, and a clean
+zero floor, charged non-finite stored updates, the exact five effective params
+changes, explicit seven-field dedup serialization plus `z_bar=1.5` and
+`eval_merged=true`, merged tested-base/install-fold identities, stopped-loop
+isolation, public-only authenticated checks, 404/5xx/timeout retries, and
+health using journal decision cuts plus `run.log`/public `eval_wall_s`.
+Publication tests verify the dedup rules, round training-seed formula, both
+no-op floors and the literal `z=1.5` final/early-look rules in `llms.txt`, the
+`z_bar=1.5` value in `mining.json`, merged-evaluation disclosure, and a clean
 `publisher.check_pair` result.
 
-## Current working-kit rollback requalification
+## Combined working-kit rollback requalification
 
-The z=1.5 development v1 exposed a decoder problem: adding the existing
-`z_bar` to the removal map made its presence look like a new unknown field.
-The correction distinguishes the seven genuinely new dedup fields from the
-reviewed historical `z_bar=1.5` override, validates the complete pin, then
-removes all eight release values before decoding old behavior. Development v2
-also exposed that the accounting validator must use an actual dedup field to
-recognize new history; an ordinary old params file can legitimately contain
-`z_bar`. Neither v1 nor v2 is a PASS.
+Earlier z=1.5-only rollback development v3 and committed-kit
+`a8f5b5dcdaac2421c44b7ac399d40f0798874f54` evidence used `8543962a…` and
+pre-merged-release code. Those six-PASS records are superseded by the combined
+development run below; they are not current committed-kit PASS evidence.
 
-The corrected working-kit v3 command completed with exit 0:
+The combined fixture supplies deterministic tested-base bytes and matching
+simulated install folds. It calls the real `gpu.merged.assert_tested_result`
+and `assert_fold_matches` checks, including Stage-B duplicate scoring, merged
+winner promotion and fold publication. Neither production proof is bypassed.
+The fixture completed `null_update`, `winner`, `duplicate` decisions and an
+applied close. Early attempts with recursive submit wrappers, incomplete
+`eval_merged` recognition and a stale old-worker expectation failed and are
+not counted as qualification.
+
+The corrected **working-tree development v19** command completed with exit 0:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 \
 /home/bb/scratch/kingx2-genfeed-rebase/testenv/bin/python -I \
   v2/tools/dedup-deploy/qualify-rollback.py \
-  /home/bb/scratch/dedup-z15-rollback-development-v3 \
+  /home/bb/scratch/dedup-combined-rollback-development-v19 \
   --old-v2 /home/bb/scratch/dedup-old-c5252865/v2 \
   --python /home/bb/scratch/kingx2-genfeed-rebase/testenv/bin/python
 ```
 
-Its log is `/home/bb/scratch/dedup-z15-rollback-development-v3.log`. The actual
-six PASS lines were:
+Its log is
+`/home/bb/scratch/dedup-combined-rollback-development-v19-qualification.log`.
+The actual seven PASS lines were:
 
 ```text
 ROLLBACK QUALIFICATION PASS: real new-controller fixture: failed lease, duplicate-only, null-update, Stage-B duplicate, sealed nonfinite evidence
 ROLLBACK QUALIFICATION PASS: closed dedup history replays with charged duplicates/null update and uncharged failed-lease survivors
 ROLLBACK QUALIFICATION PASS: bare old code separately rejects new params, duplicate/null_update, new round fields and tagged nonfinite values
-ROLLBACK QUALIFICATION PASS: old-code compatibility CLI re-pins bba7a409 after historical 8543962a; unknown/newer params refused
+ROLLBACK QUALIFICATION PASS: old-code compatibility CLI re-pins bba7a409 after historical d5979c30; unknown/newer params refused
+ROLLBACK QUALIFICATION PASS: native release reads post-rollback dedup history at old bba7a409/z1.0; validator weights dry-run would set without shim or chain write
 ROLLBACK QUALIFICATION PASS: undecided/decided open dedup rounds refuse before fence; local and mirrored journals unchanged
 ROLLBACK QUALIFICATION PASS: unmodified old loop uses the compatibility executable and exits after exactly one bounded start
 ```
 
-The replay assertion explicitly checks `state.params.z_bar == 1.0` after the
-reviewed z=1.5 history is decoded. This is working-kit development evidence;
-the committed-kit rerun at `a8f5b5dcdaac2421c44b7ac399d40f0798874f54`
-also completed with exit 0. Its log is
-`/home/bb/scratch/dedup-z15-rollback-final.log`; its fixture journal SHA-256
-is `69fb00a5eca85f7fc4286dbe761e5a443d82440d4df8518765fb4c5c41e7a0dc`.
-It emitted the same six PASS lines above against the reviewed `8543962a…`
-history. **Bare `c5252865` cannot
-replay dedup history.** Rollback is code-first: finish open work under new
-code, check out `c5252865`, apply the complete old `bba7a409…` params through
-the hashed compatibility loader, and start exactly one old-code loop. Sealed
-evidence is never deleted to make old code accept history.
+This is **working-tree development evidence only**, not a final committed-kit
+PASS. The compatibility loader validates the exact full `d5979c30…` pin,
+including `eval_merged=true` and the combined worker digest, before exposing
+old behavior. It removes the seven dedup fields, historical `z_bar=1.5` override
+and `eval_merged=true`, then translates only the reviewed combined worker digest
+to the reviewed old worker digest **in memory**. Journal bytes are never rewritten.
+The replay assertion checks final old `state.params.z_bar == 1.0`.
+
+**Bare `c5252865` cannot replay dedup history.** Rollback is code-first:
+finish open work under new code, check out `c5252865`, apply the complete old
+`bba7a409…` params through the hashed compatibility loader, and start exactly
+one old-code loop. Sealed evidence is never deleted to make old code accept
+history.
 
 ### Native release reader after rollback
 
-The validator/weights host can stay on native release `5e9df838` after a
+The validator/weights host can stay on native release `50afaca3` after a
 controller rollback; it does not need to go back to `c5252865`. The native
-release `Params.from_dict` gives an old record that omits the seven dedup
-fields their effective legacy values, including `dedup_enabled=false` and
-batch-scoped training seeds. Release state/result types already decode
-historical duplicate decisions, duplicate clusters and tagged non-finite
-stored evidence. The compatibility overlay is needed by the **old controller**,
-not by native release readers.
+release `Params.from_dict` gives an old record that omits the dedup fields
+their effective legacy values, including `dedup_enabled=false`,
+`eval_merged=false` and batch-scoped training seeds. Release state/result
+types decode historical duplicate decisions, duplicate clusters and tagged
+non-finite stored evidence. The compatibility overlay is needed by the **old
+controller**, not by native release readers.
 
-`qualify-rollback.py` now runs the post-repin journal through a fresh `-I`
+`qualify-rollback.py` runs the post-repin journal through a fresh `-I`
 interpreter with only the native new-v2 source on its import path. It asserts
-the historical new params canonical hash, all seven historical dedup fields
-and `z_bar=1.5`, new round fields and charged duplicate/null-update decisions,
-a tagged non-finite sealed report, and final IDLE params `bba7a409…`,
-`z_bar=1.0`, `dedup_enabled=false`, `train_seed_scope=batch`. It then invokes
-the release weights-writer dry-run with an in-memory chain. That actual report
-was `status="would set"`, two kings, weights `{1: 0.5, 7: 0.5}`, with zero
-submissions, an unchanged journal and no writer state/lock. The first manual
-probe used a partial sparse-UID fake chain and correctly returned
-`would defer`; it is not a passing dry-run result. The complete sparse-UID
-fixture closes that test setup gap. It is synthetic and does not test a live
-chain write or a production journal mirror.
-
-The first full run with this assertion completed with exit 0 at
-`/home/bb/scratch/dedup-z15-rollback-release-read-v1.log` and emitted:
-
-```text
-ROLLBACK QUALIFICATION PASS: native release reads post-rollback dedup history at old bba7a409/z1.0; validator weights dry-run would set without shim or chain write
-```
+the historical `d5979c30…` params canonical hash, all dedup fields,
+`eval_merged=true`, the combined worker digest and `z_bar=1.5`, new round
+fields and charged duplicate/null-update decisions, a tagged non-finite
+sealed report, and final IDLE params `bba7a409…`, `z_bar=1.0`,
+`dedup_enabled=false`, `train_seed_scope=batch`. It then invokes the release
+weights-writer dry-run with an in-memory chain. The actual combined report was
+`status="would set"`, with zero submissions, an unchanged journal and no
+writer state/lock. This synthetic fixture does not test a live chain write or
+a production journal mirror.
 
 No external `/validator-ready` or `/validator-rollback-ready` marker gate was
 added. The cancelled proposal would have made the new or old loop depend on a
@@ -357,21 +392,59 @@ completion lines, not committed-kit PASS lines.
 Earlier old-floor attempts v10–v16 and abort v1–v4 failed for fixture,
 selection, timeout or harness reasons. None is counted as a qualification PASS.
 Working-kit old-floor rollback runs v23–v26 passed their six named rollback
-checks against `0b2f390b…`; the current `8543962a…` run above supersedes their
-params identity.
+checks against `0b2f390b…`; the later z=1.5-only `8543962a…` runs and the
+current combined `d5979c30…` development v19 supersede their params identity.
 
-## Final committed-kit qualification
+## Current combined development rehearsals and remaining qualification
 
-The z=1.5 normal development rehearsal completed with exit 0 and emitted
-`DRY DEVELOPMENT COMPLETE: real run/gate/apply/public/health; no final PASS`.
-Its health was 2,000 scored tasks, one duplicate, one charged null update,
-zero admission cuts, no lease failures, and a clean `r000093` second open.
-Its log is `/home/bb/scratch/dedup-z15-development-normal-v1.log`. This is
-fixture development evidence, not a final committed-kit PASS.
+The superseded z=1.5-only normal development rehearsal completed with exit 0
+and emitted `DRY DEVELOPMENT COMPLETE: real run/gate/apply/public/health; no
+final PASS`. Its health was 2,000 scored tasks, one duplicate, one charged
+null update, zero admission cuts, no lease failures, and a clean `r000093`
+second open. Its log is `/home/bb/scratch/dedup-z15-development-normal-v1.log`.
+This is **superseded pre-merged fixture development evidence**, not a current
+committed-kit PASS.
 
-Committed-kit rollback qualification is complete at `a8f5b5dc`, as recorded
-above. Pending at this source revision: clean normal and abort-after-open
-rehearsals, exact final kit HEAD and every kit-file SHA-256.
+The first combined normal working-tree development attempt failed before
+apply: an unconditional new-module import made the real old-code `r000087`
+predecessor finish as `no_decision`, so every later old-code predecessor lacked
+sealed results and the `r000091` gate correctly refused as not clean. Its
+offline autodeploy log records `FAIL before go-live: gate close was not clean`;
+it did not apply new code or params and emitted no PASS. The fixture now
+imports merged proof checks only when `eval_merged` is active, while still
+requiring both merged tested-base and install-fold checks in the new release.
+This failed attempt and any subsequent development run are not final PASS
+evidence.
+
+Combined normal working-tree development v2 also failed before apply. Its
+actual terminal traceback was `AttributeError: 'Params' object has no attribute
+'eval_merged'` in the simulated `MergedSimFolder.fold` during old-code
+`r000087`, after winner publication but before a clean close. The fixture now
+uses `getattr(params, "eval_merged", False)` at that legacy boundary. The
+production merged tested-base and install-fold guards remain mandatory under
+new params. Normal development v3 was restarted from a fresh isolated root;
+its outer log's early `REFUSED` line is the intentional competing-deployment
+guard check, not the rehearsal's terminal result. No v3 completion is claimed
+here without its terminal output.
+
+The earlier normal-v1/v2 stale-manifest attempts described below predate these
+combined merged-fixture runs; the names refer to different attempts.
+
+At `2026-11-21T14:21:47Z`, both GitHub PR #310 and `refs/pull/310/head` still
+resolved to `1fa67a9770884eb679ffeb91fd133ac49575d117`. The integrated release
+is `50afaca32ea982796728a0b07cb6e3c579ef378b`, its GPU tree matches AFF-5,
+and `c5252865` remains an ancestor. AFF-5's terminal report is recorded above.
+
+Pending at this source revision:
+
+- Terminal complete combined-release and integrated-kit suites, retaining the
+  pre-existing public-snapshot failure explicitly.
+- Combined normal and abort-after-open development rehearsal terminal output.
+- Clean committed-kit normal and abort-after-open rehearsals.
+- Committed-kit rollback qualification.
+- Exact final kit HEAD and every kit-file SHA-256.
+
 Final rehearsal must compare the complete recursive 24-file kit and run without
 `DEDUP_DRY_DEVELOPMENT=1`. Only verbatim output from those runs may be added
-here or reported as final PASS evidence.
+here or reported as final PASS evidence. No current committed-kit normal,
+abort or rollback PASS is claimed.

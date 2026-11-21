@@ -41,10 +41,12 @@ INBOX = Path(os.environ.get("DEDUP_GENERATOR_INBOX", EXPECT["generator_inbox"]))
 INGESTD_PID = Path(os.environ.get("DEDUP_GENERATOR_PID", EXPECT["generator_ingestd_pid"]))
 PRIOR_INDEX = Path(os.environ.get("DEDUP_PRIOR_INDEX", EXPECT["prior_index"]))
 _package = V2 / "sn120_v2"
-_spec = importlib.util.spec_from_file_location("sn120_v2", _package / "__init__.py", submodule_search_locations=[str(_package)])
-assert _spec is not None and _spec.loader is not None
-sys.modules["sn120_v2"] = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(sys.modules["sn120_v2"])
+_loaded = sys.modules.get("sn120_v2")
+if _loaded is None or Path(_loaded.__file__).resolve().parent != _package.resolve():
+    _spec = importlib.util.spec_from_file_location("sn120_v2", _package / "__init__.py", submodule_search_locations=[str(_package)])
+    assert _spec is not None and _spec.loader is not None
+    sys.modules["sn120_v2"] = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(sys.modules["sn120_v2"])
 from sn120_v2 import layout  # noqa: E402
 from sn120_v2.canonical import sha256_hex  # noqa: E402
 from sn120_v2.cli import summary  # noqa: E402
@@ -558,14 +560,14 @@ def apply_checked_out() -> None:
             raise RuntimeError("new code digest mismatch")
         ensure_params("new-params.json", EXPECT["new_params_hash"])
         state = load(JOURNAL)
-        if state.params.recipe.code_digest != EXPECT["old_digest"] or state.params.irt_draw_rule != EXPECT["irt_draw_rule"]:
-            raise RuntimeError("new params did not retain the reviewed worker recipe or sqrt_fisher rule")
+        if state.params.recipe.code_digest != EXPECT["new_digest"] or state.params.irt_draw_rule != EXPECT["irt_draw_rule"]:
+            raise RuntimeError("new params did not pin the combined worker recipe or sqrt_fisher rule")
         if state.params.null_samples != EXPECT["null_samples"] or state.params.n_tasks != EXPECT["n_tasks"] or state.params.batch_cap != EXPECT["batch_cap"]:
             raise RuntimeError("new null sample count or task count mismatch")
         if state.params.rotation_active_size != EXPECT["active_size"]:
             raise RuntimeError("new active size mismatch")
-        if not state.params.dedup_enabled or state.params.train_seed_scope != "round":
-            raise RuntimeError("new params did not enable round-seeded dedup")
+        if not state.params.dedup_enabled or state.params.train_seed_scope != "round" or not state.params.eval_merged:
+            raise RuntimeError("new params did not enable round-seeded dedup and merged evaluation")
         if (state.params.dedup_rollout_overlap, state.params.dedup_cos_shared_seed,
                 state.params.dedup_cos_own_seed, state.params.min_signal_rollouts, state.params.min_step_norm,
                 state.params.z_bar) != (0.5, 0.135, 0.002, 1, 0.0, 1.5):

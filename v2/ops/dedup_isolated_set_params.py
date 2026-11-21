@@ -26,6 +26,10 @@ from pathlib import Path
 
 def _package() -> None:
     directory = Path(__file__).resolve().parents[1] / "sn120_v2"
+    loaded = sys.modules.get("sn120_v2")
+    if loaded is not None and Path(loaded.__file__).resolve().parent == directory.resolve():
+        # Preserve Python's normal parent-child attributes for in-process users.
+        return
     spec = importlib.util.spec_from_file_location(
         "sn120_v2", directory / "__init__.py", submodule_search_locations=[str(directory)]
     )

@@ -27,9 +27,9 @@ def historical_params(data: dict) -> Params:
         if digest_params(data) != REVIEWED_NEW_PARAMS_HASH:
             _bad("historical params differ from the reviewed dedup pin")
         recipe = data.get("recipe")
-        from .params import REVIEWED_OLD_CODE_DIGEST
-        if not isinstance(recipe, dict) or recipe.get("code_digest") != REVIEWED_OLD_CODE_DIGEST:
-            _bad("historical params do not retain the reviewed king-x2 worker recipe")
+        from .params import REVIEWED_NEW_CODE_DIGEST
+        if not isinstance(recipe, dict) or recipe.get("code_digest") != REVIEWED_NEW_CODE_DIGEST:
+            _bad("historical params do not pin the reviewed combined worker recipe")
     return Params.from_dict(data)
 
 

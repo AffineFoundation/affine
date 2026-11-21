@@ -20,12 +20,12 @@ from typing import Any, Mapping
 from .canonical import Record, digest, is_sha256
 from .errors import BatchRejected, ConfigError
 
-# Replay-only compatibility for the one reviewed AffineII dedup release. The
-# seven dedup fields are absent from old Params on purpose; the historical
-# crown-threshold override must also be removed to restore old z_bar=1.0. Old
-# training and old params_set records retain their pre-dedup behavior and
-# bba7a409... hash. The loader validates the complete historical record before
-# dropping these fields.
+# Replay-only compatibility for the one reviewed AffineII combined release.
+# Seven dedup fields and eval_merged are absent from old Params on purpose;
+# the historical crown-threshold override must also be removed to restore old
+# z_bar=1.0. Old training and old params_set records retain their pre-dedup
+# behavior and bba7a409... hash. The loader validates the complete historical
+# record before dropping these fields.
 DEDUP_FIELDS = {
     "train_seed_scope": "round",
     "dedup_enabled": True,
@@ -35,10 +35,11 @@ DEDUP_FIELDS = {
     "min_signal_rollouts": 1,
     "min_step_norm": 0.0,
     "z_bar": 1.5,
+    "eval_merged": True,
 }
-REVIEWED_NEW_PARAMS_HASH = "8543962a34e8fecb0da3663e05b0c222ae612cbe4a8cef44fedf24f42f0504e5"
+REVIEWED_NEW_PARAMS_HASH = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 REVIEWED_OLD_PARAMS_HASH = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"
-REVIEWED_NEW_CODE_DIGEST = "b68a3005fd9837e9474349ca086088d9a7649406772e141b169952e7ef7f6e01"
+REVIEWED_NEW_CODE_DIGEST = "28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"
 REVIEWED_OLD_CODE_DIGEST = "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47"
 
 # Identity of the launch model. The base hash is the manifest digest of the
@@ -384,13 +385,17 @@ class Params(Record):
                 return super().from_dict(data)
             if {name: data[name] for name in DEDUP_FIELDS} != DEDUP_FIELDS:
                 raise ConfigError("rollback compatibility accepts only the reviewed dedup parameter values")
-            if data.get("recipe", {}).get("code_digest") != REVIEWED_OLD_CODE_DIGEST:
-                # The dedup release changes controller/schema code only. Its
-                # complete new pin deliberately retains king-x2's worker recipe.
-                raise ConfigError("rollback compatibility accepts only the reviewed dedup worker recipe")
+            if data.get("recipe", {}).get("code_digest") != REVIEWED_NEW_CODE_DIGEST:
+                # The combined release pins its merged-evaluation worker code.
+                raise ConfigError("rollback compatibility accepts only the reviewed combined worker recipe")
             if digest(data) != REVIEWED_NEW_PARAMS_HASH:
                 raise ConfigError("historical params are not the reviewed dedup pin")
             data = {key: value for key, value in data.items() if key not in DEDUP_FIELDS}
+            # Historical replay exposes the old worker identity too. The full
+            # combined pin above authorizes this translation; the journal bytes
+            # themselves remain untouched and native release readers still see
+            # the original new recipe digest.
+            data["recipe"] = dict(data.get("recipe", {})) | {"code_digest": REVIEWED_OLD_CODE_DIGEST}
         return super().from_dict(data)
 
     @property
