@@ -4,6 +4,7 @@
     "rollback-compat/canonical.py": "4618f09f4b5f11768b9d204afc3bdb35cdcf6acfff0f7f4401477104bce9cec3",
     "rollback-compat/controller.py": "f236ca4bc53208030db2794654d68b410fb6be99cc098628c046dac0d2777815",
     "rollback-compat/dedup_compat.py": "e20331c7e29ac58991827b25864370723138b8163e55f76738f71c97f8cf932e",
+    "rollback-compat/journal.py": "52e8557928048e6c91e7655c480b43727d61b15058f9f8a5f827825ccd749bc8",
     "rollback-compat/params.py": "8b63b7c4dbeb3ec70fbfaa2109537f18165772a17a03a6f1a3c7743572df79b7",
     "rollback-compat/state.py": "46c6ca7dd93af02dfe1ccbf1b53251f8685d93760be04fc2793df6e4bde07819",
     "rollback-compat/types.py": "25ebe6ec7ac957fba78e1428ccd45e8186cfe4c996cca70947be0ad2a43db8da"

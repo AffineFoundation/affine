@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Restored c5252865 validator weights writer with the reviewed reader overlay.
-# Keep this kit outside the old checkout. Do not physically overlay sn120_v2.
+# Optional runtime-loader diagnostic for a separate c5252865 checkout.
+# Immutable ``python -m`` systemd units require restore_validator.sh instead;
+# this wrapper is not their required entry point. Keep the kit outside old v2.
 set -euo pipefail
 KIT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 exec "${DEDUP_ROLLBACK_PY:-python3}" -I - "$KIT" "$@" <<'PY'

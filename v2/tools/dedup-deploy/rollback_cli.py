@@ -6,8 +6,9 @@ Usage after the operator checks out c5252865:
 
 The kit must remain outside the checkout. Before importing the old package,
 this loader verifies every compatibility file against manifest.json and makes
-sn120_v2.canonical/types/params/state/controller resolve to those copies.
-All other modules, including gpu/**, remain the old checkout's exact files.
+sn120_v2.canonical/types/params/state/controller/dedup_compat/journal resolve
+to those copies. All other modules, including gpu/**, remain the old checkout's
+exact files.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ import sys
 
 OLD_COMMIT = "c525286580c84d795b3ca7cbdf2302e96fce31ba"
 OLD_GPU_DIGEST = "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47"
-OVERLAY = ("canonical", "types", "params", "state", "controller", "dedup_compat")
+OVERLAY = ("canonical", "types", "params", "state", "controller", "dedup_compat", "journal")
 
 
 def _load(name: str, path: Path, *, package: bool = False):
@@ -70,7 +71,7 @@ def install(kit: Path) -> None:
                                        for path in sorted(Path(package.__path__[0], "gpu").glob("*.py"))})
     if digest != OLD_GPU_DIGEST:
         raise RuntimeError(f"old GPU code digest is {digest}, not {OLD_GPU_DIGEST}")
-    for name in ("types", "params", "state", "controller", "dedup_compat"):
+    for name in ("types", "params", "state", "controller", "dedup_compat", "journal"):
         module = _load(f"sn120_v2.{name}", kit / f"rollback-compat/{name}.py")
         setattr(package, name, module)
     # Journal.__init__ appends a leader fence. Refuse new-code-only work first,

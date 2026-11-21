@@ -209,11 +209,22 @@ the public-queue contract. The local release-base log is
 module log is `/home/bb/scratch/dedup-kit-public-queue-isolated-v1.log`.
 The earlier AFF-5 Generator-recovery failures did not recur in its final run.
 
-The first integrated-kit suite was stopped after its known smoke-copy fixture
-failure and before terminal output; it is not complete-suite evidence. A new
-corrected integrated-kit suite and a clean `50afaca3` release suite are running.
-The complete-suite failure above remains expected until separately reconciled;
-its presence must not be omitted from final counts.
+The clean `50afaca3` complete suite log is
+`/home/bb/scratch/dedup-combined-release-50afaca3-full-suite-v1.log`. It reaches
+100% with one skip and the known public-snapshot failure, followed by the
+failure summary. It has **no terminal pass/fail count line**; do not infer an
+exact local total from the progress display or AFF-5's separate count.
+
+The corrected integrated-kit suite log is
+`/home/bb/scratch/dedup-kit-combined-full-suite-v2.log`. It also reaches 100%
+with one skip and no terminal count line. Its two failure-summary entries are
+the same public-snapshot failure and
+`v2/tests/test_no_legacy.py::test_v2_code_imports_no_legacy_module`. The latter
+reports explicit `sys.path` use in `frozen_input_dryrun.py:24`,
+`frozen_inputs.py:462`, `frozen_inputs.py:489` and `rollback_cli.py:120`.
+Those paths predate the physical-validator change, but the integrated tree is
+still **not green**. Neither failure is omitted or counted as a qualification
+PASS; the public-snapshot failure has separate pre-existing-base evidence.
 
 The corrected assembly module passed all 20 tests with exit 0 in
 `/home/bb/scratch/dedup-kit-assembly-explicit-legacy-and-groups-v1.log`. An
@@ -301,32 +312,101 @@ history.
 ### Validator rollback reader
 
 Jacob requires rollback to restore the validator too. The validator therefore
-uses old `c5252865` plus the same reviewed runtime compatibility loader, rather
-than staying on native release code. Native release readers remain compatible
-with this journal, but that is not the required rollback configuration.
+uses old `c5252865` plus the same reviewed compatibility behavior, rather than
+staying on native release code. Native release readers remain compatible with
+this journal, but that is not the required rollback configuration.
 
-Do not physically overlay `rollback-compat/*.py` into `sn120_v2`. A direct
-`python -m sn120_v2.weights_writer` does not install those reader modules before
-old imports. `rollback-validator-weights` selects `DEDUP_OLD_V2`, verifies all
-seven compatibility manifest hashes and installs the modules before importing
-the old writer. The kit stays outside the restored old checkout; the old
-`weights_writer.py` itself is unchanged.
+The immutable systemd invocation `python -m sn120_v2.weights_writer` cannot use
+the earlier external runtime loader. The final route is therefore a physical
+package staged by `restore_validator.sh`: all 123 exact old source files plus
+seven physically overlaid compatibility modules, including `journal.py` with
+the pre-fence open-dedup-round guard. `weights_writer.py` and the old package
+`__init__.py` remain unchanged. The stager pins every input and output hash and
+never reads or writes production state.
 
-The complete committed-kit rollback v4 completed with exit 0 and all eight PASS
-lines, including:
+The complete working-kit physical rollback v5 completed with exit 0 and all
+eight checks. Its actual output is
+`/home/bb/scratch/dedup-combined-rollback-physical-v5.log`. The focused physical
+proof v4 completed with exit 0 and the following lines:
 
 ```text
-ROLLBACK QUALIFICATION PASS: c5252865 validator weights_writer dry-run would set through reviewed runtime overlay; zero chain writes, journal unchanged
-{"chain_submissions": 0, "final_params_hash": "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a", "journal_unchanged": true, "kings": 2, "old_modules_physically_overlaid": false, "old_v2": "/home/bb/scratch/dedup-old-c5252865/v2", "runtime_import_shim": true, "weights_dry_run": "would set", "z_bar": 1.0}
+RESTORE VALIDATOR PASS: complete c5252865 plus seven physical compatibility files; 124 source files staged
+ROLLBACK QUALIFICATION PASS: c5252865 physical package runs python -m sn120_v2.weights_writer --dry-run: would set; no runtime shim, zero chain writes, journal unchanged
+kings: read from the journal file
+{"block": 5000, "blocks_since_last_write": 5000, "dry_run": true, "kings": 2, "kings_from": "the journal file", "last_write_block": 0, "status": "would set", "validator_hotkey": "5SimValidator", "validator_registered": true, "weights": {"1": 0.5, "7": 0.5}}
+{"chain_submissions": 0, "final_params_hash": "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a", "journal_unchanged": true, "kings": 2, "old_modules_physically_overlaid_count": 7, "runtime_import_shim": false, "weights": {"1": 0.5, "7": 0.5}, "weights_dry_run": "would set", "z_bar": 1.0}
 ```
 
-Its actual output is `/home/bb/scratch/dedup-combined-rollback-validator-v4.log`.
+The focused log is `/home/bb/scratch/dedup-physical-validator-proof-v4.log`.
+This v5/v4 record predates the final archive-manifest and direct physical
+open-round tests; the final command below is the current committed-kit proof.
+
 The reader proves exact historical `d5979c30…` identity through
 `dedup_compat.digest_params`; compatibility-translated old `Params` exposes
 `bba7a409…`/`z_bar=1.0` and has no dedup/seed attributes. It decodes historical
 charged decisions and sealed non-finite evidence. An in-memory chain returned
 `would set`, with zero submissions, unchanged journal and no writer state/lock.
-This is synthetic offline evidence, not a live chain or validator-state test.
+A missing eagerly imported `canonical.py` also makes the ordinary module entry
+point fail rather than silently borrowing another installed package.
+
+The ordinary module uses `PYTHONPATH=<stage>:<external-fixture>` in this offline
+proof. That explicitly selects the staged source; the only `sitecustomize.py`
+is external and supplies the in-memory chain. No fixture hook is included in
+the staged package. A real venv does not automatically put an adjacent source
+checkout on `sys.path`. On the box, the operator must prove that the existing
+interpreter resolves `/home/const/affine/v2/sn120_v2/__init__.py` before using
+file-only restoration. If it resolves elsewhere, that package-path installation
+must be repaired or the actual target supplied; this kit does not alter it.
+
+The deterministic tarball includes `sn120_v2/` and its complete
+`restore-validator-manifest.json`. The final proof verifies every archived
+byte against that directory. The staged package contains no `sitecustomize.py`,
+bytecode or test hook. This is synthetic offline evidence, not a live chain,
+production interpreter or validator-state test.
+
+The final rollback command is:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+/home/bb/scratch/kingx2-genfeed-rebase/testenv/bin/python -I \
+  v2/tools/dedup-deploy/qualify-rollback.py \
+  /home/bb/scratch/dedup-combined-rollback-physical-v8 \
+  --new-v2 /home/bb/scratch/affine-dedup-release-combined/v2 \
+  --old-v2 /home/bb/scratch/dedup-old-c525-v2 \
+  --python /home/bb/scratch/kingx2-genfeed-rebase/testenv/bin/python
+```
+
+Its log is `/home/bb/scratch/dedup-combined-rollback-physical-v8.log`.
+This working-tree run completed with exit 0 and **nine rollback PASS lines**:
+the eight original checks plus the direct **physical** `journal.py` check for
+undecided and decided open dedup rounds. Its core validator lines are:
+
+```text
+RESTORE VALIDATOR PASS: complete c5252865 plus seven physical compatibility files; 124 source files staged
+ROLLBACK QUALIFICATION PASS: c5252865 physical package runs python -m sn120_v2.weights_writer --dry-run: would set; no runtime shim, zero chain writes, journal unchanged
+ROLLBACK QUALIFICATION PASS: physical journal.py refuses undecided/decided open dedup rounds before fence; local and mirrored journals unchanged
+kings: read from the journal file
+{"block": 5000, "blocks_since_last_write": 5000, "dry_run": true, "kings": 2, "kings_from": "the journal file", "last_write_block": 0, "status": "would set", "validator_hotkey": "5SimValidator", "validator_registered": true, "weights": {"1": 0.5, "7": 0.5}}
+```
+
+The v8 deterministic tarball SHA-256 is
+`31d2b376fc2ec18a5e49d840ab2c7be0011a35d1d0593ab1c657d83924b14591`;
+its staged-manifest SHA-256 is
+`232ca5b9de0b7a05c85d76f28afa3f963bcc03c0d1eff488a97a00ff7ccd258e`.
+The generated source manifest verifies all 124 source files. The final
+committed-kit command/output below supersedes v8 only as provenance evidence;
+source and overlay identities are unchanged.
+
+Development v6 stopped at an incorrect shell argument-count check for
+`--tar PATH`; v7 stopped at a package-relative/archive-path mismatch in its new
+archive assertion. A focused command reusing v7's staging path was correctly
+refused because outputs must be new. None is qualification PASS evidence.
+The fresh v8 run fixed the wrapper and archive assertion and passed.
+
+For the physical journal, both local journals and all mirrored store objects
+stay byte-identical, with no store writes before the fence refusal. The archive
+is checked for all 124 source files plus its staged manifest. This is not
+evidence of production execution.
 
 Native release `50afaca3` independently reads the same post-repin journal. Its
 `Params.from_dict` supplies effective legacy defaults for omitted fields and
@@ -532,14 +612,34 @@ generator and reserve bytes preserved
 2026-11-21T14:37:22Z DRY POST-OPEN ROLLBACK PASS: sealed/undecided evidence finished under new code; shimmed old params/code and one old loop
 ```
 
-Pending at this source revision:
-
-- Terminal complete combined-release and integrated-kit suites, retaining the
-  pre-existing public-snapshot failure explicitly.
+Pending items were replaced by the terminal suite records above and the
+physical-validator qualification below. Complete-suite failures remain
+explicit; the focused PASSes are not represented as a green full suite.
 
 The final rehearsals compared the complete recursive 24-file kit and ran
 without `DEDUP_DRY_DEVELOPMENT=1`. Only their verbatim output is recorded as
-committed-kit PASS evidence. Normal, abort and all seven rollback checks are
-now complete; no production deployment is implied. The complete 24-file SHA-256
-inventory for the pushed kit revision is
-`/home/bb/scratch/dedup-combined-final-kit-hashes.json`.
+committed-kit PASS evidence. Normal, abort and the earlier seven rollback
+checks completed; the final physical-validator suite extends that rollback
+coverage. No production deployment is implied. The historical complete
+24-file SHA-256 inventory is
+`/home/bb/scratch/dedup-combined-final-kit-hashes.json`; it does not include
+the final physical-validator additions.
+
+### Final physical-validator additions
+
+The staged package contains 124 source files: 123 pinned `c5252865` files plus
+`dedup_compat.py`. Seven named modules replace old source bytes; all other
+source files retain their exact old hashes. The optional deterministic archive
+includes the entire package and its source manifest. The shared-package tests
+`test_weights_writer.py`, `test_links_core.py`, `test_links_cli.py`,
+`test_site_pull.py` and `test_site_pull_pool.py` passed **113 tests** with exit
+0 against a complete old-v2 fixture layout whose `sn120_v2/` was replaced by
+the staged package. Its log is
+`/home/bb/scratch/dedup-physical-validator-shared-jobs-v2.log`.
+
+The first shared-test attempt ran those tests with only the package staging
+parent available. It reached 100% with one failure because
+`test_links_cli.py` expects sibling `systemd/` deployment fixture files, which
+are intentionally not part of the package-only archive. The successful rerun
+used a copy of the full old-v2 tree to supply those fixture files, replacing
+only `sn120_v2/`. Neither result is a production-systemd or live-service test.

@@ -270,11 +270,10 @@ print(json.dumps({"native_release_read":True,"compatibility_overlay":False,
     (output / "release-read-after-rollback.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     out("native release reads post-rollback dedup history at old bba7a409/z1.0; validator weights dry-run would set without shim or chain write")
 
-    # Jacob's rollback contract also restores validator code to c5252865. Use
-    # exactly the reviewed runtime overlay, not a physical source overwrite.
-    # The old Params view has no dedup/seed attributes after compatibility
-    # translation; historical pins remain verifiable with digest_params.
-    old_validator = subprocess.run([args.python, "-I", str(KIT / "qualify-old-validator.py"), str(output), "--old-v2", str(old_v2)],
+    # The existing unmodifiable systemd invocation requires a physical package.
+    # Stage the complete old tree plus seven reviewed source modules, then run
+    # ordinary ``python -m sn120_v2.weights_writer`` with no runtime import shim.
+    old_validator = subprocess.run([args.python, "-I", str(KIT / "qualify-old-validator.py"), str(output), "--old-v2", str(old_v2), "--python", args.python],
                                    cwd=output, env=native_env, capture_output=True, text=True, timeout=90)
     if old_validator.returncode:
         raise AssertionError(old_validator.stderr + old_validator.stdout)
@@ -342,6 +341,8 @@ print(json.dumps({"native_release_read":True,"compatibility_overlay":False,
         "synthetic": True, "new_params_hash": NEW_PIN, "old_params_hash": OLD_PIN,
         "old_v2": str(old_v2), "journal_sha256": sha(fixture / "journal.jsonl"),
         "closed_records": len(state.rounds), "charged_seats": len(state.served_regs),
+        "validator_physical_package": True, "validator_runtime_import_shim": False,
+        "physical_journal_open_refusal": True,
     }, indent=2, sort_keys=True) + "\n")
     return 0
 

@@ -157,42 +157,105 @@ leader fence. This is replay compatibility, not permission for old code to
 finish a dedup ticket.
 
 The separate validator/weights reader is **restored to `c5252865` as part of
-rollback**. It uses the same reviewed compatibility modules through the runtime
-loader below. Native release `50afaca3` can also decode this history, but that
-is not the required rollback configuration.
+rollback**. Native release `50afaca3` can also decode this history, but that is
+not the required rollback configuration.
 
-Do **not** simply rsync or physically copy `rollback-compat/*.py` into
-`sn120_v2`. A direct `python -m sn120_v2.weights_writer` imports the old package
-without installing those modules first. Keep the old checkout unchanged and the
-kit outside it; `rollback-validator-weights` verifies every manifest hash and
-installs the reader modules before importing the writer. This restores old code
-plus schema compatibility, not dedup execution behavior.
+The existing `/etc/systemd/system/sn120-v2-weights.service` uses ordinary
+`python -m sn120_v2.weights_writer`, and the operator cannot edit that unit.
+The required route is therefore a **complete staged physical package**, not a
+runtime import shim. `restore_validator.sh` reads an operator-supplied exact
+`c5252865` package plus this kit and creates a new directory whose
+`sn120_v2/` is the rsync source. It verifies all 123 old source files and the
+old GPU digest, overlays exactly seven reviewed modules, and emits a
+`restore-validator-manifest.json` covering every staged source:
 
-```bash
-# Operator-only example; use the existing validator service and journal mirror,
-# not the controller's live state directory. Set DEDUP_OLD_V2 to its restored
-# c5252865 v2 directory and DEDUP_ROLLBACK_PY to its existing Python interpreter.
-KIT=/OPERATOR-SELECTED/dedup-deploy
-DEDUP_OLD_V2=/OPERATOR-SELECTED/restored-c5252865/v2 \
-DEDUP_ROLLBACK_PY=/OPERATOR-SELECTED/python \
-  "$KIT/rollback-validator-weights" \
-  --state-dir /OPERATOR-SELECTED/validator-state \
-  --network finney --dry-run
+```text
+canonical.py  types.py  params.py  state.py  controller.py
+dedup_compat.py  journal.py
 ```
 
-Use that wrapper as the restored validator writer executable, with its existing
-wallet and `--from-store` arguments only where its service already uses them.
-Stop the existing writer before changing its executable, and preserve the sole
-hourly writer, cursor, UID mapping and last valid assessment. This package does
-not stop or restart any service. `--dry-run` requires no wallet and writes no
-chain weights, writer state or lock. The operator must inspect its output before
-authorizing a real writer restart.
+`journal.py` includes the open-dedup-round pre-fence guard that the controller's
+runtime loader otherwise installs. This restores old code plus schema
+compatibility, not dedup execution behavior. There is no `sitecustomize.py`,
+test hook or runtime import shim in the staged package.
+
+**Never rsync onto an arbitrary mixed-release tree, and never run this script
+against production state.** Use an operator-created archive/copy of the exact
+old `c5252865` package as input. The stager refuses missing, extra, changed or
+symlinked old source. It refuses to overwrite its output or tarball. It writes
+only those new staging paths; it does not alter the source, systemd, a journal,
+a store or chain state.
+
+```bash
+# Operator-only staging. OLD_PACKAGE contains sn120_v2 source, not the v2 root.
+KIT=/OPERATOR-SELECTED/dedup-deploy
+OLD_PACKAGE=/OPERATOR-SUPPLIED/c5252865/sn120_v2
+STAGE=/OPERATOR-SCRATCH/restored-validator-c5252865-v1       # new path
+TARBALL=/OPERATOR-SCRATCH/restored-validator-c5252865-v1.tar.gz  # new path
+DEDUP_RESTORE_PY=/home/const/affine/v2/.venv/bin/python \
+  "$KIT/restore_validator.sh" "$OLD_PACKAGE" "$STAGE" --tar "$TARBALL"
+# Inspect the PASS, hashes, staged manifest and:
+#   $STAGE/sn120_v2/
+#   $TARBALL  (sn120_v2/ plus restore-validator-manifest.json)
+```
+
+If the service account cannot create files under `/home/const/affine/v2`, an
+operator who owns that directory must perform the following replacement. No
+sudo or unit change is assumed, but **the existing interpreter must already
+resolve this source directory**. An adjacent source checkout is not
+automatically on a venv's `sys.path`; its existing editable-install or `.pth`
+configuration must point here. Before stopping any job, verify that fact:
+
+```bash
+/home/const/affine/v2/.venv/bin/python -c \
+  'import sn120_v2; print(sn120_v2.__file__)'
+```
+
+The expected resolved package is `/home/const/affine/v2/sn120_v2/__init__.py`.
+If it is elsewhere, a file-only rsync into this path cannot restore the running
+jobs. The operator must repair that package-path installation or provide the
+actual resolved target; this kit does not change the interpreter installation.
+Do not assume the unit's working directory will supply the package.
+
+After the new-code controller finish, complete old-params re-pin and exactly
+one old-controller loop are established through `rollback-loop.sh`, quiesce
+**all jobs sharing this package**, including the hourly weights writer, links
+and site-pull. Stop/disable only their existing scheduler triggers during the
+replacement; do not start a second weights writer or alter its unit. Then let
+the directory owner rsync the complete staged package and verify its manifest:
+
+```bash
+# Replace only the package, after quiescing every job that imports it.
+# Existing installed-package destination must be confirmed by the check above.
+rsync -a --delete "$STAGE/sn120_v2/" /home/const/affine/v2/sn120_v2/
+
+# Restore with the unit's existing state-dir and other read-side arguments;
+# omit only --wallet for this no-chain-write check. Do not add --force.
+/home/const/affine/v2/.venv/bin/python -m sn120_v2.weights_writer \
+  --state-dir /OPERATOR-SELECTED/validator-state \
+  --from-store --network finney --dry-run
+```
+
+Inspect the exact `status: "would set"` result, resolved package path and
+weights before re-enabling only the original hourly writer and the other
+quiesced jobs. Preserve the existing unit and arguments for real runs, its
+transaction cursor/state directory, UID mapping, hourly cadence, six-hour
+contribution half-life and last valid assessment through learning/evidence
+outages. Never enable burn or owner-only fallback weights. `--dry-run` needs no
+wallet and writes no chain weights, writer state or lock. This package does not
+stop, restart or deploy any service; the boxed procedure is operator-only.
+
+`rollback-validator-weights` remains available only as an optional diagnostic
+for a separate old checkout through `rollback_cli.py`; it is not a solution for
+the immutable `python -m` systemd unit.
 
 `qualify-old-validator.py` and the complete `qualify-rollback.py` fixture prove
-this restored old-code configuration against the post-repin journal:
-`weights_writer --dry-run` returns `would set`, with zero chain submissions, an
-unchanged journal and no writer state/lock. The fixture uses an in-memory chain
-and synthetic store; it does not test live chain submission or live state.
+the physical package against the post-repin journal. The real module entry
+point returns `would set`, with zero chain submissions, an unchanged journal
+and no writer state/lock. The fixture explicitly selects the staging directory
+with `PYTHONPATH`; only an external `sitecustomize.py` supplies its in-memory
+chain. It does not test the production interpreter's package resolution, live
+chain submission or live validator state.
 
 ## Operator environment and preservation
 
