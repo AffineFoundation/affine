@@ -68,7 +68,9 @@ def launch_params() -> Params:
 
 def moved(value):
     """Another value of the same kind. It rises with the value, so every order rule of ``Params`` still holds."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool):
+        return not value
+    if not isinstance(value, (int, float)):
         return value
     if isinstance(value, int):
         return 2 * value + 3
@@ -83,7 +85,7 @@ def all_moved(params: Params) -> Params:
 
     bounds = tuple(shift(bound) for bound in params.recipe.miner_bounds)
     recipe = shift(params.recipe, miner_bounds=bounds, global_norm_cap=1.75)
-    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False, null_samples_per_task=2)
+    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False, null_samples_per_task=2, fold_every_k=1)
 
 
 def sentences(text: str) -> str:
@@ -189,6 +191,8 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"--limit-mm-per-prompt {shlex.quote(server_argv('', 0, params)[-1])}",
         f"higher by more than {publisher.show(judging.TIE_TOLERANCE)}",
         f"| `looks` | {publisher.show(params.looks)} |",  # the last look is always 1: a rule of Params
+        f"| `fold_every_k` | {publisher.show(params.fold_every_k)} |",  # merged mode requires the default 1
+        f"After {params.fold_every_k} applied winner(s), the stack",
         # The state of this world, not a parameter.
         "Seats that wait: 0.",
         # A fact of the chain, of a key format or of HTTP. No constant of this code gives it.
@@ -273,7 +277,7 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     public_fields = {f.name for f in dataclasses.fields(Params) if not f.name.startswith("_")} - {"recipe"}
     assert set(first) == public_fields - omitted
     assert set(second) == public_fields
-    assert {name for name in first if first[name] == second[name]} == {"env", "env_pin", "dtype", "kv_cache_dtype"}, "all_moved must move every number of the params"
+    assert {name for name in first if first[name] == second[name]} == {"env", "env_pin", "dtype", "kv_cache_dtype", "fold_every_k"}, "all_moved must move every number of the params; merged mode fixes fold_every_k at 1"
     headings = HEADING.findall(texts[0])
     assert headings == [str(number) for number in range(1, len(headings) + 1)] and set(SECTION.findall(text)) <= set(headings)
 
