@@ -487,4 +487,3 @@ def dryrun(paths: Sequence[Path], params: Params, first_seen_unix: Sequence[int]
             "stage_a": {"decisions": [row.to_dict() for row in stage_a_rows], "clusters": stage_a_clusters},
             "stage_b": {"decisions": [row.to_dict() for row in stage_b_rows], "clusters": stage_b_clusters,
                         "available": bool(lora_dirs)}}
-

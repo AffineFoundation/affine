@@ -78,12 +78,12 @@ def moved(value):
 def all_moved(params: Params) -> Params:
     """Every number of the params and of the recipe at another value, the bounds of a miner too."""
     def shift(record, **special):
-        names = [f.name for f in dataclasses.fields(record) if f.name not in ("recipe", "miner_bounds", *special)]
+        names = [f.name for f in dataclasses.fields(record) if f.name not in ("recipe", "miner_bounds", "_legacy_fields", *special)]
         return dataclasses.replace(record, **{name: moved(getattr(record, name)) for name in names}, **special)
 
     bounds = tuple(shift(bound) for bound in params.recipe.miner_bounds)
     recipe = shift(params.recipe, miner_bounds=bounds, global_norm_cap=1.75)
-    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info")
+    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False)
 
 
 def sentences(text: str) -> str:
@@ -95,7 +95,7 @@ def sentences(text: str) -> str:
 OTHER = {
     "looks": (0.2, 0.6, 1.0), "irt_middle_band": (0.3, 0.7), "irt_draw_rule": "fisher", "global_norm_cap": 1.75, "target_modules": ("q_proj",),
     "image_digests": (sim.SIM_IMAGE, "other-image"), "dtype": "float32", "kv_cache_dtype": "fp8", "env_pin": "pin-1", "method": "other-method", "code_digest": "c" * 64,
-    "rotation_rule": "info",
+    "rotation_rule": "info", "train_seed_scope": "batch",
 }  # fmt: skip
 
 
@@ -104,6 +104,8 @@ def one_changed(record, name: str):
     value = getattr(record, name)
     if name in OTHER:
         tries = [OTHER[name]]
+    elif isinstance(value, bool):
+        tries = [not value]
     elif isinstance(value, int):
         tries = [value + 1, value - 1]
     else:
@@ -123,7 +125,7 @@ def test_each_param_alone_moves_the_text(tmp_path):
     for record, only_table in ((base, ONLY_IN_THE_TABLE), (base.recipe, ONLY_IN_THE_RECIPE_TABLE)):
         for field in dataclasses.fields(record):
             name = field.name
-            if name in ("recipe", "miner_bounds", "env"):  # the recipe and its bounds: field by field below; env: one value exists
+            if name in ("recipe", "miner_bounds", "env", "_legacy_fields"):  # the recipe and its bounds: field by field below; env: one value exists
                 continue
             value, changed = one_changed(record, name)
             if name == "rotation_enabled":
@@ -266,8 +268,9 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     # Opt-in fields are absent at defaults, preserving old Params and llms
     # bytes. Non-default serving and rotation values must still be stated.
     omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if name.startswith("rotation_") and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
-    assert set(first) == {f.name for f in dataclasses.fields(Params)} - {"recipe"} - omitted
-    assert set(second) == {f.name for f in dataclasses.fields(Params)} - {"recipe"}
+    public_fields = {f.name for f in dataclasses.fields(Params) if not f.name.startswith("_")} - {"recipe"}
+    assert set(first) == public_fields - omitted
+    assert set(second) == public_fields
     assert {name for name in first if first[name] == second[name]} == {"env", "env_pin", "dtype", "kv_cache_dtype"}, "all_moved must move every number of the params"
     headings = HEADING.findall(texts[0])
     assert headings == [str(number) for number in range(1, len(headings) + 1)] and set(SECTION.findall(text)) <= set(headings)
