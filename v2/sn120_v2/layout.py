@@ -200,6 +200,14 @@ def reserve_shard(name: str, sha256: str) -> str:
     return f"public/pool/reserve/shards/{_part(name)}.{_part(sha256)}.jsonl"
 
 
+DEDUP_FIRST_SEEN = "private/dedup/first_seen.json"
+
+
+def dedup_rollout_hashes(batch_sha256: str) -> str:
+    """Private cached normalized rollout-hash set; batch content is never stored here."""
+    return f"private/dedup/rollout_hashes/{_part(batch_sha256)}.json"
+
+
 JOURNAL = "private/journal"
 
 

@@ -20,7 +20,7 @@ from .errors import JournalCorrupt, V2Error
 from .journal import LEADER, JournalRecord, pull, read_journal
 from .params import GenesisSpec, Params
 from .seams import ObjectStore
-from .types import Entry, HeadManifest, HeadVersion, King, QueueEntry, Registration, RoundDecision, V1Import
+from .types import Entry, EntryDecision, HeadManifest, HeadVersion, King, QueueEntry, Registration, RoundDecision, V1Import
 
 RegKey = tuple[int, int]
 HISTORY = 200  # closed rounds kept in memory for the public snapshot
@@ -82,8 +82,13 @@ class RoundRecord(Record):
     apply_attempts: int = 0
     outcome: str = ""  # empty while the round is open
     closed_at: int = 0
-    LEFT_OUT_AT_DEFAULT = ("rotation",)
+    LEFT_OUT_AT_DEFAULT = ("rotation", "duplicate_decisions", "duplicate_clusters", "first_seen")
+    OMIT_EMPTY_FACTORY_DEFAULTS = ("first_seen",)
     rotation: dict[str, Any] | None = None
+    # Stage-A evidence and charged seats are fixed at open. This snapshot also drives stage-B priority at settlement.
+    duplicate_decisions: tuple[EntryDecision, ...] = ()
+    duplicate_clusters: tuple[dict[str, Any], ...] = ()
+    first_seen: dict[str, int] = field(default_factory=dict)
 
     def lease(self, lease_id: str) -> Lease:
         return next(lease for lease in self.leases if lease.lease_id == lease_id)
@@ -206,6 +211,8 @@ def _round_opened(state: State, data: dict, at: int) -> None:
         for entry in lease.entries:
             _need(entry.reg.key in state.queue and not state.queue[entry.reg.key].leased, "a round took a seat that is not waiting")
             _edit(state, entry.reg.key, leased=True)
+    for entry in record.duplicate_decisions:
+        _need((entry.uid, entry.registration_block) in state.queue, "a duplicate seat was not waiting at round open")
     state.round, state.round_seq = record, state.round_seq + 1
     if record.rotation is not None:
         _need(bool(record.rotation.get("state_sha")) and record.rotation.get("active_sha"), "rotated round lacks pool artifact ids")
@@ -237,7 +244,10 @@ def _round_settled(state: State, data: dict, at: int) -> None:
     )
     _need(all(l.status != "open" for l in leases), "a round settled while a lease is still open")
     state.round = replace(record, leases=leases, decision=RoundDecision.from_dict(data["decision"]))
-    state.failed_leases = 0
+    if digests:
+        state.failed_leases = 0
+    # An empty result map means every lease failed: preserve the consecutive-failure count and last_failure_at.
+    # Stage-A duplicate accounting does not turn a box outage into a successful round.
 
 
 def _apply_deferred(state: State, data: dict, at: int) -> None:

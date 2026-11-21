@@ -39,15 +39,17 @@ from typing import Any, Callable, Mapping, Sequence
 from . import layout
 from .admission import SHA_SHOWN, freeze_log, verdict_log, verdict_note
 from .afterking import PUBLISH, Beside, Overlap
-from .canonical import canonical_json, to_jsonable
+from .canonical import canonical_json, is_sha256, sha256_hex, to_jsonable
+from .dedup import cluster_entries, cluster_past_kings, normalized_rollouts, stage_b
 from .errors import BatchRejected, ConfigError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
 from .headlog import apply_lora, fold_due, fold_head, genesis_head, lora_ref
 from .journal import JOURNAL_FILE, Journal, pull
-from .judging import check_result, decide
+from .judging import check_result, decide, duplicate_decision
 from .params import GenesisSpec, Params
+from .payout import payees
 from .public import public_text, round_report, snapshot
 from .queue import SyncPlan, plan_sync, select_round, split_among_boxes, squat_trim, waiting
-from .sampling import make_round_seed
+from .sampling import make_round_seed, train_seed
 from .seams import Admission, Folder, ObjectStore, Publisher, RoundRunner, TaskSampler
 from .state import (
     ABANDONED,
@@ -81,6 +83,7 @@ from .types import (
     NOT_SCORED,
     NULL_MODEL,
     SCORED,
+    EntryDecision,
     SKIP,
     BoxResult,
     ChainSnapshot,
@@ -361,6 +364,161 @@ class Controller:
             raise V2Error(f"no seat went to the front: it needs a reason and seats of the queue (not in the queue: {missing})")
         self._log(SEATS_FRONTED, {"keys": [list(key) for key in keys], "reason": reason}, now)
 
+    # ------------------------------------------------------------ duplicate evidence (outside replayed State)
+
+    def _dedup_note(self, text: str) -> None:
+        print(f"round {self.state.round.round_id if self.state.round else '(open)'}: {text}", file=sys.stderr, flush=True)
+
+    def _update_first_seen(self, verdicts: Mapping[str, Verdict], now: int) -> None:
+        """Only absent SHAs are appended. Waiting files at deployment all receive this first check's UTC time."""
+        try:
+            raw = json.loads(self.store.get(layout.DEDUP_FIRST_SEEN))
+        except KeyError:
+            raw = {}
+        except (ValueError, TypeError) as exc:
+            # A known malformed local ledger can be rebuilt, retaining every valid row it still contains.
+            self._dedup_note(f"first-seen ledger is malformed ({type(exc).__name__}); rebuilding valid rows")
+            raw = {}
+        except Exception as exc:
+            # With the old values unavailable, replacing the object could overwrite them. Do not write at all.
+            self._dedup_note(f"first-seen ledger cannot be read ({type(exc).__name__}); leaving it unchanged")
+            return
+        if not isinstance(raw, dict):
+            self._dedup_note("first-seen ledger is not an object; rebuilding valid rows")
+            raw = {}
+        found = {
+            sha: {"hotkey": row["hotkey"], "first_seen_unix": row["first_seen_unix"]}
+            for sha, row in raw.items()
+            if is_sha256(sha) and isinstance(row, dict)
+            and isinstance(row.get("hotkey"), str) and type(row.get("first_seen_unix")) is int
+        }
+        changed = len(found) != len(raw)
+        for hotkey, verdict in sorted(verdicts.items()):
+            if verdict.valid and verdict.batch_sha256 and verdict.batch_sha256 not in found:
+                found[verdict.batch_sha256] = {"hotkey": hotkey, "first_seen_unix": now}
+                changed = True
+        if changed:
+            try:
+                self.store.put(layout.DEDUP_FIRST_SEEN, canonical_json(found))
+            except Exception as exc:
+                # This private evidence is optional; its cache outage cannot reject an otherwise valid file.
+                self._dedup_note(f"first-seen ledger cannot be written ({type(exc).__name__}); using queue ties")
+
+    def _first_seen(self) -> dict[str, int]:
+        try:
+            raw = json.loads(self.store.get(layout.DEDUP_FIRST_SEEN))
+            if not isinstance(raw, dict):
+                raise ValueError("not an object")
+            return {sha: row["first_seen_unix"] for sha, row in raw.items()
+                    if is_sha256(sha) and isinstance(row, dict) and type(row.get("first_seen_unix")) is int}
+        except KeyError:
+            return {}
+        except Exception as exc:
+            # Never fail closed to a fabricated timestamp. Ignore the private cache; stage A gives missing
+            # entries one post-deployment check time and queue_pos breaks their ties.
+            self._dedup_note(f"first-seen ledger is unusable ({type(exc).__name__}); using queue-position ties")
+            return {}
+
+    def _rollout_hashes(self, batch_sha256: str, frozen_uri: str = "") -> frozenset[str] | None:
+        try:
+            key = layout.dedup_rollout_hashes(batch_sha256)
+            if self.store.exists(key):
+                try:
+                    raw = json.loads(self.store.get(key))
+                    if isinstance(raw, list) and raw and len(set(raw)) == len(raw) and all(is_sha256(value) for value in raw):
+                        return frozenset(raw)
+                except (ValueError, TypeError):
+                    pass  # rebuild a damaged disposable cache from the frozen bytes
+            if not frozen_uri or not self.store.exists(frozen_uri):
+                return None
+            raw = self.store.get(frozen_uri)
+            if sha256_hex(raw) != batch_sha256:
+                raise VerifyError("frozen batch does not match its sha256 during duplicate detection")
+            hashes = normalized_rollouts(raw)
+            if hashes:
+                try:
+                    self.store.put(key, canonical_json(sorted(hashes)))
+                except Exception as exc:
+                    self._dedup_note(f"rollout-hash cache cannot be written ({type(exc).__name__}); using uncached evidence")
+            return hashes
+        except Exception as exc:
+            # Exact batch-sha comparison still runs. Only this optional normalized-set evidence becomes unknown.
+            self._dedup_note(f"rollout evidence for {batch_sha256[:SHA_SHOWN]} is unavailable ({type(exc).__name__}); exact SHA remains")
+            return None
+
+    def _past_king_batches(self, first_seen: Mapping[str, int] | None = None) -> list[dict[str, Any]]:
+        """Every payout-window winner's durable batch evidence, including after head folds.
+
+        HEAD_APPLIED journals the applied manifest. Its LoRARef survives both a later fold and eviction of
+        bounded public round history. Missing public batch bytes remove only rollout evidence, never exact SHA.
+        """
+        first_seen = self._first_seen() if first_seen is None else first_seen
+        manifests = {manifest.head.version_id: manifest for manifest in self.state.manifests.values()}
+        refs = {}
+        for king in payees(self.state.kings, self.params.kings_window):
+            manifest = manifests.get(king.head_version_id)
+            if manifest is None:
+                self._dedup_note(f"past king {king.round_id}: applied manifest is unavailable; comparison fails open")
+                continue
+            for ref in manifest.head.loras:
+                if ref.round_id == king.round_id:
+                    refs[king.round_id] = king, ref
+                    break
+            else:
+                self._dedup_note(f"past king {king.round_id}: no matching LoRARef; comparison fails open")
+        out = []
+        for round_id, (king, ref) in refs.items():
+            uri, hashes = layout.winner_batch(round_id), None
+            try:
+                frozen = self.store.get(uri)
+                if sha256_hex(frozen) == ref.batch_sha256:
+                    hashes = self._rollout_hashes(ref.batch_sha256, uri)
+                else:
+                    self._dedup_note(f"past king {round_id}: public batch SHA differs; rollout comparison fails open")
+            except (KeyError, InfraError, VerifyError) as exc:
+                self._dedup_note(f"past king {round_id}: no usable rollout bytes ({type(exc).__name__}); exact SHA remains")
+            out.append({"round_id": round_id, "uid": king.uid, "hotkey": king.hotkey,
+                        "batch_sha256": ref.batch_sha256,
+                        "first_seen_unix": first_seen.get(ref.batch_sha256, 0), "rollouts": hashes})
+        return out
+
+    def _stage_a(self, entries: tuple[Entry, ...], now: int):
+        if not self.params.dedup_enabled:
+            return list(entries), [], [], self._first_seen()
+        first = self._first_seen()
+        # A valid file could be frozen without this process observing its verdict; its first check is now.
+        missing = [entry.batch.hotkey for entry in entries if entry.batch.batch_sha256 not in first]
+        if missing:
+            self._update_first_seen({hotkey: Verdict(hotkey, True, batch_sha256=entry.batch.batch_sha256)
+                                     for entry in entries for hotkey in [entry.batch.hotkey]
+                                     if entry.batch.batch_sha256 not in first}, now)
+            first = self._first_seen()
+        hashes = {}
+        for entry in entries:
+            try:
+                hashes[entry.batch.batch_sha256] = self._rollout_hashes(
+                    entry.batch.batch_sha256, entry.batch.uri
+                )
+            except Exception as exc:
+                self._dedup_note(
+                    f"rollout evidence for queue_pos {entry.queue_pos} failed open "
+                    f"({type(exc).__name__}); exact SHA remains"
+                )
+                hashes[entry.batch.batch_sha256] = None
+        try:
+            kept, king_drops, king_clusters = cluster_past_kings(
+                entries, first, hashes, self._past_king_batches(first), self.params
+            )
+        except Exception as exc:
+            self._dedup_note(f"past-king comparison failed open ({type(exc).__name__}); no past-king drops")
+            kept, king_drops, king_clusters = list(entries), [], []
+        try:
+            kept, drops, clusters = cluster_entries(kept, first, hashes, self.params)
+        except Exception as exc:
+            self._dedup_note(f"stage A comparison failed open with no drops ({type(exc).__name__})")
+            return list(entries), [], [], first
+        return kept, king_drops + drops, king_clusters + clusters, first
+
     # ------------------------------------------------------------ open
 
     def _freeze(self, reg: Registration, round_id: str) -> FrozenBatch | None:
@@ -391,6 +549,7 @@ class Controller:
         lines, self._file_notes = verdict_log(seats, verdicts, self._file_notes, now)
         print("\n".join(lines), file=sys.stderr, flush=True)
         self._verdicts, self._verdicts_at = verdicts, now
+        self._update_first_seen(verdicts, now)
         return verdicts
 
     def open_round(
@@ -423,6 +582,28 @@ class Controller:
         picked = select_round(state.queue, verdicts, lambda reg: self._freeze(reg, round_id), params.batch_cap)
         if len(picked.entries) < params.n_min_start:
             return []
+        # Stage A: immediately after freeze and before entropy, tickets and any training GPU work.
+        with timed(f"dedup stage A of {round_id}"):
+            kept, duplicate_rows, duplicate_clusters, first_seen = self._stage_a(picked.entries, now)
+        picked = dataclasses.replace(picked, entries=tuple(kept))
+        if len(picked.entries) < params.n_min_start:
+            if duplicate_rows:
+                # No undersized ticket: charge the copies, return genuine survivors to the front, and preserve the
+                # ordinary ROUND_CLOSED accounting. This also closes an all-past-king selection with no lease.
+                head = state.head
+                uncharged = tuple(EntryDecision(entry.queue_pos, entry.reg.uid, entry.reg.hotkey,
+                                                entry.reg.registration_block, entry.batch.batch_sha256, ENTRY_NO_DECISION,
+                                                reason="fewer than n_min_start genuine entries remained after duplicate removal")
+                                  for entry in picked.entries)
+                rows = tuple(sorted((*duplicate_rows, *uncharged), key=lambda row: row.queue_pos))
+                decision = duplicate_decision(head.version_id, round_id, rows)
+                record = RoundRecord(round_id, head.version_id, params.params_hash, params.recipe_id, "", "", 0,
+                                     now, (), picked.skipped, decision, duplicate_decisions=tuple(duplicate_rows),
+                                     duplicate_clusters=tuple(duplicate_clusters), first_seen=first_seen)
+                self._log(ROUND_OPENED, {"round": record.to_dict()}, now)
+                self._close(NULL, [], now)
+                return []
+            return []
         if callable(entropy):
             entropy = entropy()
         if clock is not None:
@@ -447,7 +628,8 @@ class Controller:
         record = RoundRecord(
             round_id, head.version_id, params.params_hash, params.recipe_id, draw.round_seed, draw.snapshot_id,
             len(draw.task_ids), now, tuple(leases), picked.skipped,
-            rotation=rotation,
+            rotation=rotation, duplicate_decisions=tuple(duplicate_rows), duplicate_clusters=tuple(duplicate_clusters),
+            first_seen=first_seen,
         )
         data = {"round": record.to_dict()}
         if rotation is not None:
@@ -522,8 +704,50 @@ class Controller:
         if len(pairs) < len(open_leases):
             return
         if not pairs:
+            if record.duplicate_decisions:
+                # Preserve charged duplicates when every training lease failed. Any genuine survivor gets the
+                # ordinary no-decision seat semantics; a duplicate-only close has no survivor rows to add.
+                survivors = [
+                    EntryDecision(
+                        entry.queue_pos, entry.reg.uid, entry.reg.hotkey, entry.reg.registration_block,
+                        entry.batch.batch_sha256, ENTRY_NO_DECISION,
+                        reason="no box result arrived before the round closed",
+                    )
+                    for lease in record.leases for entry in lease.entries
+                ]
+                rows = tuple(sorted((*record.duplicate_decisions, *survivors), key=lambda row: row.queue_pos))
+                decision = duplicate_decision(record.head_version_id, record.round_id, rows, ())
+                # A no-result settlement preserves lease-failure backoff in state._round_settled.
+                self._log(ROUND_SETTLED, {"round_id": record.round_id, "decision": decision.to_dict(), "results": {}}, now)
+                return self._close(NULL, [], now, self._lease_failures())
             return self._close(NO_DECISION, [], now, self._lease_failures())
         decision = decide(pairs)
+        # The null-only first pass supplies exclusions. The second pass consumes stage-B evidence before
+        # creating any candidate or choosing a winner. It is deterministic and replays from the journal.
+        seats = {entry.queue_pos: entry for ticket, _ in pairs for entry in ticket.entries}
+        artifacts = {entry.queue_pos: entry.lora for _, result in pairs for entry in result.entries
+                     if entry.status == "scored" and entry.lora is not None}
+        excluded = {entry.queue_pos for entry in decision.entries if entry.status == "null_update"}
+        expected = {pos: train_seed(ticket.draw.round_seed, seats[pos].batch.batch_sha256, ticket.params.train_seed_scope)
+                    for ticket, _ in pairs for pos in [entry.queue_pos for entry in ticket.entries]}
+        drops, clusters = [], []
+        try:
+            if pairs[0][0].params.dedup_enabled:
+                # This is the exact snapshot used by stage A, including entries with no stage-A cluster.
+                first = record.first_seen
+                with timed(f"dedup stage B of {record.round_id}"):
+                    drops, clusters = stage_b(list(seats.values()), artifacts, first, pairs[0][0].params,
+                                              self.store.get, expected, excluded, self._dedup_note)
+                decision = decide(pairs, drops, clusters)
+        except Exception as exc:  # a whole-stage error must never block or crash the round
+            self._dedup_note(f"dedup stage B failed open with no drops: {type(exc).__name__}: {exc}")
+            drops, clusters = [], []
+            decision = decide(pairs)
+        decision = dataclasses.replace(
+            decision,
+            entries=tuple(sorted((*decision.entries, *record.duplicate_decisions), key=lambda row: row.queue_pos)),
+            duplicate_clusters=tuple(clusters),
+        )
         results = {ticket.lease_id: result.digest() for ticket, result in pairs}
         self._log(ROUND_SETTLED, {"round_id": record.round_id, "decision": decision.to_dict(), "results": results}, now)
         self._finish(now)
@@ -868,12 +1092,15 @@ class Controller:
         self._proven(wait=False)
         started = clock()
         self.tick(started)  # a stored result is judged first, whatever this box is: judging reads the pins of the round's ticket
+        closed_without_lease = False
         if self.state.round is None:
             if hold is not None and hold():
                 return None
             self._check_pins("no round was opened")
             started = clock()
+            closed_before = len(self.state.rounds)
             tickets = self.open_round(started, entropy, clock=clock)
+            closed_without_lease = not tickets and len(self.state.rounds) > closed_before
         else:
             tickets = self.tickets()
             if tickets:
@@ -904,4 +1131,6 @@ class Controller:
                     raise
                 self.fail_lease(ticket.lease_id, f"{type(exc).__name__}: {exc}", clock())
         self.tick(clock())
-        return self.state.rounds[-1] if tickets and self.state.round is None else None
+        # A resumed round keeps the original ticket-based return rule. The separate marker covers only a new
+        # duplicate-only round, which opens and closes without ever issuing a lease.
+        return self.state.rounds[-1] if (tickets or closed_without_lease) and self.state.round is None else None

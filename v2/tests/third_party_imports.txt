@@ -11,11 +11,13 @@ pytest
 
 # tests: local test helpers and the site's standalone pull module
 conftest
+test_dedup
 test_rotation_controller
 pull
 
-# gpu: train/eval workers
+# gpu: train/eval workers and low-rank duplicate arithmetic
 huggingface_hub
+numpy
 safetensors
 torch
 transformers
