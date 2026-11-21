@@ -31,6 +31,7 @@ Nothing here has a default path. The state directory is always an argument.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import importlib
 import json
 import os
@@ -48,7 +49,7 @@ from .afterking import Overlap
 from .controller import Controller, Stack, StackContext, check_env_pin, public_snapshot
 from .errors import ConfigError, FencedError, HeadLost, InfraError, V2Error
 from .journal import JOURNAL_FILE, Journal, Mirror
-from .params import GenesisSpec, Params, Recipe, load_params
+from .params import GenesisSpec, Params, Recipe, from_jsonable, load_params, require_complete_params
 from .payout import payees
 from .public import phase, round_text
 from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
@@ -340,20 +341,45 @@ def changed_params(before: Params, after: Params) -> dict[str, dict[str, Any]]:
     return {name: {"before": old[name], "after": new[name]} for name in old.keys() | new.keys() if old[name] != new[name]}
 
 
+def proposed_params(before: Params, path: str | Path, decided: bool, *, production: bool) -> Params:
+    """Decode a digest-only recovery or the explicit live full-file transition.
+
+    The simulation stack retains its partial/bootstrap fixtures. Production
+    ``set-params`` alone requires every dedup/seed field so a legacy file can
+    never enable a new default by omission.
+    """
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f"cannot read params file {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ConfigError("a params override file must hold a JSON object")
+    if decided:
+        return Params.from_dict(before.to_dict() | data)
+    if production:
+        return require_complete_params(data)
+    return from_jsonable(Params, data, "Params")
+
+
 def cmd_set_params(args: argparse.Namespace) -> int:
+    # Validate an open-round refusal before Journal() writes its leader fence.
+    # This is also what makes an isolated probe of a copied open journal truly
+    # read-only; the controller repeats the same check for ordinary callers.
+    path = Path(args.state_dir) / JOURNAL_FILE
+    production = args.stack == "sn120_v2.assembly:stack"
+    current = load(path) if path.exists() else None
+    if current is not None and current.params is not None:
+        record = current.round
+        if record is not None:
+            proposed = proposed_params(current.params, args.params, record.decision is not None, production=production)
+            old = current.params.recipe
+            same = dataclasses.replace(proposed, recipe=dataclasses.replace(proposed.recipe, image_digests=old.image_digests, code_digest=old.code_digest))
+            if record.decision is None or same != current.params:
+                raise V2Error("a round is open; set the parameters when it has closed (a decided round takes new digests only)")
     controller, _ = open_controller(args, "set-params")
     before = controller.params
-    # The round pins every behavior. A digest-only recovery file must not turn on new behavior by omission.
-    if controller.state.round is not None and controller.state.round.decision is not None:
-        try:
-            data = json.loads(Path(args.params).read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise ConfigError(f"cannot read params file {args.params}: {exc}") from exc
-        if not isinstance(data, dict):
-            raise ConfigError("a params override file must hold a JSON object")
-        proposed = Params.from_dict(before.to_dict() | data)
-    else:
-        proposed = load_params(args.params)
+    proposed = proposed_params(before, args.params, controller.state.round is not None and controller.state.round.decision is not None,
+                               production=production)
     check_env_pin(proposed)
     controller.set_params(proposed, now())
     after = controller.params
@@ -596,7 +622,7 @@ def main(argv: list[str] | None = None) -> int:
     dry = commands.add_parser("dedup-dryrun", help="offline duplicate/minimum-signal/null-update analysis; writes nothing")
     dry.set_defaults(handler=cmd_dedup_dryrun)
     dry.add_argument("--batch", action="append", required=True, help="frozen batch JSON; repeat in queue order")
-    dry.add_argument("--lora", action="append", help="directory with adapter_model.safetensors and train_report.json, in batch order")
+    dry.add_argument("--lora", action="append", help="directory with adapter_model.safetensors, adapter_config.json and train_report.json, in batch order")
     dry.add_argument("--params", help="optional JSON parameter overrides; defaults to the new production defaults")
     dry.add_argument("--first-seen", type=int, action="append", help="optional UTC first-seen per batch, in batch order; default queue order")
     setp = command("set-params", cmd_set_params, stack=True)

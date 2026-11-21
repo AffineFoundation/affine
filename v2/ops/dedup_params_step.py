@@ -4,7 +4,8 @@
 This reads only journal.jsonl, writes only the requested output file, and never
 opens a controller, store, chain, network connection or production service.
 Every pinned serialized field, including king-x2 and the recipe, is retained;
-the seven dedup fields are set explicitly so omitted legacy fields cannot reset.
+the seven dedup fields and the crown threshold are set explicitly so omitted
+legacy fields cannot reset.
 
 Use between rounds, after reviewing the full file and printed expected diff:
 
@@ -13,7 +14,8 @@ Use between rounds, after reviewing the full file and printed expected diff:
 The expected hashes/diff describe that set-params operation. They are only valid
 for the journal read here; rerun if the pinned Params change before applying.
 The diff compares effective values, so an explicit field whose value was already
-its legacy default does not appear in the diff (all seven fields are still set).
+its legacy default does not appear in the diff (all seven fields are still set,
+and the crown threshold is always explicit).
 """
 from __future__ import annotations
 
@@ -50,8 +52,9 @@ DEDUP_FIELDS = {
     "dedup_rollout_overlap": 0.5,
     "dedup_cos_shared_seed": 0.135,
     "dedup_cos_own_seed": 0.002,
-    "min_signal_rollouts": 64,
-    "min_step_norm": 0.02,
+    "min_signal_rollouts": 1,
+    "min_step_norm": 0.0,
+    "z_bar": 1.5,
 }
 
 

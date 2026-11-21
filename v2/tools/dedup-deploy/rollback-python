@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# One executable accepted as PYTHON by the unmodified old run-loop.
+# -m sn120_v2 arguments are redirected through the hashed old-code overlay.
+set -euo pipefail
+KIT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+if [ "$1" = "verify-params" ]; then
+    [ "$#" -eq 2 ] || { printf '%s\n' 'rollback-python verify-params PARAMS.json' >&2; exit 64; }
+    exec "${DEDUP_ROLLBACK_PY:-python3}" -I "$KIT/rollback_cli.py" --kit "$KIT" verify-params "$2"
+fi
+if [ "$#" -ge 2 ] && [ "$1" = "-m" ] && [ "$2" = "sn120_v2" ]; then
+    shift 2
+elif [ "$#" -lt 1 ] || [[ "$1" == -* ]]; then
+    printf '%s\n' 'rollback-python supports only -m sn120_v2 COMMAND ..., COMMAND ..., or verify-params PARAMS.json' >&2
+    exit 64
+fi
+exec "${DEDUP_ROLLBACK_PY:-python3}" -I "$KIT/rollback_cli.py" --kit "$KIT" "$@"

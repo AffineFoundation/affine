@@ -25,19 +25,23 @@ assert sys.modules["sn120_v2"] is sn120_v2
 
 
 @pytest.mark.parametrize("king_samples", [None, 2])
-def test_full_step_changes_exactly_seven_keys_on_a_kingx2_sim_journal(tmp_path, capsys, king_samples):
-    # Simulate a king-x2 journal with old nondefault dedup thresholds and legacy
-    # batch seeds: every requested value differs, so the diff has exactly 7 keys.
+def test_full_step_changes_exactly_eight_keys_on_a_kingx2_sim_journal(tmp_path, capsys, king_samples):
+    # Simulate a legacy journal with nondefault historical dedup settings:
+    # every requested value differs, so the effective diff has eight keys.
+    # Explicit replay bookkeeping keeps the approved no-op values visible.
     old = sim_params(
         irt_draw_rule="sqrt_fisher", null_samples_per_task=king_samples,
+        dedup_enabled=False, train_seed_scope="batch", z_bar=0.75,
+        min_signal_rollouts=64, min_step_norm=0.02,
         dedup_rollout_overlap=0.75, dedup_cos_shared_seed=0.2, dedup_cos_own_seed=0.01,
     )
     world = SimWorld(tmp_path / "world", old)
     pinned = load(world.root / JOURNAL_FILE).params
     assert pinned is not None and pinned.irt_draw_rule == "sqrt_fisher"
     assert pinned.null_samples_per_task == king_samples
-    assert all(name not in pinned.to_dict() for name in (
-        "train_seed_scope", "dedup_enabled", "min_signal_rollouts", "min_step_norm",
+    assert all(name in pinned.to_dict() for name in (
+        "dedup_rollout_overlap", "dedup_cos_shared_seed", "dedup_cos_own_seed",
+        "min_signal_rollouts", "min_step_norm", "z_bar",
     ))
     before_bytes = (world.root / JOURNAL_FILE).read_bytes()
     before_records = len(read_journal(world.root / JOURNAL_FILE))
@@ -62,13 +66,14 @@ def test_full_step_changes_exactly_seven_keys_on_a_kingx2_sim_journal(tmp_path, 
         "dedup_rollout_overlap": {"before": 0.75, "after": 0.5},
         "dedup_cos_shared_seed": {"before": 0.2, "after": 0.135},
         "dedup_cos_own_seed": {"before": 0.01, "after": 0.002},
-        "min_signal_rollouts": {"before": 1, "after": 64},
-        "min_step_norm": {"before": 0.0, "after": 0.02},
+        "min_signal_rollouts": {"before": 64, "after": 1},
+        "min_step_norm": {"before": 0.02, "after": 0.0},
+        "z_bar": {"before": 0.75, "after": 1.5},
     }
     assert preview["changed"] == expected
     # Replayed fields change explicit serialization even when their effective
     # value was already the requested default; no other effective field moves.
-    assert {name for name in preview["changed"]} == set(Params.LEGACY_FIELDS)
+    assert {name for name in preview["changed"]} == set(Params.LEGACY_FIELDS) | {"z_bar"}
 
     # Feed the resulting file to the actual set-params command, not to_dict or
     # a synthetic replacement of the command's input parser.
@@ -100,7 +105,7 @@ def test_legacy_kingx2_fields_become_explicit_without_other_effective_changes(tm
     output = tmp_path / "dedup.json"
     assert step.main(["--state-dir", str(world.root), "--output", str(output)]) == 0
     preview = json.loads(capsys.readouterr().out)
-    assert set(preview["changed"]) == {"train_seed_scope", "dedup_enabled", "min_signal_rollouts", "min_step_norm"}
+    assert set(preview["changed"]) == {"train_seed_scope", "dedup_enabled", "z_bar"}
     assert cli_main([
         "set-params", "--state-dir", str(world.root), "--stack", "sn120_v2.sim:stack", "--params", str(output),
     ]) == 0
