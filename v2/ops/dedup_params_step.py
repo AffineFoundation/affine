@@ -56,6 +56,9 @@ DEDUP_FIELDS = {
     "min_step_norm": 0.0,
     "z_bar": 1.5,
     "eval_merged": True,
+    # This historical release helper keeps its original king-only rule.
+    "crown_gate": "king",
+    "z_field_bar": 1.0,
 }
 
 

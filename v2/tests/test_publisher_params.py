@@ -85,7 +85,7 @@ def all_moved(params: Params) -> Params:
 
     bounds = tuple(shift(bound) for bound in params.recipe.miner_bounds)
     recipe = shift(params.recipe, miner_bounds=bounds, global_norm_cap=1.75)
-    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False, null_samples_per_task=2, fold_every_k=1)
+    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False, null_samples_per_task=2, fold_every_k=1, crown_gate="king")
 
 
 def sentences(text: str) -> str:
@@ -97,7 +97,7 @@ def sentences(text: str) -> str:
 OTHER = {
     "looks": (0.2, 0.6, 1.0), "irt_middle_band": (0.3, 0.7), "irt_draw_rule": "fisher", "global_norm_cap": 1.75, "target_modules": ("q_proj",),
     "image_digests": (sim.SIM_IMAGE, "other-image"), "dtype": "float32", "kv_cache_dtype": "fp8", "env_pin": "pin-1", "method": "other-method", "code_digest": "c" * 64,
-    "rotation_rule": "info", "train_seed_scope": "batch", "null_samples_per_task": 2,
+    "rotation_rule": "info", "train_seed_scope": "batch", "null_samples_per_task": 2, "crown_gate": "king",
 }  # fmt: skip
 
 
@@ -241,6 +241,10 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "ln(1 + (e - 1) * t), and spent = 0 before the first look",
         "the normal quantile of 1 - a_k",
         "or when its se is 0.",
+        "(0.5 for a 0/1 split)",
+        "an even 0/1 split gives 0.5",
+        "or 0 when `field_se` is 0.",
+        f"The old z {publisher.RETIRED_KING_Z_BAR}",
     ]  # fmt: skip
 
 
@@ -267,7 +271,7 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     spans += [found.span() for pattern in (SECTION, re.compile(r"## \d+\. ")) for found in pattern.finditer(text)]
     typed = [f"...{text[max(0, at - 70) : at]}>>{text[at : at + 30]}..." for at in digits if not any(low <= at < high for low, high in spans)]
     assert not typed, "a number in llms.txt that no parameter and no named constant gives:\n" + "\n".join(typed)
-    unused = [phrase for phrase in phrases if not any(low <= at < high for found in re.finditer(re.escape(phrase), text) for low, high in [found.span()] for at in digits)]
+    unused = [phrase for phrase in phrases if phrase in flat[1] and not any(low <= at < high for found in re.finditer(re.escape(phrase), text) for low, high in [found.span()] for at in digits)]
     assert not unused, f"fixed_phrases names a phrase with no fixed number: {unused}"
 
     first, second = (publisher.stated_params(one) for one in texts)
