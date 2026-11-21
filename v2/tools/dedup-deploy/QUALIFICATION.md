@@ -298,16 +298,41 @@ finish open work under new code, check out `c5252865`, apply the complete old
 one old-code loop. Sealed evidence is never deleted to make old code accept
 history.
 
-### Native release reader after rollback
+### Validator rollback reader
 
-The validator/weights host can stay on native release `50afaca3` after a
-controller rollback; it does not need to go back to `c5252865`. The native
-release `Params.from_dict` gives an old record that omits the dedup fields
-their effective legacy values, including `dedup_enabled=false`,
-`eval_merged=false` and batch-scoped training seeds. Release state/result
-types decode historical duplicate decisions, duplicate clusters and tagged
-non-finite stored evidence. The compatibility overlay is needed by the **old
-controller**, not by native release readers.
+Jacob requires rollback to restore the validator too. The validator therefore
+uses old `c5252865` plus the same reviewed runtime compatibility loader, rather
+than staying on native release code. Native release readers remain compatible
+with this journal, but that is not the required rollback configuration.
+
+Do not physically overlay `rollback-compat/*.py` into `sn120_v2`. A direct
+`python -m sn120_v2.weights_writer` does not install those reader modules before
+old imports. `rollback-validator-weights` selects `DEDUP_OLD_V2`, verifies all
+seven compatibility manifest hashes and installs the modules before importing
+the old writer. The kit stays outside the restored old checkout; the old
+`weights_writer.py` itself is unchanged.
+
+The complete committed-kit rollback v4 completed with exit 0 and all eight PASS
+lines, including:
+
+```text
+ROLLBACK QUALIFICATION PASS: c5252865 validator weights_writer dry-run would set through reviewed runtime overlay; zero chain writes, journal unchanged
+{"chain_submissions": 0, "final_params_hash": "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a", "journal_unchanged": true, "kings": 2, "old_modules_physically_overlaid": false, "old_v2": "/home/bb/scratch/dedup-old-c5252865/v2", "runtime_import_shim": true, "weights_dry_run": "would set", "z_bar": 1.0}
+```
+
+Its actual output is `/home/bb/scratch/dedup-combined-rollback-validator-v4.log`.
+The reader proves exact historical `d5979c30…` identity through
+`dedup_compat.digest_params`; compatibility-translated old `Params` exposes
+`bba7a409…`/`z_bar=1.0` and has no dedup/seed attributes. It decodes historical
+charged decisions and sealed non-finite evidence. An in-memory chain returned
+`would set`, with zero submissions, unchanged journal and no writer state/lock.
+This is synthetic offline evidence, not a live chain or validator-state test.
+
+Native release `50afaca3` independently reads the same post-repin journal. Its
+`Params.from_dict` supplies effective legacy defaults for omitted fields and
+its result types decode historical decisions and sealed evidence. The separate
+native-reader PASS remains useful compatibility evidence but no longer defines
+the required validator rollback path.
 
 `qualify-rollback.py` runs the post-repin journal through a fresh `-I`
 interpreter with only the native new-v2 source on its import path. It asserts

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Restored c5252865 validator weights writer with the reviewed reader overlay.
+# Keep this kit outside the old checkout. Do not physically overlay sn120_v2.
+set -euo pipefail
+KIT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+exec "${DEDUP_ROLLBACK_PY:-python3}" -I - "$KIT" "$@" <<'PY'
+import os
+from pathlib import Path
+import sys
+
+kit = Path(sys.argv[1]).resolve(strict=True)
+sys.path.insert(0, str(kit))
+from rollback_cli import install
+
+install(kit)
+from sn120_v2.weights_writer import main
+
+raise SystemExit(main(sys.argv[2:]))
+PY

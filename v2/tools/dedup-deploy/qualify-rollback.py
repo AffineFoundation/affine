@@ -270,6 +270,17 @@ print(json.dumps({"native_release_read":True,"compatibility_overlay":False,
     (output / "release-read-after-rollback.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     out("native release reads post-rollback dedup history at old bba7a409/z1.0; validator weights dry-run would set without shim or chain write")
 
+    # Jacob's rollback contract also restores validator code to c5252865. Use
+    # exactly the reviewed runtime overlay, not a physical source overwrite.
+    # The old Params view has no dedup/seed attributes after compatibility
+    # translation; historical pins remain verifiable with digest_params.
+    old_validator = subprocess.run([args.python, "-I", str(KIT / "qualify-old-validator.py"), str(output), "--old-v2", str(old_v2)],
+                                   cwd=output, env=native_env, capture_output=True, text=True, timeout=90)
+    if old_validator.returncode:
+        raise AssertionError(old_validator.stderr + old_validator.stdout)
+    print(old_validator.stdout, end="", flush=True)
+    (output / "old-validator-read-after-rollback.json").write_text(old_validator.stdout.splitlines()[-1] + "\n")
+
     # Mirror catch-up precedes the refusal. No local leader fence, no durable
     # journal append, and no object write may occur for either open variant.
     from sn120_v2.journal import Journal, Mirror

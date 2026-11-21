@@ -156,17 +156,43 @@ duplicate/null-update accounting and refuses open dedup work before writing a
 leader fence. This is replay compatibility, not permission for old code to
 finish a dedup ticket.
 
-The separate validator/weights reader can **remain on native release
-`50afaca3` after this rollback**; it does not need to revert to `c5252865`.
-`qualify-rollback.py` proves the complete post-repin journal with no overlay:
-historical dedup params/round fields and duplicate/null-update decisions,
-tagged non-finite sealed evidence, and final IDLE params `bba7a409…`,
-`z_bar=1.0`, `dedup_enabled=false`, batch-scoped seeds. Its release
-`weights_writer --dry-run` seam returns `would set` from the restored journal
-with zero chain submissions, an unchanged journal and no writer state/lock.
-The compatibility shim is for the old controller, not for native new-code
-readers. A production validator must still use its existing journal mirror;
-this synthetic fixture does not test a live chain submission or live state.
+The separate validator/weights reader is **restored to `c5252865` as part of
+rollback**. It uses the same reviewed compatibility modules through the runtime
+loader below. Native release `50afaca3` can also decode this history, but that
+is not the required rollback configuration.
+
+Do **not** simply rsync or physically copy `rollback-compat/*.py` into
+`sn120_v2`. A direct `python -m sn120_v2.weights_writer` imports the old package
+without installing those modules first. Keep the old checkout unchanged and the
+kit outside it; `rollback-validator-weights` verifies every manifest hash and
+installs the reader modules before importing the writer. This restores old code
+plus schema compatibility, not dedup execution behavior.
+
+```bash
+# Operator-only example; use the existing validator service and journal mirror,
+# not the controller's live state directory. Set DEDUP_OLD_V2 to its restored
+# c5252865 v2 directory and DEDUP_ROLLBACK_PY to its existing Python interpreter.
+KIT=/OPERATOR-SELECTED/dedup-deploy
+DEDUP_OLD_V2=/OPERATOR-SELECTED/restored-c5252865/v2 \
+DEDUP_ROLLBACK_PY=/OPERATOR-SELECTED/python \
+  "$KIT/rollback-validator-weights" \
+  --state-dir /OPERATOR-SELECTED/validator-state \
+  --network finney --dry-run
+```
+
+Use that wrapper as the restored validator writer executable, with its existing
+wallet and `--from-store` arguments only where its service already uses them.
+Stop the existing writer before changing its executable, and preserve the sole
+hourly writer, cursor, UID mapping and last valid assessment. This package does
+not stop or restart any service. `--dry-run` requires no wallet and writes no
+chain weights, writer state or lock. The operator must inspect its output before
+authorizing a real writer restart.
+
+`qualify-old-validator.py` and the complete `qualify-rollback.py` fixture prove
+this restored old-code configuration against the post-repin journal:
+`weights_writer --dry-run` returns `would set`, with zero chain submissions, an
+unchanged journal and no writer state/lock. The fixture uses an in-memory chain
+and synthetic store; it does not test live chain submission or live state.
 
 ## Operator environment and preservation
 
