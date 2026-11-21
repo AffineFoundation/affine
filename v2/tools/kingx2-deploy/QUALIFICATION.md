@@ -302,10 +302,42 @@ Both logs are preserved at the `kingx2-public-open-fix-fa55ead0-normal` and
   replay could not start because that local copy lacks its public round report;
   it is not counted as replay evidence.
 - Final normal restricted-public, production-log-format committed-kit rehearsal:
-  **Pending a new committed candidate after the fixture correction above.**
+  `/home/bb/scratch/kingx2-public-open-fix-052f0285-normal/dry-run.log` (exit 0,
+  **PASS**; SHA-256
+  `2618087237e1b1b1887888f41038bf82b577212a8f8da7b820dc6f03eabe8176`).
+  First open and public verification passed without public `pool/state`. Health
+  passed with `eval_wall_s=6984`, `run_log_eval_wall_s=6984`, no phase records,
+  `eval_timing_evidence="run_log"`, no `phases.jsonl`, and the real run-log text
+  `eval 116m24s`. The generator/reserve, public-visibility, active-byte tamper,
+  stored-result, explicit-rollback and decided-round guards all passed.
 - Final abort-after-open restricted-public, production-log-format committed-kit
-  rehearsal: **Pending a new committed candidate after the fixture correction
-  above.**
+  rehearsal: `/home/bb/scratch/kingx2-public-open-fix-052f0285-abort/dry-run.log`
+  (exit 0, **recovery PASS**; SHA-256
+  `ef5e7b9eee4f39b274f38d5c9e4836d4358d63027e2a1435551c786734e918d3`).
+  First open passed. The intentionally unavailable close evidence caused the
+  expected nonzero autodeploy result; rollback used `no_decision` only, restored
+  old params/code and one old loop, re-armed the watchdog and preserved the
+  generator and reserve. This is a recovery rehearsal, not a normal deployment
+  PASS.
+- Integrated-tree genfeed consumer/deploy regression suite:
+  `/home/bb/scratch/kingx2-public-open-fix-integrated-genfeed.log` (exit 0,
+  **15 passed**; SHA-256
+  `9b79170ab26c466a0b74efeb8c333e5928f97a7e538743a31559df1f484e8a26`).
+- Integrated-tree focused public/rotation regression suite:
+  `/home/bb/scratch/kingx2-public-open-fix-integrated-focused.log` (exit 0,
+  **55 passed, 1 skipped**; SHA-256
+  `d097424effa7a6af8acb058aa805a15185ac4e7b76bab4dea3e6852613c5cde1`).
+  The skip remains `v2/tests/test_pool_rotation.py:71`, pristine-v2 golden
+  generation not run in this environment.
+
+The corrected normal/abort pair uses committed candidate
+`052f028500a396f3b661af151bf9ff50f559f37c`. Before pushing, the independently
+updated PR head `86affc5c138d5a684cc090b3bc59057e9805523f` was integrated as
+`f0bfe4f19b941179d63f4b8f4c4daf657bc0777e`; its Generator merge introduces no
+changes to the public-rotation fix, selected implementation or any of the eight
+kit files. Integrated-tree test results are recorded above. The rehearsal logs
+identify their actual `052f0285` source commit, while the final kit is
+byte-identical.
 
 These focused results do not replace the full-suite results and limitations
 above. The two rehearsals use the exact candidate kit and copied inputs with
