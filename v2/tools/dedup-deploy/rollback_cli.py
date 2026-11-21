@@ -64,6 +64,7 @@ def _checkout(kit: Path) -> Path:
 
 
 def install(kit: Path) -> None:
+    kit = Path(kit)
     _manifest(kit)
     package = _load("sn120_v2", _checkout(kit) / "sn120_v2/__init__.py", package=True)
     canonical = _load("sn120_v2.canonical", kit / "rollback-compat/canonical.py")
