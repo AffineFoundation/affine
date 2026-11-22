@@ -237,7 +237,40 @@ def test_publication_restart_with_and_without_entries_and_missing_capture(tmp_pa
     assert not store.list("public/rollouts/gate/r000002/entries")
 
 
-def test_one_entry_upload_failure_does_not_block_the_other(tmp_path, build):
+def test_one_entry_upload_failure_retries_without_republishing_verified_files(tmp_path, build):
+    ticket = build.ticket(n_entries=2, n_tasks=2, params=build.params(n_tasks=2))
+    result = build.result(ticket, "PP", {0: "PP", 1: "FF"})
+    make_round_captures(ticket, result, tmp_path / "work")
+
+    class OneEntryDown(LocalStore):
+        def __init__(self, root):
+            super().__init__(root)
+            self.failed = False
+            self.verified_puts = 0
+
+        def put_file(self, key, path):
+            if key == layout.public_rollout_gate_entry(ticket.round_id, 0) and not self.failed:
+                self.failed = True
+                raise InfraError("one entry upload failed")
+            if key in (layout.public_rollout_gate(ticket.round_id),
+                       layout.public_rollout_gate(ticket.round_id, "winner"),
+                       layout.public_rollout_gate_entry(ticket.round_id, 1)):
+                assert not self.exists(key), "a verified file is skipped on retry"
+                self.verified_puts += 1
+            return super().put_file(key, path)
+
+    store = OneEntryDown(tmp_path / "store")
+    publisher = GateRolloutPublisher(store, tmp_path / "work", retry_s=0)
+    publisher.enqueue([(ticket, result)], 10, ticket.params.params_hash, ticket.draw.round_seed, 0)
+    publisher.wait_idle()
+    assert store.failed and store.verified_puts == 3
+    meta = json.loads(publisher.store.get(layout.public_rollout_gate_meta(ticket.round_id)))
+    assert all(not row.get("missing") for row in meta["files"])
+    assert publisher.store.exists(layout.public_rollout_gate_entry(ticket.round_id, 0))
+    assert ticket.round_id not in publisher.errors
+
+
+def test_entry_store_failure_retries_and_parks_without_missing_metadata(tmp_path, build):
     ticket = build.ticket(n_entries=2, n_tasks=2, params=build.params(n_tasks=2))
     result = build.result(ticket, "PP", {0: "PP", 1: "FF"})
     make_round_captures(ticket, result, tmp_path / "work")
@@ -248,13 +281,15 @@ def test_one_entry_upload_failure_does_not_block_the_other(tmp_path, build):
                 raise InfraError("one entry upload failed")
             return super().put_file(key, path)
 
-    publisher = GateRolloutPublisher(OneEntryDown(tmp_path / "store"), tmp_path / "work")
+    publisher = GateRolloutPublisher(OneEntryDown(tmp_path / "store"), tmp_path / "work", retry_s=0)
     publisher.enqueue([(ticket, result)], 10, ticket.params.params_hash, ticket.draw.round_seed, 0)
     publisher.wait_idle()
-    meta = json.loads(publisher.store.get(layout.public_rollout_gate_meta(ticket.round_id)))
-    failed = next(row for row in meta["files"] if row.get("queue_pos") == 0)
-    assert failed["missing"] and failed["rows"] == 0 and failed["bytes"] == 0 and "sha256" not in failed
-    assert publisher.store.exists(layout.public_rollout_gate_entry(ticket.round_id, 1))
+    assert publisher.attempts[ticket.round_id] == 20 and ticket.round_id in publisher.parked
+    assert not publisher.store.exists(layout.public_rollout_gate_meta(ticket.round_id))
+    assert not publisher.store.list(f"public/rollouts/gate/{ticket.round_id}/entries")
+    job = json.loads((publisher.root / "publication" / f"{ticket.round_id}.json").read_text())
+    assert job["parked"] and job["error"]
+
 
 
 def test_enqueue_never_gzips_or_uploads_in_the_settling_thread(tmp_path, build, monkeypatch):

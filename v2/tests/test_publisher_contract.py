@@ -107,6 +107,24 @@ def test_the_pool_drop_list_and_non_pool_meaning_are_published(tmp_path):
     assert "removed tasks is no longer a pool task" in flat and "min_pool_prompt_frac" in flat
 
 
+def test_entry_outcomes_do_not_require_a_round_decision(tmp_path, build):
+    from sn120_v2.state import Lease, RoundRecord
+    from sn120_v2.types import RoundDecision
+    ticket = build.ticket(n_entries=2, n_tasks=2, params=build.params(n_tasks=2))
+    result = build.result(ticket, "PP", {0: "PP", 1: "FF"})
+    lease = Lease(ticket.lease_id, ticket.box_id, ticket.issued_at, ticket.expires_at, ticket.digest(), ticket.entries)
+    record = RoundRecord(ticket.round_id, ticket.head.version_id, ticket.params.params_hash, ticket.params.recipe_id,
+                         ticket.draw.round_seed, ticket.draw.snapshot_id, len(ticket.draw.task_ids), ticket.issued_at, (lease,))
+    report = public.round_report(record, [(ticket, result)])
+    assert [row["status"] for row in report["entry_outcomes"]] == [None, None]
+    for row, seat in zip(report["entry_outcomes"], ticket.entries):
+        assert (row["queue_pos"], row["uid"], row["hotkey"]) == (seat.queue_pos, seat.reg.uid, seat.reg.hotkey)
+        assert row["outcomes"] == list(next(entry.outcomes for entry in result.entries if entry.queue_pos == seat.queue_pos))
+    partial = dataclasses.replace(record, decision=RoundDecision(
+        ticket.round_id, ticket.head.version_id, None, (), len(ticket.draw.task_ids), 0.0, 0.0))
+    assert [row["status"] for row in public.round_report(partial, [(ticket, result)])["entry_outcomes"]] == [None, None]
+
+
 def test_all_scored_entry_eval_outputs_are_public(tmp_path):
     made = world(tmp_path)
     made.register(11, 0.4)

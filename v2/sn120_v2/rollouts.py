@@ -267,7 +267,6 @@ class GateRolloutPublisher:
             raise KeyError(f"no sealed result for {job['round_id']}")
         round_id = job["round_id"]
         files = []
-        publication_failures: list[str] = []
         for role, model in (("head", NULL_MODEL), ("winner", job.get("winner_model"))):
             if model is None:
                 continue
@@ -315,19 +314,10 @@ class GateRolloutPublisher:
                 files.append(meta)
                 local.unlink(missing_ok=True)
                 continue
-            try:
-                self.store.put_file(key, local)
-                if self.store.sha256(key) != sha:
-                    raise IOError("stored gate entry rollout sha256 mismatch")
-            except (V2Error, OSError) as exc:
-                # A store/network failure of one entry must not block the others.
-                # The uploaded bytes are not listed as verified in this meta.
-                publication_failures.append(f"{queue_pos}: {type(exc).__name__}: {exc}")
-                meta |= dict(rows=0, bytes=0, missing=True)
-                meta.pop("sha256", None)  # the local gzip was not verified in the store
-                files.append(meta)
-            else:
-                files.append(meta)
+            self.store.put_file(key, local)
+            if self.store.sha256(key) != sha:
+                raise IOError("stored gate entry rollout sha256 mismatch")
+            files.append(meta)
             local.unlink(missing_ok=True)
         hashes = ({row["role"]: row["sha256"] for row in files} if "entries" not in job else
                   {row["key"]: row["sha256"] for row in files if not row.get("missing")})
@@ -339,8 +329,6 @@ class GateRolloutPublisher:
         path.unlink(missing_ok=True)
         saved.unlink(missing_ok=True)
         shutil.rmtree(self.root / round_id, ignore_errors=True)
-        for failure in publication_failures:
-            print(f"public rollouts: {round_id}: entry {failure} (recorded as missing in meta)", flush=True)
 
     def _run(self) -> None:
         while True:

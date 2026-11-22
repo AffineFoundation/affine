@@ -263,14 +263,15 @@ def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxRes
     from . import layout
 
     scored = {entry.queue_pos: entry for _, result in leases for entry in result.entries if entry.outcomes}
+    seats = {seat.queue_pos: seat for ticket, _ in leases for seat in ticket.entries}
     decisions = {entry.queue_pos: entry for entry in record.decision.entries} if record.decision else {}
     report["entry_outcomes"] = [
         {
             "queue_pos": pos,
-            "uid": decisions[pos].uid,
-            "hotkey": decisions[pos].hotkey,
+            "uid": seats[pos].reg.uid,
+            "hotkey": seats[pos].reg.hotkey,
             "lora_hash": scored[pos].lora.lora_hash,
-            "status": decisions[pos].status,
+            "status": decisions[pos].status if pos in decisions else None,
             "outcomes": list(scored[pos].outcomes),
         }
         for pos in sorted(scored)
