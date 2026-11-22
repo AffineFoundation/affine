@@ -151,8 +151,9 @@ class Crash(BaseException):
     pass
 
 
-def test_crash_between_artifacts_and_open_record_rewrites_identical_bytes(tmp_path):
-    world, pool = rotated_world(tmp_path)
+@pytest.mark.parametrize("rotation_rule", ["v1", "info"])
+def test_crash_between_artifacts_and_open_record_rewrites_identical_bytes(tmp_path, rotation_rule):
+    world, pool = rotated_world(tmp_path, rotation_rule=rotation_rule)
     append = world.controller.journal.append
     def crash(kind, data, at):
         if kind == ROUND_OPENED:
