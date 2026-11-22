@@ -1,9 +1,9 @@
 """The public view. One plain dict feeds llms.txt, mining.json, the website and the benchmark service.
 
-Privacy rule: an entry that did not win shows only its seat, its batch
-sha256, its status, and delta, se, z and cap rate. Its file, its location,
-its train values and its per-task outcomes are never published. Only a
-winner's LoRA and outcomes are public.
+Privacy rule: an entry that did not win shows its seat, its batch sha256,
+its status, delta, se, z and cap rate, and its sealed eval outcome strings.
+Its file, its location and its train values are never published. Only a
+winner's LoRA and training batch are public.
 """
 
 from __future__ import annotations
@@ -245,7 +245,11 @@ def snapshot(
 
 
 def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxResult]]) -> dict[str, Any]:
-    """The public file of a settled round: the draw, null M's outcomes, and the winner's outcomes only."""
+    """The public file of a settled round: the draw and all scored eval outcomes.
+
+    ``entry_outcomes`` is in queue order and omits entries without outcome
+    strings. Null M and the winner keep their original, separate fields.
+    """
     report = round_view(record)
     winner = record.decision.winner if record.decision else None
     if leases:
@@ -256,6 +260,22 @@ def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxRes
         (list(entry.outcomes) for _, result in leases for entry in result.entries if winner and entry.queue_pos == winner.queue_pos),
         None,
     )
+    from . import layout
+
+    scored = {entry.queue_pos: entry for _, result in leases for entry in result.entries if entry.outcomes}
+    decisions = {entry.queue_pos: entry for entry in record.decision.entries} if record.decision else {}
+    report["entry_outcomes"] = [
+        {
+            "queue_pos": pos,
+            "uid": decisions[pos].uid,
+            "hotkey": decisions[pos].hotkey,
+            "lora_hash": scored[pos].lora.lora_hash,
+            "status": decisions[pos].status,
+            "outcomes": list(scored[pos].outcomes),
+        }
+        for pos in sorted(scored)
+    ]
+    report["rollouts_meta"] = layout.public_rollout_gate_meta(record.round_id)
     report["stopped_at_limit"] = any(result.stopped_at_limit for _, result in leases)
     # The summary a person relays: per LoRA the verdict, its reason and the size of the trained update.
     trained = {entry.queue_pos: entry.lora.report for _, result in leases for entry in result.entries if entry.lora is not None}

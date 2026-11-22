@@ -6,7 +6,7 @@ These are public model outputs and public task data for research. No rollout is 
 
 - `backfill`: the verbatim contents of `backfill_index.json` when that hand-built index exists; otherwise `null`.
 - `bench`: the live bench metadata objects, one per model and benchmark.
-- `gate`: the live gate metadata objects, one per settled round. Each has a `files` list describing the mirrored head/winner files.
+- `gate`: the live gate metadata objects, one per settled round. Each has a `files` list describing the mirrored head, winner and scored-entry files.
 - `schema_doc`: `SCHEMA.md`.
 
 The site pull owns only `index.json` among the original hand-written rollout files. It does not modify `backfill_index.json`, this document, `bench/*.per_task.jsonl.gz`, `gate/head_outcomes.*`, or `gate/tasks.jsonl.gz`.
@@ -49,15 +49,16 @@ An explicit error row represents a failed sample; it is not silently removed.
 
 ## Live head-gate rollouts
 
-Data: `gate/<round_id>/head.jsonl.gz` and, only when a winner was applied, `gate/<round_id>/winner.jsonl.gz`.
-Metadata: `gate/<round_id>/meta.json`, schema `sn120-v2-rollouts-gate-1`.
+Data: `gate/<round_id>/head.jsonl.gz`, `gate/<round_id>/winner.jsonl.gz` when a winner was applied, and `gate/<round_id>/entries/<queue_pos>.jsonl.gz` for every scored entry whose capture exists. Head and winner files retain their previous row semantics; the winner additionally has an entry file with role `entry`. The round file's `entry_outcomes` lists outcome strings for every entry with outcomes, in queue order; entries without outcome strings are omitted.
+Metadata: `gate/<round_id>/meta.json`, schema `sn120-v2-rollouts-gate-2`. Existing `sn120-v2-rollouts-gate-1` metadata remains valid and describes only head/winner files.
 
-Round metadata has `round_id`, `rows`, `bytes`, `sha256`, `params_hash`, `round_seed`, `closed_at` (UTC), and `files`. The top-level `sha256` is the SHA-256 of canonical compact JSON mapping each included role to that file's SHA-256. Each `files` entry has `role`, `key`, `rows`, `bytes`, and the gzip `sha256`. `bytes` is the sum of included gzip sizes. Gzip is deterministic (`mtime=0`), with one UTF-8 JSON object per line.
+Round metadata has `round_id`, `rows`, `bytes`, `sha256`, `params_hash`, `round_seed`, `closed_at` (UTC), and `files`. In gate-2, the top-level `sha256` is the SHA-256 of canonical compact JSON mapping each included file's key to that file's SHA-256. Each `files` entry has `role`, `key`, `rows`, `bytes`, and the gzip `sha256`; entry rows additionally have `queue_pos`, `uid`, `hotkey`, `lora_hash`, and `missing`. An absent capture or unverified entry upload has `missing: true`, `rows: 0`, `bytes: 0`, and no `sha256`; an uploaded partial capture has `missing: false` and includes only rows found in the capture. A row with `missing: true` has no verified uploaded file and does not contribute to the combined SHA. Gate-1 instead maps each role to its SHA-256, and its file entries have no `missing` field. `bytes` is the sum of included gzip sizes. Gzip is deterministic (`mtime=0`, compression level 9), with one UTF-8 JSON object per line. Metadata is written only after the files it lists have been uploaded and read back for SHA-256 verification.
 
 | Field | Meaning |
 | --- | --- |
-| `round_id`, `role` | Settled round and `head` or `winner` model role. |
-| `model_version_id` | Head version id for null M; winning LoRA hash for the winner. |
+| `round_id`, `role` | Settled round and `head`, `winner` or `entry` model role. |
+| `model_version_id` | Head version id for null M; LoRA hash for the winner and every entry. |
+| `uid`, `hotkey`, `queue_pos`, `lora_hash` | Public queue-entry identity, present on entry-file rows. |
 | `winner_uid` | Crowned UID, or `null` when the round crowned none. |
 | `sample_index`, `task_pos`, `task_id` | Sample number and position/id in the round's public draw. |
 | `prompt`, `gold_answer` | Public scoring chat messages and reference answer. |
@@ -69,4 +70,4 @@ Round metadata has `round_id`, `rows`, `bytes`, `sha256`, `params_hash`, `round_
 | `output_tokens` | OpenAI usage `completion_tokens`; `0` when no reply exists. |
 | `finish_reason` | Existing server finish reason (`stop`/`length`), or `null`. |
 
-Only null M (the head with no adapter) and an applied winner leave the box. Losing candidate captures are deleted locally and never uploaded. Publication occurs after settlement, cannot change the decision, and store failures are retried from a local journal.
+Null M, an applied winner and every scored entry's merged-model eval text leave the box for publication. Losing training batches remain private and are never uploaded; only the winner's training batch is public under `public/rounds/<round_id>/batch.json`. Publication occurs after settlement, cannot change the decision, and store failures are retried from a local journal. Captures are removed locally after the round's publication completes.

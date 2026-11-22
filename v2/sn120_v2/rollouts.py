@@ -1,10 +1,10 @@
 """Public model/task rollouts. Capture and publication never decide a score.
 
-The evaluator appends plain JSONL as grades arrive. At round close only
-null/head and an applied winner are queued; every other candidate capture is
-unlinked locally and was never uploaded. A disk-backed publication queue
-survives a controller restart. The background worker retries store failures,
-parking a job after 20 attempts.
+The evaluator appends plain JSONL as grades arrive. At round close null/head,
+an applied winner and every scored entry are queued for public merged-model
+eval publication. Candidate training batches stay private. A disk-backed
+publication queue survives a controller restart. The background worker retries
+store failures, parking a job after 20 attempts.
 """
 from __future__ import annotations
 
@@ -22,9 +22,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import layout
+from .errors import V2Error
 from .types import BoxResult, CAP, NOT_RUN, NULL_MODEL, PASS, RoundTicket
 
-SCHEMA = "sn120-v2-rollouts-gate-1"
+SCHEMA = "sn120-v2-rollouts-gate-2"
 MIN_CAPTURE_FREE_BYTES = 50 << 30
 MAX_PUBLISH_ATTEMPTS = 20
 
@@ -140,8 +141,22 @@ def capture_file(root: Path, round_id: str, model: str) -> Path:
     return Path(root) / round_id / "captures" / f"{model}.jsonl"
 
 
-def published_rows(capture: Path, ticket, result, role: str, model: str, winner_uid: int | None):
-    """One plain-text scan, then one seek per scored row in sample/task order."""
+def _entry_pair(pairs, queue_pos: int):
+    for ticket, result in pairs:
+        seat = next((entry for entry in ticket.entries if entry.queue_pos == queue_pos), None)
+        result_entry = next((entry for entry in result.entries if entry.queue_pos == queue_pos), None)
+        if seat is not None and result_entry is not None and result_entry.lora is not None:
+            return ticket, result, seat, result_entry
+    raise KeyError(f"no sealed result for queue position {queue_pos}")
+
+
+def _publication_entry(ticket, result, seat, entry) -> dict[str, Any]:
+    return dict(queue_pos=seat.queue_pos, uid=seat.reg.uid, hotkey=seat.reg.hotkey, lora_hash=entry.lora.lora_hash)
+
+
+def published_rows(capture: Path, ticket, result, role: str, model: str, winner_uid: int | None,
+                   identity: dict[str, Any] | None = None):
+    """One scan, then one seek per scored row. ``identity`` labels entry files without re-scoring."""
     positions: dict[tuple[int, int], int] = {}
     with capture.open("rb") as raw:
         while True:
@@ -149,7 +164,12 @@ def published_rows(capture: Path, ticket, result, role: str, model: str, winner_
             line = raw.readline()
             if not line:
                 break
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except (ValueError, UnicodeDecodeError):
+                if role != "entry":
+                    raise  # retain the legacy head/winner failure behavior
+                break  # a truncated last entry capture line is not a scored rollout
             positions[row["sample_index"], row["task_pos"]] = offset
     outcomes = result.null_outcomes if role == "head" else next(
         entry.outcomes for entry in result.entries if entry.lora is not None and entry.lora.lora_hash == model
@@ -161,13 +181,14 @@ def published_rows(capture: Path, ticket, result, role: str, model: str, winner_
                     continue
                 offset = positions.get((sample, task_pos))
                 if offset is None:
-                    continue  # a round from before capture never invents a completion
+                    continue  # a missing/partial capture never invents a completion
                 raw.seek(offset)
                 found = json.loads(raw.readline())
                 if found["outcome"] != outcome:
                     raise ValueError("a captured outcome differs from the sealed result")
                 yield found | dict(role=role, winner_uid=winner_uid,
-                                   model_version_id=ticket.head.version_id if role == "head" else model)
+                                   model_version_id=ticket.head.version_id if role == "head" else model,
+                                   **(identity or {}))
 
 
 class GateRolloutPublisher:
@@ -196,19 +217,21 @@ class GateRolloutPublisher:
                 self.jobs.put(path)
 
     def enqueue(self, pairs, winner_uid: int | None, params_hash: str, round_seed: str, closed_at: int) -> None:
-        """Persist the publication plan before deleting any losing capture."""
+        """Persist the complete publication plan; gzip and upload only in the worker."""
         if not pairs or not pairs[0][1].null_outcomes:
             if pairs:
                 self.discard(pairs[0][0].round_id)
             return
         ticket, result = pairs[0]
         round_id = ticket.round_id
-        winner = next(((ticket, entry) for ticket, result in pairs for seat, entry in zip(ticket.entries, result.entries)
-                       if seat.reg.uid == winner_uid and entry.lora is not None), None) if winner_uid is not None else None
+        winner = next(((ticket, entry) for ticket, result in pairs for seat in ticket.entries for entry in result.entries
+                       if seat.queue_pos == entry.queue_pos and seat.reg.uid == winner_uid and entry.lora is not None), None) if winner_uid is not None else None
         winner_model = winner[1].lora.lora_hash if winner else None
-        models = {NULL_MODEL}
-        if winner_model is not None:
-            models.add(winner_model)
+        entries = sorted([
+            _publication_entry(*_entry_pair(pairs, entry.queue_pos))
+            for _, result in pairs for entry in result.entries
+            if entry.outcomes and entry.lora is not None
+        ], key=lambda entry: entry["queue_pos"])
         # The exact small sealed records are enough after a restart; no private
         # batch, path, box id, host or credential is written into the job file.
         ticket_path = self.root / "publication" / f"{round_id}.tickets.json"
@@ -217,18 +240,18 @@ class GateRolloutPublisher:
         from .canonical import canonical_json, to_jsonable
         ticket_tmp.write_bytes(canonical_json([dict(ticket=to_jsonable(ticket), result=to_jsonable(result)) for ticket, result in pairs]))
         os.replace(ticket_tmp, ticket_path)
-        capture_dir = self.root / round_id / "captures"
         job = dict(round_id=round_id, winner_uid=winner_uid, params_hash=params_hash, round_seed=round_seed, closed_at=closed_at,
-                   head_model=NULL_MODEL, winner_model=winner_model, attempts=0, parked=False)
+                   head_model=NULL_MODEL, winner_model=winner_model, entries=entries, attempts=0, parked=False)
         publication = self.root / "publication"
         publication.mkdir(parents=True, exist_ok=True)
         path = publication / f"{round_id}.json"
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(job, sort_keys=True))
         os.replace(tmp, path)
-        for capture in capture_dir.glob("*.jsonl"):
+        models = {NULL_MODEL, winner_model, *(entry["lora_hash"] for entry in entries)}
+        for capture in (self.root / round_id / "captures").glob("*.jsonl"):
             if capture.name.removesuffix(".jsonl") not in models:
-                capture.unlink(missing_ok=True)
+                capture.unlink(missing_ok=True)  # no outcomes: never published and not needed by a restart
         self.jobs.put(path)
 
     def discard(self, round_id: str) -> None:
@@ -244,6 +267,7 @@ class GateRolloutPublisher:
             raise KeyError(f"no sealed result for {job['round_id']}")
         round_id = job["round_id"]
         files = []
+        publication_failures: list[str] = []
         for role, model in (("head", NULL_MODEL), ("winner", job.get("winner_model"))):
             if model is None:
                 continue
@@ -265,13 +289,58 @@ class GateRolloutPublisher:
                 raise IOError("stored gate rollout sha256 mismatch")
             files.append(dict(role=role, key=key, rows=rows_n, bytes=size, sha256=sha))
             local.unlink(missing_ok=True)
-        combined = hashlib.sha256(json.dumps({row["role"]: row["sha256"] for row in files}, sort_keys=True).encode()).hexdigest()
-        meta = dict(schema=SCHEMA, round_id=round_id, rows=sum(row["rows"] for row in files), bytes=sum(row["bytes"] for row in files),
+
+        # Gate-1 jobs have no entries key and retain their head/winner-only
+        # behavior. For gate-2, a missing or partial entry is metadata, not a
+        # round failure. The existing sealed-outcome equality check still
+        # applies to every found scored row.
+        for entry in job.get("entries") or []:
+            queue_pos = int(entry["queue_pos"])
+            ticket, result, seat, result_entry = _entry_pair(pairs, queue_pos)
+            if (entry["lora_hash"], entry["uid"], entry["hotkey"]) != (result_entry.lora.lora_hash, seat.reg.uid, seat.reg.hotkey):
+                raise ValueError(f"publication entry {queue_pos} differs from its sealed result")
+            key = layout.public_rollout_gate_entry(round_id, queue_pos)
+            identity = _publication_entry(ticket, result, seat, result_entry)
+            capture = capture_file(self.root, round_id, entry["lora_hash"])
+            meta = dict(role="entry", key=key, **identity, rows=0, bytes=0, missing=not capture.is_file())
+            if meta["missing"]:
+                files.append(meta)
+                continue
+            local = self.root / round_id / "entries" / f"{queue_pos}.jsonl.gz"
+            rows_n, size, sha = deterministic_gzip(local, published_rows(
+                capture, ticket, result, "entry", entry["lora_hash"], job["winner_uid"], identity,
+            ))
+            meta |= dict(rows=rows_n, missing=False, bytes=size, sha256=sha)
+            if self.store.exists(key) and self.store.sha256(key) == sha:
+                files.append(meta)
+                local.unlink(missing_ok=True)
+                continue
+            try:
+                self.store.put_file(key, local)
+                if self.store.sha256(key) != sha:
+                    raise IOError("stored gate entry rollout sha256 mismatch")
+            except (V2Error, OSError) as exc:
+                # A store/network failure of one entry must not block the others.
+                # The uploaded bytes are not listed as verified in this meta.
+                publication_failures.append(f"{queue_pos}: {type(exc).__name__}: {exc}")
+                meta |= dict(rows=0, bytes=0, missing=True)
+                meta.pop("sha256", None)  # the local gzip was not verified in the store
+                files.append(meta)
+            else:
+                files.append(meta)
+            local.unlink(missing_ok=True)
+        hashes = ({row["role"]: row["sha256"] for row in files} if "entries" not in job else
+                  {row["key"]: row["sha256"] for row in files if not row.get("missing")})
+        combined = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
+        meta = dict(schema=SCHEMA if "entries" in job else "sn120-v2-rollouts-gate-1", round_id=round_id,
+                    rows=sum(row["rows"] for row in files), bytes=sum(row.get("bytes", 0) for row in files),
                     sha256=combined, params_hash=job["params_hash"], round_seed=job["round_seed"], closed_at=utc(job["closed_at"]), files=files)
         self.store.put(layout.public_rollout_gate_meta(round_id), json.dumps(meta, sort_keys=True, indent=1).encode())
         path.unlink(missing_ok=True)
         saved.unlink(missing_ok=True)
         shutil.rmtree(self.root / round_id, ignore_errors=True)
+        for failure in publication_failures:
+            print(f"public rollouts: {round_id}: entry {failure} (recorded as missing in meta)", flush=True)
 
     def _run(self) -> None:
         while True:

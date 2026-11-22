@@ -129,7 +129,14 @@ def layout_key(key: str) -> bool:
             return False
         if key.startswith(layout.ROLLOUT_GATE_PREFIX):
             parts = key[len(layout.ROLLOUT_GATE_PREFIX):].split("/")
-            if len(parts) != 2 or not ROUND_ID.fullmatch(parts[0]):
+            if not ROUND_ID.fullmatch(parts[0]):
+                return False
+            if len(parts) == 3 and parts[1] == "entries" and parts[2].endswith(".jsonl.gz"):
+                number = parts[2][:-9]
+                if not number.isdecimal() or str(int(number)) != number:
+                    return False
+                return key == layout.public_rollout_gate_entry(parts[0], int(number))
+            if len(parts) != 2:
                 return False
             if parts[1] == "meta.json":
                 return key == layout.public_rollout_gate_meta(parts[0])
@@ -485,13 +492,21 @@ class Pull:
         for round_id in sorted(keep_gate):
             meta_key = layout.public_rollout_gate_meta(round_id)
             meta = json.loads(self.store.get(meta_key))
-            if meta.get("schema") != "sn120-v2-rollouts-gate-1" or meta.get("round_id") != round_id:
+            if meta.get("schema") not in ("sn120-v2-rollouts-gate-1", "sn120-v2-rollouts-gate-2") or meta.get("round_id") != round_id:
                 raise ValueError(f"{meta_key} is not a live gate rollout meta")
             included = []
             for file_meta in meta.get("files") or []:
                 role = file_meta.get("role")
-                key = layout.public_rollout_gate(round_id, role)
-                if role not in ("head", "winner") or file_meta.get("key") != key:
+                if role == "entry" and meta.get("schema") == "sn120-v2-rollouts-gate-2":
+                    if file_meta.get("missing"):
+                        included.append(file_meta)
+                        continue
+                    key = layout.public_rollout_gate_entry(round_id, file_meta["queue_pos"])
+                elif role in ("head", "winner"):
+                    key = layout.public_rollout_gate(round_id, role)
+                else:
+                    raise ValueError(f"{meta_key} names an invalid rollout file")
+                if file_meta.get("key") != key:
                     raise ValueError(f"{meta_key} names an invalid rollout file")
                 if file_meta.get("bytes", self.max_rollout_bytes + 1) > self.max_rollout_bytes or self.store.size(key) > self.max_rollout_bytes:
                     self.notes.append(f"{key} is above --max-rollout-mb: not copied")

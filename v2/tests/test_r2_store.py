@@ -516,13 +516,17 @@ def test_preflight_takes_every_key_from_the_layout_module(monkeypatch):
     """A key that is added to ``layout.py`` is checked with no change to the preflight."""
     roots, miners = written_roots()
     assert miners == "private/ff/v1/miners" == layout.miner_object("x").rsplit("/", 2)[0] and miners in roots
-    assert {layout.CURRENT, layout.LLMS_TXT, layout.MINING_JSON, layout.BENCHMARKS, layout.JOURNAL, layout.PENDING, "private/rounds", "public/rounds"} <= set(roots)
+    assert {layout.CURRENT, layout.LLMS_TXT, layout.MINING_JSON, layout.BENCHMARKS, layout.JOURNAL, layout.PENDING, "private/rounds", "public/rounds", "public/rollouts/gate"} <= set(roots)
+    from sn120_v2.r2 import _fixed_prefix
+    assert _fixed_prefix(layout.public_rollout_gate_entry) == "public/rollouts/gate"
     assert all(root.split("/")[0] in ("public", "private", "pending") for root in roots)
     for name, value in vars(layout).items():  # every key that a layout function makes is under one listed root
         if callable(value) and getattr(value, "__module__", "") == layout.__name__ and not name.startswith("_"):
             args = ["a"] * (value.__code__.co_argcount - (name in ("pending_lora_prefix", "journal_record")))
             if name == "public_rollout_gate":
                 args[1] = "head"
+            if name == "public_rollout_gate_entry":
+                args[1] = 0
             key = value(*args, *[7] * (name in ("pending_lora_prefix", "journal_record")))
             assert any(key == root or key.startswith(root + "/") for root in roots), name
     assert (f"{layout.LINK_FILES}/", layout.LINK_INDEX) == (links.PUBLIC_PREFIX + links.LINKS_DIR, links.PUBLIC_PREFIX + links.INDEX)

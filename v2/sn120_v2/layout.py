@@ -164,6 +164,13 @@ def public_rollout_gate(round_id: str, role: str = "head") -> str:
     return f"{ROLLOUT_GATE_PREFIX}{_part(round_id)}/{role}.jsonl.gz"
 
 
+def public_rollout_gate_entry(round_id: str, queue_pos: int) -> str:
+    """The merged-model eval rollouts of one scored queue entry, including the winner."""
+    if type(queue_pos) is not int or queue_pos < 0:
+        raise ContractError("a public gate entry rollout needs a nonnegative integer queue position")
+    return f"{ROLLOUT_GATE_PREFIX}{_part(round_id)}/entries/{queue_pos}.jsonl.gz"
+
+
 def public_rollout_gate_meta(round_id: str) -> str:
     return f"{ROLLOUT_GATE_PREFIX}{_part(round_id)}/meta.json"
 

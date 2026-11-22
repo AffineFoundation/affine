@@ -1,4 +1,4 @@
-"""Capture parity and head/winner-only gate publication."""
+"""Capture parity and publication of every scored merged-model eval."""
 import dataclasses
 import gzip
 import hashlib
@@ -95,6 +95,198 @@ def test_outcomes_identical_with_and_without_capture_and_metadata_is_recorded(tm
     broken.close()
 
 
+def make_round_captures(ticket, result, work, missing=()):
+    root = work / "rollouts" / ticket.round_id / "captures"
+    root.mkdir(parents=True, exist_ok=True)
+    head = root / f"{NULL_MODEL}.jsonl"
+    with head.open("wt") as handle:
+        for sample, text in enumerate(result.null_outcomes):
+            for pos, code in enumerate(text):
+                handle.write(json.dumps(dict(round_id=ticket.round_id, sample_index=sample, task_pos=pos, outcome=code,
+                                             prompt="head prompt", completion_text="head text", extracted_answer="4")) + "\n")
+    for entry in result.entries:
+        if not entry.outcomes or entry.queue_pos in missing:
+            continue
+        path = root / f"{entry.lora.lora_hash}.jsonl"
+        with path.open("wt") as handle:
+            for sample, text in enumerate(entry.outcomes):
+                for pos, code in enumerate(text):
+                    handle.write(json.dumps(dict(round_id=ticket.round_id, sample_index=sample, task_pos=pos, outcome=code,
+                                                 prompt="entry prompt", completion_text=f"entry {entry.queue_pos} public text",
+                                                 extracted_answer="4")) + "\n")
+    return root
+
+
+def test_settle_publishes_every_entry_and_deletes_captures_after_meta_last(tmp_path, build):
+    ticket = build.ticket(n_entries=3, n_tasks=2, params=build.params(n_tasks=2))
+    result = build.result(ticket, "PP", {0: "PP", 1: "FF", 2: "PF"})
+    winner_uid = 10
+    store = LocalStore(tmp_path / "store")
+    root = tmp_path / "work" / "rollouts"
+    make_round_captures(ticket, result, tmp_path / "work", missing={2})
+    (root / ticket.round_id / "captures" / "unscored.jsonl").write_text("private\n")
+
+    class WatchStore(LocalStore):
+        def __init__(self, root):
+            super().__init__(root)
+            self.meta_seen = False
+
+        def put_file(self, key, path):
+            if key.endswith("/meta.json"):
+                raise AssertionError("meta must be a small put, after all data files")
+            assert not self.exists(layout.public_rollout_gate_meta(ticket.round_id))
+            assert hashlib.sha256(path.read_bytes()).hexdigest()
+            return super().put_file(key, path)
+
+        def put(self, key, data):
+            if key == layout.public_rollout_gate_meta(ticket.round_id):
+                self.meta_seen = True
+                assert all(self.exists(layout.public_rollout_gate_entry(ticket.round_id, pos)) for pos in (0, 1))
+                assert (root / ticket.round_id / "captures").exists()  # captures retire only after meta is durable
+            return super().put(key, data)
+
+    watched = WatchStore(tmp_path / "watched-store")
+    publisher = GateRolloutPublisher(watched, tmp_path / "work")
+    publisher.close_round([(ticket, result)], winner_uid, ticket.params.params_hash, ticket.draw.round_seed, 0)
+    job = json.loads((root / "publication" / f"{ticket.round_id}.json").read_text())
+    assert [row["queue_pos"] for row in job["entries"]] == [0, 1, 2]
+    assert not (root / ticket.round_id / "captures" / "unscored.jsonl").exists()  # no outcomes: nothing to publish
+    publisher.wait_idle()
+    assert watched.meta_seen
+    expected = {layout.public_rollout_gate(ticket.round_id), layout.public_rollout_gate(ticket.round_id, "winner"),
+                layout.public_rollout_gate_meta(ticket.round_id),
+                *(layout.public_rollout_gate_entry(ticket.round_id, pos) for pos in (0, 1))}
+    assert set(watched.list("public/rollouts")) == expected
+    meta = json.loads(watched.get(layout.public_rollout_gate_meta(ticket.round_id)))
+    assert meta["schema"] == "sn120-v2-rollouts-gate-2" and meta["rows"] == 8
+    assert [row["role"] for row in meta["files"]] == ["head", "winner", "entry", "entry", "entry"]
+    combined = hashlib.sha256(json.dumps({row["key"]: row["sha256"] for row in meta["files"] if not row.get("missing")},
+                                         sort_keys=True).encode()).hexdigest()
+    assert meta["sha256"] == combined
+    for row in meta["files"]:
+        if row.get("missing"):
+            assert row["queue_pos"] == 2 and row["rows"] == 0 and row["bytes"] == 0
+            continue
+        assert row["sha256"] == watched.sha256(row["key"])
+        if row["role"] == "entry":
+            seat = ticket.entries[row["queue_pos"]]
+            assert (row["uid"], row["hotkey"]) == (seat.reg.uid, seat.reg.hotkey)
+            text = gzip.decompress(watched.get(row["key"]))
+            assert f'"queue_pos":{row["queue_pos"]}'.encode() in text
+            assert f'"hotkey":"{seat.reg.hotkey}"'.encode() in text
+            assert b'"role":"entry"' in text and b"entry prompt" in text and b"extracted_answer" in text
+    assert b'"role":"winner"' in gzip.decompress(watched.get(layout.public_rollout_gate(ticket.round_id, "winner")))
+    assert not (root / ticket.round_id).exists()
+
+
+def test_entry_plan_uses_queue_positions_not_result_row_order(tmp_path, build):
+    first = build.ticket(n_entries=2, n_tasks=2, params=build.params(n_tasks=2))
+    second = build.replace(first, lease_id="r000001-l1", entries=tuple(build.entry(pos) for pos in (2, 3, 4)))
+    first_result = build.result(first, "PP", {0: "PP", 1: "FF"})
+    second_result = build.result(second, "PP", {3: "PF", 2: "FP", 4: "skip"})
+    for ticket, result in ((first, first_result), (second, second_result)):
+        make_round_captures(ticket, result, tmp_path / "work")
+    publisher = GateRolloutPublisher(LocalStore(tmp_path / "store"), tmp_path / "work")
+    publisher.enqueue([(second, second_result), (first, first_result)], 13, first.params.params_hash, first.draw.round_seed, 0)
+    job = json.loads((publisher.root / "publication" / "r000001.json").read_text())
+    assert [(row["queue_pos"], row["uid"]) for row in job["entries"]] == [(0, 10), (1, 11), (2, 12), (3, 13)]
+    publisher.wait_idle()
+    winner_rows = gzip.decompress(publisher.store.get(layout.public_rollout_gate("r000001", "winner"))).splitlines()
+    expected_model = next(entry.lora.lora_hash for entry in second_result.entries if entry.queue_pos == 3)
+    assert [json.loads(row)["model_version_id"] for row in winner_rows] == [expected_model] * 2
+    rows = [json.loads(line) for line in gzip.decompress(publisher.store.get(layout.public_rollout_gate_entry("r000001", 3))).splitlines()]
+    assert [row["outcome"] for row in rows] == ["P", "F"] and all(row["uid"] == 13 for row in rows)
+
+
+def test_publication_restart_with_and_without_entries_and_missing_capture(tmp_path, build):
+    ticket = build.ticket(n_entries=3, n_tasks=2, params=build.params(n_tasks=2))
+    result = build.result(ticket, "PP", {0: "PP", 1: "FF", 2: "PF"})
+    make_round_captures(ticket, result, tmp_path / "work", missing={1})
+    root = tmp_path / "work" / "rollouts"
+    store = LocalStore(tmp_path / "store")
+    publisher = GateRolloutPublisher(store, tmp_path / "work")
+    publisher.enqueue([(ticket, result)], 10, ticket.params.params_hash, ticket.draw.round_seed, 0)
+    publisher.jobs.queue.clear()
+    for _ in range(publisher.jobs.unfinished_tasks):
+        publisher.jobs.task_done()
+    restarted = GateRolloutPublisher(store, tmp_path / "work")
+    restarted.wait_idle()
+    meta = json.loads(store.get(layout.public_rollout_gate_meta(ticket.round_id)))
+    missing = next(row for row in meta["files"] if row.get("queue_pos") == 1)
+    assert missing["missing"] and missing["rows"] == 0
+    assert store.exists(layout.public_rollout_gate_entry(ticket.round_id, 0))
+    assert store.exists(layout.public_rollout_gate_entry(ticket.round_id, 2))
+
+    # An in-flight gate-1 job never gains entries during a restart.
+    old_ticket = build.replace(ticket, round_id="r000002", lease_id="r000002-l0")
+    old_result = build.result(old_ticket, "PP", {0: "PP", 1: "FF", 2: "PF"})
+    make_round_captures(old_ticket, old_result, tmp_path / "old-work")
+    old_root = tmp_path / "old-work" / "rollouts"
+    old = GateRolloutPublisher(store, tmp_path / "old-work")
+    old.enqueue([(old_ticket, old_result)], 10, old_ticket.params.params_hash, old_ticket.draw.round_seed, 0)
+    old.jobs.queue.clear()
+    for _ in range(old.jobs.unfinished_tasks):
+        old.jobs.task_done()
+    job_path = old_root / "publication" / "r000002.json"
+    job = json.loads(job_path.read_text())
+    del job["entries"]
+    job_path.write_text(json.dumps(job))
+    GateRolloutPublisher(store, tmp_path / "old-work").wait_idle()
+    old_meta = json.loads(store.get(layout.public_rollout_gate_meta("r000002")))
+    assert old_meta["schema"] == "sn120-v2-rollouts-gate-1" and len(old_meta["files"]) == 2
+    assert not store.list("public/rollouts/gate/r000002/entries")
+
+
+def test_one_entry_upload_failure_does_not_block_the_other(tmp_path, build):
+    ticket = build.ticket(n_entries=2, n_tasks=2, params=build.params(n_tasks=2))
+    result = build.result(ticket, "PP", {0: "PP", 1: "FF"})
+    make_round_captures(ticket, result, tmp_path / "work")
+
+    class OneEntryDown(LocalStore):
+        def put_file(self, key, path):
+            if key == layout.public_rollout_gate_entry(ticket.round_id, 0):
+                raise InfraError("one entry upload failed")
+            return super().put_file(key, path)
+
+    publisher = GateRolloutPublisher(OneEntryDown(tmp_path / "store"), tmp_path / "work")
+    publisher.enqueue([(ticket, result)], 10, ticket.params.params_hash, ticket.draw.round_seed, 0)
+    publisher.wait_idle()
+    meta = json.loads(publisher.store.get(layout.public_rollout_gate_meta(ticket.round_id)))
+    failed = next(row for row in meta["files"] if row.get("queue_pos") == 0)
+    assert failed["missing"] and failed["rows"] == 0 and failed["bytes"] == 0 and "sha256" not in failed
+    assert publisher.store.exists(layout.public_rollout_gate_entry(ticket.round_id, 1))
+
+
+def test_enqueue_never_gzips_or_uploads_in_the_settling_thread(tmp_path, build, monkeypatch):
+    ticket = build.ticket(n_entries=2, n_tasks=2, params=build.params(n_tasks=2))
+    result = build.result(ticket, "PP", {0: "PP", 1: "FF"})
+    make_round_captures(ticket, result, tmp_path / "work")
+    store = LocalStore(tmp_path / "store")
+    publisher = GateRolloutPublisher(store, tmp_path / "work")
+    monkeypatch.setattr("sn120_v2.rollouts.deterministic_gzip", lambda *args: (_ for _ in ()).throw(AssertionError("gzip in enqueue")))
+    monkeypatch.setattr(store, "put_file", lambda *args: (_ for _ in ()).throw(AssertionError("upload in enqueue")))
+    publisher.enqueue([(ticket, result)], 10, ticket.params.params_hash, ticket.draw.round_seed, 0)
+    assert publisher.jobs.unfinished_tasks == 1
+    assert all(capture.exists() for capture in (publisher.root / ticket.round_id / "captures").glob("*.jsonl"))
+
+
+def test_partial_entry_capture_publishes_existing_scored_rows(tmp_path, build):
+    ticket = build.ticket(n_entries=2, n_tasks=2, params=build.params(n_tasks=2))
+    result = build.result(ticket, "PP", {0: "PP", 1: "FF"})
+    root = make_round_captures(ticket, result, tmp_path / "work")
+    partial = root / f"{result.entries[1].lora.lora_hash}.jsonl"
+    lines = partial.read_text().splitlines()
+    partial.write_text(lines[0] + "\n" + '{"sample_index":0,')  # torn final line is not fabricated
+    publisher = GateRolloutPublisher(LocalStore(tmp_path / "store"), tmp_path / "work")
+    publisher.enqueue([(ticket, result)], 10, ticket.params.params_hash, ticket.draw.round_seed, 0)
+    publisher.wait_idle()
+    rows = gzip.decompress(publisher.store.get(layout.public_rollout_gate_entry(ticket.round_id, 1))).splitlines()
+    assert len(rows) == 1
+    meta = json.loads(publisher.store.get(layout.public_rollout_gate_meta(ticket.round_id)))
+    row = next(row for row in meta["files"] if row.get("queue_pos") == 1)
+    assert row["rows"] == 1 and not row["missing"]
+
+
 def test_settle_publishes_head_and_winner_and_deletes_losers_and_retries(tmp_path, build):
     ticket = build.ticket(n_entries=2, n_tasks=2, params=build.params(n_tasks=2))
     result = build.result(ticket, "PP", {0: "PP", 1: "FF"})
@@ -139,12 +331,13 @@ def test_settle_publishes_head_and_winner_and_deletes_losers_and_retries(tmp_pat
     assert set(failing.list("public/rollouts")) == {
         layout.public_rollout_gate(ticket.round_id), layout.public_rollout_gate(ticket.round_id, "winner"),
         layout.public_rollout_gate_meta(ticket.round_id),
-    }  # only head/winner artifacts and their metadata ever reach the store
+        *(layout.public_rollout_gate_entry(ticket.round_id, pos) for pos in (0, 1)),
+    }  # every entry is public, not only head/winner
     assert not (root / ticket.round_id / "captures" / f"{winner_model}.jsonl").exists()  # whole local round retired after upload
-    assert b"LOSER SECRET" not in b"".join(failing.get(key) for key in failing.list("public/rollouts"))
+    assert b"LOSER SECRET" in gzip.decompress(failing.get(layout.public_rollout_gate_entry(ticket.round_id, 1)))
     meta = json.loads(failing.get(layout.public_rollout_gate_meta(ticket.round_id)))
     assert meta["params_hash"] == ticket.params.params_hash and meta["closed_at"] == "1970-01-01T00:00:00Z"
-    assert meta["rows"] == 4 and len(meta["files"]) == 2
+    assert meta["rows"] == 8 and len(meta["files"]) == 4
 
 
 def test_controller_settles_before_queueing_public_rollouts(build, tmp_path):
@@ -265,6 +458,6 @@ def test_publisher_parks_after_twenty_failures_and_never_uploads_loser(tmp_path,
     job = json.loads((root / "publication" / f"{ticket.round_id}.json").read_text())
     assert job["parked"] and job["attempts"] == 20 and job["error"]
     assert store.list("public/rollouts") == []
-    assert not (root / ticket.round_id / "captures" / f"{result.entries[1].lora.lora_hash}.jsonl").exists()
+    assert (root / ticket.round_id / "captures" / f"{result.entries[1].lora.lora_hash}.jsonl").exists()  # retry evidence retained
     restarted = GateRolloutPublisher(store, tmp_path / "work", retry_s=0)
     assert ticket.round_id in restarted.parked and restarted.jobs.empty()

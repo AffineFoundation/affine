@@ -282,7 +282,7 @@ def verify_historical(store: LocalStore, journal: Path, public: str | None, repo
     assert state.round is not None and state.round.round_id == "r000082"
     assert state.params is not None and state.params.params_hash == OLD_PARAMS
     report: dict[str, Any] = {"journal_sha256": sha256_hex(journal.read_bytes()), "rounds": {}, "scores_json_missing": [], "base_commit": OLD_COMMIT,
-                              "verification_scope": "journal hash chain, all public score fields, public winner outcomes, round/draw/IRT/rotation artifacts and hashes; private loser outcomes are not public"}
+                              "verification_scope": "journal hash chain, all public score fields, public winner outcomes, round/draw/IRT/rotation artifacts and hashes; historical reports may omit losing outcomes"}
     report["materialized"] = materialize(store, journal, public)
     timings = []
     for record in rounds:

@@ -107,6 +107,28 @@ def test_the_pool_drop_list_and_non_pool_meaning_are_published(tmp_path):
     assert "removed tasks is no longer a pool task" in flat and "min_pool_prompt_frac" in flat
 
 
+def test_all_scored_entry_eval_outputs_are_public(tmp_path):
+    made = world(tmp_path)
+    made.register(11, 0.4)
+    made.register(12, 0.0)
+    record = made.round()
+    report = json.loads(made.store.get(layout.round_file(record.round_id)))
+    assert [row["queue_pos"] for row in report["entry_outcomes"]] == [0, 1]
+    assert [row["status"] for row in report["entry_outcomes"]] == ["winner", "lost"]
+    assert all(len(row["outcomes"]) == made.params.samples_per_task and row["lora_hash"] and row["hotkey"] for row in report["entry_outcomes"])
+    assert report["rollouts_meta"] == layout.public_rollout_gate_meta(record.round_id)
+    flat = " ".join(published(made.publisher.snapshots[-1])[1].split())
+    assert "The outcome strings of the other entries are not published." not in flat
+    for text in (
+        "every other entry that was scored (`entry_outcomes`: queue position, UID, hotkey, LoRA hash, one string per sample)",
+        "null M (`public/rollouts/gate/<round_id>/head.jsonl.gz`)",
+        "every scored entry (`entries/<queue_pos>.jsonl.gz`)",
+        "listed with sizes and sha256 in `public/rollouts/gate/<round_id>/meta.json`",
+        "only the winner's batch is published (`public/rounds/<round_id>/batch.json`)",
+    ):
+        assert text in flat
+
+
 def test_every_number_follows_the_pinned_params(tmp_path):
     recipe = Recipe(image_digests=(sim.SIM_IMAGE,), train_max_output_tokens=777)
     changes = dict(max_prompts=123, max_rollouts=4567, z_bar=1.25, kings_window=7, n_tasks=400, looks=(0.25, 1.0), recipe=recipe)
