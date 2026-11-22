@@ -1,0 +1,6 @@
+# Prime Environments Hub envs (primeintellect-owned, verifiers v1), exact wheel + sha256. Index: https://hub.primeintellect.ai/primeintellect/simple/
+math500 @ https://hub.primeintellect.ai/primeintellect/math500/@73b40c92/math500-0.1.18-py3-none-any.whl --hash=sha256:587ecfa6a5c8a8caf31657178a83194c1be7cba9d30d31aca06160a9c961008c
+gsm8k @ https://hub.primeintellect.ai/primeintellect/gsm8k/@eb4818f9/gsm8k-0.1.4-py3-none-any.whl --hash=sha256:1ce88e5f4d7818c9f8a824316c8f11132fbe476c67e7ea63560318e3cf1669bb
+aime24 @ https://hub.primeintellect.ai/primeintellect/aime24/@9d04d8b6/aime24-0.1.0-py3-none-any.whl --hash=sha256:a3d640edecd1fc9424166c24d9442df1f6e6850c993fc2e8f4fb8108e0833443
+aime25 @ https://hub.primeintellect.ai/primeintellect/aime25/@5db870b8/aime25-0.1.0-py3-none-any.whl --hash=sha256:59e282d0eedec8155472ca9a0aff390efb0baf8b3490fc54fe5286948049c07d
+aime26 @ https://hub.primeintellect.ai/primeintellect/aime26/@e4bb80a6/aime26-0.1.0-py3-none-any.whl --hash=sha256:587a487ebb1f0826d0735dba5de37a43cc7d170d966f11d21d96e7a2dca41597
