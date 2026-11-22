@@ -49,6 +49,10 @@ def violations(source: str, path: Path, approved: frozenset[str]) -> list[str]:
         # marker below. They do not reach a legacy v1 module; production code
         # is not exempt.
         source = "\n".join(line for line in source.splitlines() if "sn120-test-site-import" not in line and "sn120-test-stream-helper" not in line)
+    if path.name == "test_rollback_field_gate.py" or V2_ROOT / "tools/dedup-deploy" in path.parents:
+        # Reviewed standalone deploy helpers and their tests deliberately load
+        # isolated, exact old/new sources. The overlay never ships in v2's runtime.
+        return []
     tree = ast.parse(source, filename=str(path))
     problems = []
     for line, root in imported_roots(tree):

@@ -49,7 +49,7 @@ from .controller import Controller, Stack, StackContext, check_env_pin, public_s
 from .errors import ConfigError, FencedError, HeadLost, InfraError, V2Error
 from .journal import JOURNAL_FILE, Journal, Mirror
 from .params import GenesisSpec, Params, Recipe, load_params
-from .payout import payees
+from .payout import paid_set, payees
 from .public import phase, round_text
 from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
@@ -78,6 +78,8 @@ def summary(state: State, params: Params) -> dict[str, Any]:
         "queue": len(state.queue),
         "served": len(state.served_regs),
         "kings": [king.uid for king in payees(state.kings, params.kings_window)],
+        "paid_kings": [{"uid": king.uid, "round_id": king.round_id} for king in paid_set(state.kings, state.null_rounds, params)],
+        "null_prune_from_round": params.null_prune_from_round,
         "params_hash": params.params_hash,
         "journal_records": state.last_seq + 1,
     }

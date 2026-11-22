@@ -42,7 +42,7 @@ def rows(decision: Rotation, state: str | None = None):
 
 def test_live_v1_decisions_and_default_hashes_are_unchanged():
     p = Params.from_json((Path(__file__).parent / "data" / "params_prod_shaped.json").read_bytes())
-    assert Params().params_hash == "dd5b56fae0b953d84bc396a42a3c10f4e62acd974754cfbaa960221b59cb5fe8"
+    assert Params().params_hash == "7eb09fa89387d1d2c5db2d8d0ffd627ad87ece8ef31bdfe93f3374f0c7bb1e50"
     assert p.params_hash == "5359a448461c3f3a3e09bd9a2d8df9f387d916fb02b8d02eecea3582649c74a1"
     enabled = dataclasses.replace(p, rotation_enabled=True)
     assert enabled.params_hash == "4f270223ac2da4c6bc6682fad00c18d22d32d6ebc223397ddfd8951ff190d3e7"

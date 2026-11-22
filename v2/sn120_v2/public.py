@@ -15,7 +15,7 @@ from collections import Counter
 from typing import Any, Mapping, Sequence
 
 from .params import Params
-from .payout import payees
+from .payout import paid_set, payees
 from .queue import waiting
 from .state import RoundRecord, State
 from .types import NOT_SCORED, NOT_TRAINED, WINNER, BoxResult, EntryDecision, QueueEntry, RoundTicket, Verdict
@@ -239,6 +239,8 @@ def snapshot(
             "files": files_view(line, verdicts, files_checked_at),
         },
         "kings": [king.to_dict() for king in payees(state.kings, params.kings_window)],
+        "paid_kings": [{"uid": king.uid, "round_id": king.round_id} for king in paid_set(state.kings, state.null_rounds, params)],
+        "null_prune_from_round": params.null_prune_from_round,
     }
 
 

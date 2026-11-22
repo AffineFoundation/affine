@@ -22,10 +22,13 @@ from sn120_v2.params import Params
 ROOT = Path(__file__).parents[2]
 KIT = ROOT / "v2/tools/dedup-deploy"
 OLD_COMMIT = "c525286580c84d795b3ca7cbdf2302e96fce31ba"
+PROD_COMMIT = "0edaebe661bfc4bcfa4487b2efdae4e596d0129b"
+NULL_PRUNE_PIN = "1449210f89f30a65dc3f6e8d4ac956f5f2c1c8d37364a46b20e5cfb01c24eace"
 OLD_PIN = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"
 DEDUP_PIN = "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
 HISTORICAL_PIN = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 FIELD_PINS = {
+    "1449210f89f30a65dc3f6e8d4ac956f5f2c1c8d37364a46b20e5cfb01c24eace": "null_prune_params.json",
     "ab4e228c961058a29ed062bc67f6da6881cf3c13396eb03730d54badb4f261c0": "field_gate_params_argmax.json",
     "642cff7a80a51ca30606ff775e96693fa2de6d546703d9c2c30703519a72b8ed": "field_gate_params_k05f0.json",
     "ab2c7084bc94a7ce1ac6138498447aeaecadc117ae66e43131dfc1c0d5aa268d": "field_gate_params_k025f025.json",
@@ -38,6 +41,15 @@ OLD_FIELD_PINS = {
     "05a1b55556a14cd001f926f774a4231023851e43c2393ec41bcd23646fe6ca4b": "field_gate_params_k1f1.json",
     "0eb4867f6c08aa179015c9e927bb38d6ade14a022c406401a026280845a8e098": "field_gate_params_king_led.json",
 }
+
+
+@pytest.fixture(autouse=True)
+def restore_new_modules():
+    """An old-code overlay is local to one test, never to later simulations."""
+    modules = sys.modules.copy()
+    yield
+    sys.modules.clear()
+    sys.modules.update(modules)
 
 
 def _git(path: str, revision: str = "14ae80f5") -> bytes:
@@ -53,9 +65,10 @@ def _params(path: str, revision: str = "14ae80f5") -> dict:
 def _field_fixture(tmp_path: Path, field_name: str) -> Path:
     """Run the real controller fixture at the exact reviewed field pin."""
     output = tmp_path / "fixture"
+    path = ROOT / ("v2/ops" if field_name == "null_prune_params.json" else "ops") / field_name
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1",
-               DEDUP_REVIEWED_PARAMS=str(ROOT / "ops" / field_name),
-               DEDUP_REVIEWED_PARAMS_HASH=str(Params.from_dict(json.loads((ROOT / "ops" / field_name).read_text())).params_hash))
+               DEDUP_REVIEWED_PARAMS=str(path),
+               DEDUP_REVIEWED_PARAMS_HASH=str(Params.from_dict(json.loads(path.read_text())).params_hash))
     subprocess.run([
         sys.executable, "-I", "-c",
         "import runpy,sys;sys.path.insert(0,sys.argv[1]);sys.argv=sys.argv[2:];runpy.run_path(sys.argv[0],run_name='__main__')",
@@ -70,7 +83,7 @@ def _copy_with_transition(tmp_path: Path, fixture: Path, field_name: str) -> tup
     root.mkdir()
     source = read_journal(fixture / "journal.jsonl")
     rows = [next(row for row in source if row.kind == "genesis")]
-    field = json.loads((ROOT / "ops" / field_name).read_text())
+    field = json.loads((ROOT / ("v2/ops" if field_name == "null_prune_params.json" else "ops") / field_name).read_text())
     for data in (_params("v2/tools/dedup-deploy/old-params.json"),
                  _params("v2/tools/dedup-deploy/new-params.json"), field):
         rows.append(JournalRecord(len(rows), 1, len(rows) + 1, "params_set", {"params": data}, rows[-1].checksum))
@@ -91,11 +104,11 @@ def _copy_with_transition(tmp_path: Path, fixture: Path, field_name: str) -> tup
     return path, rows
 
 
-def _old_v2(tmp_path: Path) -> Path:
-    """Extract the exact old source without executing anything from the archive."""
-    root = tmp_path / "old-source"
+def _source_v2(tmp_path: Path, revision: str, name: str) -> Path:
+    """Extract reviewed source without executing anything from the archive."""
+    root = tmp_path / name
     root.mkdir()
-    archive = subprocess.check_output(["git", "archive", OLD_COMMIT, "v2/sn120_v2"], cwd=ROOT)
+    archive = subprocess.check_output(["git", "archive", revision, "v2/sn120_v2"], cwd=ROOT)
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as tar:
         for member in tar.getmembers():
             target = (root / member.name).resolve()
@@ -104,11 +117,52 @@ def _old_v2(tmp_path: Path) -> Path:
     return root / "v2"
 
 
+def _old_v2(tmp_path: Path) -> Path:
+    return _source_v2(tmp_path, OLD_COMMIT, "old-source")
+
+
 def _install_old_overlay(old_v2: Path) -> None:
     sys.path.insert(0, str(KIT))
     import rollback_cli
     os.environ["DEDUP_OLD_V2"] = str(old_v2)
     rollback_cli.install(KIT)
+
+
+def test_null_prune_journal_replays_under_old_overlay_but_native_prod_rejects_its_params(tmp_path):
+    """0edaebe6 rejects the new field; only the reviewed compatibility overlay translates it."""
+    selected = ROOT / "v2/ops/null_prune_params.json"
+    production_v2 = _source_v2(tmp_path, PROD_COMMIT, "production-source")
+    native = subprocess.run([
+        sys.executable, "-I", "-c",
+        "import json,sys;sys.path.insert(0,sys.argv[1]);"
+        "from sn120_v2.params import Params;"
+        "from sn120_v2.errors import ContractError;"
+        "data=json.load(open(sys.argv[2]));"
+        "\ntry: Params.from_dict(data)"
+        "\nexcept ContractError as exc:"
+        "\n assert 'null_prune_from_round' in str(exc),str(exc)"
+        "\n print('native 0edaebe6 rejected null_prune_from_round')"
+        "\nelse: raise AssertionError('native 0edaebe6 unexpectedly accepted the new field')",
+        str(production_v2), str(selected),
+    ], cwd=tmp_path, capture_output=True, text=True, timeout=30)
+    assert native.returncode == 0, native.stderr
+
+    fixture = _field_fixture(tmp_path, "null_prune_params.json")
+    journal, rows = _copy_with_transition(tmp_path, fixture, "null_prune_params.json")
+    _install_old_overlay(_old_v2(tmp_path))
+    from sn120_v2.dedup_compat import digest_params, historical_params, require_closed_dedup_history
+    from sn120_v2.params import Params as CompatParams
+    from sn120_v2.state import replay
+
+    original = [row.data["params"] for row in rows if row.kind == "params_set"]
+    assert [digest_params(data) for data in original] == [OLD_PIN, DEDUP_PIN, NULL_PRUNE_PIN]
+    state = replay(read_journal(journal))
+    require_closed_dedup_history(read_journal(journal), state)
+    assert state.round is None and state.params.params_hash == OLD_PIN
+    assert historical_params(original[-1]).params_hash == OLD_PIN
+    for changed in ("r000099", ""):
+        with pytest.raises(Exception, match="reviewed null-prune"):
+            CompatParams.from_dict(original[-1] | {"null_prune_from_round": changed})
 
 
 def test_old_dedup_field_closed_journal_replays_with_legacy_behavior(tmp_path):
@@ -163,7 +217,7 @@ def test_every_reviewed_field_pin_restores_the_same_legacy_params(tmp_path):
     for pin, name in {**OLD_FIELD_PINS, **FIELD_PINS}.items():
         data = json.loads(_git("ops/field_gate_params.json", "1da63bef") if pin == "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4"
                             else _git(f"ops/{name}", "04fbe857a28eddf94decb128b7a4d455a91fbfcd") if pin in OLD_FIELD_PINS
-                            else (ROOT / "ops" / name).read_text())
+                            else (ROOT / ("v2/ops" if name == "null_prune_params.json" else "ops") / name).read_text())
         # Exact historical records above already carry their reviewed worker digest.
         assert Params.from_dict(data).params_hash == pin
         old = CompatParams.from_dict(data)

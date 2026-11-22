@@ -159,6 +159,7 @@ def main() -> int:
     historical_data = production.copy()
     historical_data.pop("crown_gate", None)
     historical_data.pop("z_field_bar", None)
+    historical_data.pop("null_prune_from_round", None)
     historical_data["z_bar"] = 1.5
     historical_data["recipe"] = dict(production["recipe"], code_digest="28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a")
     historical = Params.from_dict(historical_data)

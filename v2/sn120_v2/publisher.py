@@ -1327,8 +1327,27 @@ def _win_rule_lines(params: Params) -> list[str]:
     ]
 
 
+def _payout_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
+    """The payout rule and the paid set that survives its simulation, newest first."""
+    paid = doc.get("paid_kings") or []
+    if not params.null_prune_from_round:
+        return [
+            f"- A round with no winner changes nothing in the payout: the window of the last {params.kings_window} kings keeps being",
+            "  paid.",
+            *(rows_table(paid, ("uid", "round_id")) if paid else ["There is no paid king yet."]),
+        ]
+    return [
+        f"- From `{params.null_prune_from_round}`, each round with no new king (the king held) removes the oldest king from the paid set, down to one.",
+        f"  A new king joins the paid set (and pushes out the oldest if {params.kings_window} are paid). Pruned kings return only by winning again.",
+        "  Rounds without a decision (operator stop, failure) do not prune. Paid kings split the weight equally.",
+        "- Current paid set, newest first. Registration of each winning hotkey is checked when the writer sets weights.",
+        *(rows_table(paid, ("uid", "round_id")) if paid else ["There is no paid king yet."]),
+    ]
+
+
 def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     kings, keys, url = doc.get("kings") or [], object_keys(), doc["contract"]["public_url"]
+    beneficiaries = "paid king" if params.null_prune_from_round else "king of the window"
     snapshots = {"the open round": (doc.get("round") or {}).get("irt_snapshot_id"), "the last closed round": doc.get("irt_snapshot_id")}
     where = [
         f"- Snapshot of {name}: id `{found}`, object `{layout.irt_snapshot(found)}`" + (f", {url}/{layout.irt_snapshot(found)}" if url else "")
@@ -1408,12 +1427,13 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         f"- A king is a round winner that was applied. The window is the last {params.kings_window} distinct king UIDs. A UID that wins",
         "  again has one place in the window, with its newest win.",
-        "- Each king of the window gets an equal share of all the weight, while the hotkey that won is still registered",
+        f"- Each {beneficiaries} gets an equal share of all the weight, while the hotkey that won is still registered",
         "  on that UID: 1 / (the number of such kings).",
+        "- The share of a paid king that is no longer registered is split among the other registered paid kings."
+        if params.null_prune_from_round else
         "- The share of a king that is no longer registered is split among the other registered kings of the window.",
-        f"- A round with no winner changes nothing in the payout: the window of the last {params.kings_window} kings keeps being",
-        "  paid.",
-        f"- No burn, in any case: no weight goes to UID {params.burn_uid} or to the owner as a fallback. If no king of the window is",
+        *_payout_lines(doc, params),
+        f"- No burn, in any case: no weight goes to UID {params.burn_uid} or to the owner as a fallback. If no {beneficiaries} is",
         "  registered, the writer sets nothing and the last valid weights stay on chain.",
         f"- One writer sets the weights, with one attempt each {params.weights_cadence_s} s. If the chain read fails or is not complete, or",
         "  the state does not load, that attempt sets nothing and the last valid weights stay on chain.",

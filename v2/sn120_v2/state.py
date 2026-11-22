@@ -105,6 +105,8 @@ class State:
     served_regs: set[RegKey] = field(default_factory=set)
     served_hotkeys: set[str] = field(default_factory=set)
     kings: list[King] = field(default_factory=list)  # applied winners, oldest first
+    # Judged-null round ids, oldest first. Unlike rounds, this payout history is never trimmed by HISTORY.
+    null_rounds: list[str] = field(default_factory=list)
     round: RoundRecord | None = None  # the open round
     rounds: list[RoundRecord] = field(default_factory=list)  # closed rounds, oldest first
     round_seq: int = 0
@@ -293,6 +295,8 @@ def _round_closed(state: State, data: dict, at: int) -> None:
         _edit(state, key, leased=False)
     _need(not any(state.queue[e.reg.key].leased for l in record.leases for e in l.entries if e.reg.key in state.queue), "a closed round left a seat leased")
     state.rounds = (state.rounds + [replace(record, outcome=outcome, closed_at=at)])[-HISTORY:]
+    if outcome == NULL:
+        state.null_rounds.append(record.round_id)
     state.round = None
     state.snapshot_id = data.get("snapshot_id", state.snapshot_id)
     state.rotation_state_sha = data.get("rotation_state_sha", state.rotation_state_sha)

@@ -13,6 +13,7 @@ import dataclasses
 import json
 import math
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -199,7 +200,7 @@ class Params(Record):
         "rotation_enabled", "rotation_k", "rotation_retire_p", "rotation_n_min",
         "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
-        "eval_merged",
+        "eval_merged", "null_prune_from_round",
     )
 
     netuid: int = 120
@@ -320,6 +321,9 @@ class Params(Record):
 
     # Payout.
     kings_window: int = 10
+    # Empty: the original last-window rule. Otherwise judged nulls from this round prune the oldest paid king.
+    # Omitted while empty so every earlier params record keeps its canonical form and hash.
+    null_prune_from_round: str = ""
     burn_uid: int = 0  # the owner's UID: it has no queue seat. No burn: the weights writer refuses a table with weight on it and sets nothing
     weights_cadence_s: int = 3600
     weights_rate_limit_blocks: int = 100
@@ -397,6 +401,7 @@ class Params(Record):
         _need(self.eval_chunk_tasks >= 1, "eval_chunk_tasks must be at least 1")
         _need(self.apply_retry_s > 0 and self.apply_max_attempts >= 1, "apply retry settings must be positive")
         _need(self.kings_window >= 1 and self.burn_uid >= 0, "kings_window >= 1 and burn_uid >= 0")
+        _need(isinstance(self.null_prune_from_round, str) and (not self.null_prune_from_round or re.fullmatch(r"r\d{6}", self.null_prune_from_round)), "null_prune_from_round must be empty or rNNNNNN")
         _need(self.weights_cadence_s > 0, "weights_cadence_s must be positive")
         _need(math.isfinite(self.budget_usd_per_hour) and self.budget_usd_per_hour > 0, "budget must be positive")
 

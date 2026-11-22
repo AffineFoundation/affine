@@ -45,6 +45,7 @@ K1F1_PARAMS_HASH = "471b74f4a306efbb1e9444069ea832b5e02d68ec410f5ffebb06353f2deb
 KING_LED_PARAMS_HASH = "848707723628c85dc13f8c93e39d132432fcb5851076165490ac01693176236e"
 K025F025_PARAMS_HASH = "ab2c7084bc94a7ce1ac6138498447aeaecadc117ae66e43131dfc1c0d5aa268d"
 ARGMAX_PARAMS_HASH = "ab4e228c961058a29ed062bc67f6da6881cf3c13396eb03730d54badb4f261c0"
+NULL_PRUNE_PARAMS_HASH = "1449210f89f30a65dc3f6e8d4ac956f5f2c1c8d37364a46b20e5cfb01c24eace"
 OLD_FIELD_GATE_PARAMS_HASHES = (
     "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4",
     "346b99a875be5a9d5e2467bf846f20d124229397b67935c6563f1e7c2409b8b1",
@@ -55,9 +56,11 @@ FIELD_GATE_PARAMS_HASHES = (
     FIELD_GATE_PARAMS_HASH, K1F1_PARAMS_HASH, KING_LED_PARAMS_HASH, K025F025_PARAMS_HASH,
     ARGMAX_PARAMS_HASH,
 )
+NULL_PRUNE_FIELD = "null_prune_from_round"
+NULL_PRUNE_CUTOFF = "r000098"
 REVIEWED_NEW_PARAMS_HASHES = frozenset((
     HISTORICAL_NEW_PARAMS_HASH, REVIEWED_NEW_PARAMS_HASH, *FIELD_GATE_PARAMS_HASHES,
-    *OLD_FIELD_GATE_PARAMS_HASHES,
+    NULL_PRUNE_PARAMS_HASH, *OLD_FIELD_GATE_PARAMS_HASHES,
 ))
 REVIEWED_OLD_PARAMS_HASH = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"
 HISTORICAL_NEW_CODE_DIGEST = "28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a"
@@ -405,9 +408,18 @@ class Params(Record):
         Unknown/newer new-code fields fail in Record.from_dict. A dedup pin is
         checked as a complete canonical record, so rollback cannot silently
         accept a different threshold, recipe or code digest under the same name.
+        The exact reviewed null-prune record may additionally carry its one new
+        field; removing it restores the already-reviewed argmax record, whose
+        ordinary translation below is then required to succeed.
         """
         if not isinstance(data, Mapping):
             raise ConfigError("Params must be a JSON object")
+        if NULL_PRUNE_FIELD in data:
+            if digest(data) != NULL_PRUNE_PARAMS_HASH or data[NULL_PRUNE_FIELD] != NULL_PRUNE_CUTOFF:
+                raise ConfigError("rollback compatibility accepts only the reviewed null-prune params record")
+            data = {key: value for key, value in data.items() if key != NULL_PRUNE_FIELD}
+            if digest(data) != ARGMAX_PARAMS_HASH:
+                raise ConfigError("null-prune params do not reduce to the reviewed argmax record")
         fields = set(data) & set(RELEASE_FIELDS)
         if fields:
             unknown = set(data) - {f.name for f in dataclasses.fields(cls)}
