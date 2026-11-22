@@ -307,7 +307,7 @@ class Row:
 
     def node_status(self, rk):
         o = self.node.out(f"cd {C.NODE_ROOT}/runs/{rk} 2>/dev/null && echo done=$(test -f DONE && echo 1); echo alive=$(flock -n {C.NODE_ROOT}/runs/.node-run.lock true 2>/dev/null || echo 1); "
-                          f"echo lines=$(cat */vf/*/traces.jsonl 2>/dev/null | wc -l); echo finished=$(ls */summary.json 2>/dev/null | wc -l); echo state=1; echo ok=1", timeout=90)
+                          f"echo lines=$(cat */vf/*/traces.jsonl 2>/dev/null | wc -l); echo finished=$(ls */summary.json 2>/dev/null | wc -l); echo state=$(test -d {C.NODE_ROOT}/runs/{rk} && echo 1); echo ok=1", timeout=90)
         d = {}
         for line in o.splitlines():
             if "=" in line: a, b = line.split("=", 1); d[a] = b.strip()

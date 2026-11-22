@@ -1292,13 +1292,21 @@ def test_a_silent_node_is_released_and_the_row_rents_again_without_a_fail(world,
 
 @pytest.mark.parametrize("fault,status,reason", [
     ("process", "done=\nalive=\nlines=0\nfinished=0\nstate=1\nok=1\n", "process gone"),
-    ("state", "done=\nalive=1\nlines=0\nfinished=0\nok=1\n", "run state is missing"),
+    ("state", "done=\nalive=1\nlines=0\nfinished=0\nstate=\nok=1\n", "run state is missing"),
 ])
 def test_node_back_after_a_reboot_is_an_immediate_node_lost(world, capsys, fault, status, reason):
     gen, node, old = one_row_in_work(world)
     row = D.Row(gen); run = row.S["running"]
     row.S["node_down"] = dict(since=D.now(), checked=0, state="listed"); row.save()
     node.busy = status
+    if fault == "state":  # execute the actual probe: a missing directory must not produce state=1, while ok=1 still answers
+        plain = node.out
+        def out(cmd, timeout=0):
+            if "echo ok=1" not in cmd: return plain(cmd, timeout)
+            probe = subprocess.run(["/bin/sh", "-c", cmd], capture_output=True, text=True, check=True)
+            assert f"echo state=$(test -d {C.NODE_ROOT}/runs/{gen} && echo 1); echo ok=1" in cmd
+            return probe.stdout
+        node.out = out
     row.step(row.S["model"], RUNNABLE); row.save()
     said = events(capsys); lost = next(e for e in said if e["event"] == "node-lost")
     assert "node-back" in [e["event"] for e in said] and reason in lost["reason"]
