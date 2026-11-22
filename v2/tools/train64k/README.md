@@ -54,23 +54,100 @@ unchanged; no benchmark is run by the params unit tests.
 
 ## Opt-in params and admission cost
 
-`v2/ops/train64k_params.json` is the production `new-params.json` with only:
+`v2/ops/train64k_params.json` is the production `new-params.json` with exactly:
 
 ```text
 recipe.train_max_output_tokens  32768 -> 65536
 recipe.train_max_context_tokens 36864 -> 69632
+max_train_token_steps           16000000 -> 22130000
 ```
 
-It is not the primary parameter file. There is no trainer-code change and no
-change to `code_digest`: the trainer already uses per-layer gradient
-checkpointing, chunked output logits, and one row at a time.
+`v2/ops/train64k_params_t3600.json` (**RECOMMENDED**) has those same three
+changes plus:
 
-`max_train_token_steps` stays at 16,000,000, preserving the bound on counted
-token-step work per file. Outputs beyond 32k now cost more token-steps because
-they are no longer truncated there. Consequently, a file with rows beyond 32k
-that was near the cost cap and valid under the 32k recipe can exceed the cap
-and become invalid under this recipe. Miner settings still cannot override
-these two validator-owned caps.
+```text
+train_time_budget_s 2400 -> 3600
+```
+
+Neither file is primary, and `new-params.json`, the field-gate params, and the
+`Recipe`/`Params` defaults are unchanged. There is no trainer-code change and
+no change to `code_digest`: the trainer already uses per-layer gradient
+checkpointing, chunked output logits, and one row at a time. Miner settings
+cannot override the validator-owned caps.
+
+The token-step budget is derived from the 1,380 trainable mixed-outcome-group
+king rollouts in round `r000104`:
+
+```text
+1.38298   = sum(min(n + 1, 65536)) / sum(min(n + 1, 32768))
+22,130,000 = 16,000,000 x 1.38298, rounded up to the nearest 10,000
+```
+
+A file with that evaluation length mix which cost 16M token-steps at 32k
+therefore costs at most 22.13M at 64k. The sealed results `r000095` (six
+files) and `r000040` (six files) had between 0 and 7 truncated rows per file,
+so an observed file's cost rises by at most `7 x 32,768 = 229,376`. A strict
+bound for every conceivable valid file, with every row a cap-hit, would
+require 2x = 32M instead; 22.13M is the measured-mix budget, not that
+universal guarantee. Outputs beyond 32k now cost more token-steps because
+they are no longer truncated there.
+
+The 60-minute variant is recommended because `worker.py` treats admission's
+cost cap as meaning a valid batch fits `train_time_budget_s`; a batch that
+received the whole time and still did not finish becomes `NO_DECISION`,
+counted for its seat. `r000040` position 0 used 15.5M token-steps, 64
+minibatches and one B300 GPU, and took 2293 seconds, so 2400 seconds was
+already tight at 16M. At 22.13M, one GPU per LoRA and six batches, the estimate
+is about 3400 seconds from `6.77k token-steps/s x 1.035` long-row cost. The
+setting 3600 remains below `round_time_limit_s - promote_reserve_s =
+10800 - 600 = 10200`.
+
+## Cut-over warm-up
+
+`warmup.py` pre-tunes FLA/Triton kernels for row lengths above 32k before the
+first live 64k round. This avoids roughly 630 seconds of first-use autotuning
+per GPU. FLA's l2norm kernel key is `(D, NB)`, with
+`NB = cdiv(T * 16, 65536)` for q/k heads: a new class every 4096 tokens.
+
+The tool runs one real trainer child in parallel per selected GPU with exactly
+`trainer.job_env([i], work_dir)`, hence
+`TRITON_CACHE_DIR=<work_dir>/triton/gpu<i>`. Warming every per-GPU directory
+covers both one-GPU and two-GPU layouts, because a two-GPU job uses its first
+GPU's cache directory. Synthetic jobs use the live recipe from `--params`, one
+group per inclusive target length, two rollouts per group with rewards 1 and 0
+(nonzero advantages), and plain repeated text tokenized to exactly
+`L - prompt_tokens` output tokens.
+
+```sh
+PYTHONPATH=v2 python v2/tools/train64k/warmup.py \
+  --base-dir /path/to/resident-head \
+  --work-dir /path/to/box-work-dir \
+  --params v2/ops/train64k_params_t3600.json \
+  --min 32768 --max 69632 --stride 2048
+```
+
+`--gpus 0,1,2,3,4,5,6,7` selects GPUs explicitly; the default is every visible
+GPU. The default params file is `v2/ops/train64k_params.json`. Before starting
+anything, the tool queries `nvidia-smi` compute processes and refuses every
+selected GPU with an active job, with a clear conflict report. It prints
+per-GPU wall time, peak memory and covered length classes. Temporary jobs stay
+below `work_dir/warmup/`, every temporary job directory is deleted afterward,
+and adapters are discarded and never uploaded. The pure unit tests do not run
+GPU work.
+
+The documentation-only cut-over sequence is:
+
+1. Stop the loop.
+2. Set the journaled params to **recommended** `train64k_params_t3600.json`,
+   or use `train64k_params.json` to retain 40 minutes.
+3. Sync the validator.
+4. Dry-run the weights writer.
+5. Run `warmup.py` on the box, approximately ten minutes with all GPUs in
+   parallel.
+6. Start one loop with guarded rollback to `ab4e228c` on the same code.
+
+These instructions are not executed by this change. No service, production
+storage, R2, chain state or weights writer is invoked by the tool or tests.
 
 ## Results (8xB200 on-demand, pod noble-orbit-8b, 2026-11-22; prod trainer @ 0edaebe6 unmodified; torch 2.14.0+cu130, transformers 5.20.2, fla 0.6.0, no causal_conv1d; base = genesis MiMo-V2.6-Distill-Qwen-9B, same architecture as the head)
 

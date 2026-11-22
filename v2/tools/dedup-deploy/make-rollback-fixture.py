@@ -156,12 +156,15 @@ def main() -> int:
     # fixture adapts worker evidence only; it never changes that historical pin.
     full = Params.from_dict(production)
     assert full.params_hash == os.environ["DEDUP_REVIEWED_PARAMS_HASH"]
-    historical_data = production.copy()
+    # The incident record predates the selected opt-in variant. Build it from
+    # the unchanged primary record, not from a variant whose 64k training caps,
+    # token-step budget or time budget would alter the historical params hash.
+    historical_data = json.loads((Path(__file__).parent / "new-params.json").read_text())
     historical_data.pop("crown_gate", None)
     historical_data.pop("z_field_bar", None)
     historical_data.pop("null_prune_from_round", None)
     historical_data["z_bar"] = 1.5
-    historical_data["recipe"] = dict(production["recipe"], code_digest="28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a")
+    historical_data["recipe"] = dict(historical_data["recipe"], code_digest="28f1fb8bc7bd4e415a4f7a62c5876d99a4404bee7b4afd156a0290b81eb6510a")
     historical = Params.from_dict(historical_data)
     assert historical.params_hash == "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
     world.controller.set_params(full, world.clock())
@@ -177,6 +180,14 @@ def main() -> int:
     assert full.dedup_enabled and full.train_seed_scope == "round" and full.min_step_norm == 0.0
     assert full.min_signal_rollouts == 1 and full.z_bar == production["z_bar"] and full.eval_merged
     assert full.crown_gate in ("field_median", "argmax_symmetric") and full.z_field_bar == production["z_field_bar"]
+    if full.params_hash in (
+        "a8d0f5fe50a1d47de9cb5bac618453321ce58d460f75618290a0db3001d695ac",
+        "05b688fcc0ceddb4bc78b56cef471110a9b9b107cc82bf2b6318c7d1ad355f40",
+        "c5d4405bcfb01b68766f97409f7ce1bfc98f875cf77af661421a8a3a28df2057",
+    ):
+        assert (full.recipe.train_max_output_tokens, full.recipe.train_max_context_tokens) == (65536, 69632)
+        assert full.max_train_token_steps == 22_130_000
+        assert full.train_time_budget_s == (3600 if full.params_hash.startswith("05b688fc") else 2400)
     # Stage A plus no-result survivor accounting: three seats, one charged copy,
     # two uncharged genuine seats returned to the queue after a failed lease.
     for uid, quality in ((1, 0.9), (2, 0.0), (3, 0.0)):
