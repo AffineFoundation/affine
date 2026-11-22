@@ -26,12 +26,14 @@ OLD_PIN = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"
 DEDUP_PIN = "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
 HISTORICAL_PIN = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 FIELD_PINS = {
-    "ab4e228c961058a29ed062bc67f6da6881cf3c13396eb03730d54badb4f261c0": "field_gate_params_argmax.json",
-    "642cff7a80a51ca30606ff775e96693fa2de6d546703d9c2c30703519a72b8ed": "field_gate_params_k05f0.json",
-    "ab2c7084bc94a7ce1ac6138498447aeaecadc117ae66e43131dfc1c0d5aa268d": "field_gate_params_k025f025.json",
-    "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4": "field_gate_params_k0f1.json",
-    "471b74f4a306efbb1e9444069ea832b5e02d68ec410f5ffebb06353f2deb9c5a": "field_gate_params_k1f1.json",
-    "848707723628c85dc13f8c93e39d132432fcb5851076165490ac01693176236e": "field_gate_params_king_led.json",
+    "ab4e228c961058a29ed062bc67f6da6881cf3c13396eb03730d54badb4f261c0": "ops/field_gate_params_argmax.json",
+    "a8d0f5fe50a1d47de9cb5bac618453321ce58d460f75618290a0db3001d695ac": "v2/ops/train64k_params.json",
+    "05b688fcc0ceddb4bc78b56cef471110a9b9b107cc82bf2b6318c7d1ad355f40": "v2/ops/train64k_params_t3600.json",
+    "642cff7a80a51ca30606ff775e96693fa2de6d546703d9c2c30703519a72b8ed": "ops/field_gate_params_k05f0.json",
+    "ab2c7084bc94a7ce1ac6138498447aeaecadc117ae66e43131dfc1c0d5aa268d": "ops/field_gate_params_k025f025.json",
+    "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4": "ops/field_gate_params_k0f1.json",
+    "471b74f4a306efbb1e9444069ea832b5e02d68ec410f5ffebb06353f2deb9c5a": "ops/field_gate_params_k1f1.json",
+    "848707723628c85dc13f8c93e39d132432fcb5851076165490ac01693176236e": "ops/field_gate_params_king_led.json",
 }
 OLD_FIELD_PINS = {
     "346b99a875be5a9d5e2467bf846f20d124229397b67935c6563f1e7c2409b8b1": "field_gate_params.json",
@@ -111,7 +113,21 @@ def _install_old_overlay(old_v2: Path) -> None:
     rollback_cli.install(KIT)
 
 
-def test_old_dedup_field_closed_journal_replays_with_legacy_behavior(tmp_path):
+@pytest.fixture
+def isolated_rollback_imports():
+    """The loader replaces modules process-wide; restore the new package after each test."""
+    before = dict(sys.modules)
+    environment = dict(os.environ)
+    try:
+        yield
+    finally:
+        sys.modules.clear()
+        sys.modules.update(before)
+        os.environ.clear()
+        os.environ.update(environment)
+
+
+def test_old_dedup_field_closed_journal_replays_with_legacy_behavior(tmp_path, isolated_rollback_imports):
     fixture = _field_fixture(tmp_path, "field_gate_params_k1f1.json")
     journal, rows = _copy_with_transition(tmp_path, fixture, "field_gate_params_k1f1.json")
     _install_old_overlay(_old_v2(tmp_path))
@@ -137,7 +153,7 @@ def test_old_dedup_field_closed_journal_replays_with_legacy_behavior(tmp_path):
         assert decoded.params_hash == OLD_PIN and decoded.z_bar == 1.0
 
 
-def test_open_field_round_blocks_rollback_before_any_write(tmp_path):
+def test_open_field_round_blocks_rollback_before_any_write(tmp_path, isolated_rollback_imports):
     fixture = _field_fixture(tmp_path, "field_gate_params_k1f1.json")
     _install_old_overlay(_old_v2(tmp_path))
     from sn120_v2.journal import Journal
@@ -156,16 +172,27 @@ def test_open_field_round_blocks_rollback_before_any_write(tmp_path):
     assert path.read_bytes() == before
 
 
-def test_every_reviewed_field_pin_restores_the_same_legacy_params(tmp_path):
+def test_every_reviewed_field_pin_restores_the_same_legacy_params(tmp_path, isolated_rollback_imports):
     _install_old_overlay(_old_v2(tmp_path))
     from sn120_v2.params import Params as CompatParams
+    from sn120_v2.dedup_compat import historical_params
+    from sn120_v2.errors import ConfigError
     # Pre-render field-gate records keep their exact old worker identity.
     for pin, name in {**OLD_FIELD_PINS, **FIELD_PINS}.items():
         data = json.loads(_git("ops/field_gate_params.json", "1da63bef") if pin == "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4"
                             else _git(f"ops/{name}", "04fbe857a28eddf94decb128b7a4d455a91fbfcd") if pin in OLD_FIELD_PINS
-                            else (ROOT / "ops" / name).read_text())
+                            else (ROOT / name).read_text())
         # Exact historical records above already carry their reviewed worker digest.
         assert Params.from_dict(data).params_hash == pin
         old = CompatParams.from_dict(data)
         assert old.params_hash == OLD_PIN and old.z_bar == 1.0
         assert old.recipe.code_digest == "5027620615cbd7bc707668cc9f93e98e2133180613404b558e6f05a2b648eb47"
+        assert historical_params(data).params_hash == OLD_PIN
+        if name.startswith("v2/ops/train64k"):
+            assert (old.recipe.train_max_output_tokens, old.recipe.train_max_context_tokens) == (32768, 36864)
+            assert old.max_train_token_steps == 16_000_000 and old.train_time_budget_s == 2400
+            changed = dict(data, max_train_token_steps=data["max_train_token_steps"] + 1)
+            with pytest.raises(ConfigError, match="historical params"):
+                CompatParams.from_dict(changed)
+            with pytest.raises(Exception, match="historical params"):
+                historical_params(changed)

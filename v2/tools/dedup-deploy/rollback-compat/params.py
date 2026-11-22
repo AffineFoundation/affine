@@ -45,6 +45,15 @@ K1F1_PARAMS_HASH = "471b74f4a306efbb1e9444069ea832b5e02d68ec410f5ffebb06353f2deb
 KING_LED_PARAMS_HASH = "848707723628c85dc13f8c93e39d132432fcb5851076165490ac01693176236e"
 K025F025_PARAMS_HASH = "ab2c7084bc94a7ce1ac6138498447aeaecadc117ae66e43131dfc1c0d5aa268d"
 ARGMAX_PARAMS_HASH = "ab4e228c961058a29ed062bc67f6da6881cf3c13396eb03730d54badb4f261c0"
+TRAIN64K_PARAMS_HASH = "a8d0f5fe50a1d47de9cb5bac618453321ce58d460f75618290a0db3001d695ac"
+TRAIN64K_T3600_PARAMS_HASH = "05b688fcc0ceddb4bc78b56cef471110a9b9b107cc82bf2b6318c7d1ad355f40"
+TRAIN64K_PARAMS_HASHES = (TRAIN64K_PARAMS_HASH, TRAIN64K_T3600_PARAMS_HASH)
+TRAIN64K_LEGACY_VALUES = {
+    "recipe.train_max_output_tokens": (65536, 32768),
+    "recipe.train_max_context_tokens": (69632, 36864),
+    "max_train_token_steps": (22130000, 16000000),
+    "train_time_budget_s": ((2400, 3600), 2400),
+}
 OLD_FIELD_GATE_PARAMS_HASHES = (
     "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4",
     "346b99a875be5a9d5e2467bf846f20d124229397b67935c6563f1e7c2409b8b1",
@@ -53,7 +62,7 @@ OLD_FIELD_GATE_PARAMS_HASHES = (
 )
 FIELD_GATE_PARAMS_HASHES = (
     FIELD_GATE_PARAMS_HASH, K1F1_PARAMS_HASH, KING_LED_PARAMS_HASH, K025F025_PARAMS_HASH,
-    ARGMAX_PARAMS_HASH,
+    ARGMAX_PARAMS_HASH, *TRAIN64K_PARAMS_HASHES,
 )
 REVIEWED_NEW_PARAMS_HASHES = frozenset((
     HISTORICAL_NEW_PARAMS_HASH, REVIEWED_NEW_PARAMS_HASH, *FIELD_GATE_PARAMS_HASHES,
@@ -429,6 +438,22 @@ class Params(Record):
             if data.get("recipe", {}).get("code_digest") != REVIEWED_NEW_CODE_DIGESTS[params_hash]:
                 # Each reviewed release pins its own merged-evaluation worker code.
                 raise ConfigError("rollback compatibility accepts only the reviewed combined worker recipe")
+            if params_hash in TRAIN64K_PARAMS_HASHES:
+                # These are ordinary old Params/Recipe values, not unknown
+                # fields. Restore the exact old record after authenticating the
+                # complete new pin, or old code would retain the new caps and
+                # the translated record would not have the legacy params hash.
+                recipe = data.get("recipe", {})
+                for name, (new_value, _old_value) in TRAIN64K_LEGACY_VALUES.items():
+                    if name.startswith("recipe."):
+                        actual = recipe.get(name.removeprefix("recipe."))
+                    else:
+                        actual = data.get(name)
+                    if actual not in (new_value if isinstance(new_value, tuple) else (new_value,)):
+                        raise ConfigError("rollback compatibility accepts only the reviewed train64k values")
+                data = dict(data)
+                data["recipe"] = dict(recipe, train_max_output_tokens=32768, train_max_context_tokens=36864)
+                data.update(max_train_token_steps=16000000, train_time_budget_s=2400)
             # Strip every release-only judging override, including z_bar. Old
             # rollback behavior stays at the legacy z_bar=1.0 for every pin.
             data = {key: value for key, value in data.items() if key not in RELEASE_FIELDS}
