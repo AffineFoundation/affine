@@ -62,12 +62,20 @@ recipe.train_max_context_tokens 36864 -> 69632
 max_train_token_steps           16000000 -> 22130000
 ```
 
-`v2/ops/train64k_params_t3600.json` (**RECOMMENDED**) has those same three
+`v2/ops/train64k_params_t3600.json` has those same three
 changes plus:
 
 ```text
 train_time_budget_s 2400 -> 3600
 ```
+
+`v2/ops/train64k_params_t3600_prune.json` (**RECOMMENDED for the `ae743aa3`
+cut-over**) is the live `v2/ops/null_prune_params.json` with exactly those four
+changes. It preserves `null_prune_from_round: "r000098"` and all entry-rollout
+and rotation settings. Its rollback target is **`ae743aa3` plus params
+`1449210f89f30a65dc3f6e8d4ac956f5f2c1c8d37364a46b20e5cfb01c24eace`**, not
+`ab4e228c`. Native `ae743aa3` source reads and replays a journal carrying the
+new params record; no compatibility overlay is needed for that rollback.
 
 Neither file is primary, and `new-params.json`, the field-gate params, and the
 `Recipe`/`Params` defaults are unchanged. There is no trainer-code change and
@@ -122,7 +130,7 @@ group per inclusive target length, two rollouts per group with rewards 1 and 0
 PYTHONPATH=v2 python v2/tools/train64k/warmup.py \
   --base-dir /path/to/resident-head \
   --work-dir /path/to/box-work-dir \
-  --params v2/ops/train64k_params_t3600.json \
+  --params v2/ops/train64k_params_t3600_prune.json \
   --min 32768 --max 69632 --stride 2048
 ```
 
@@ -138,13 +146,15 @@ GPU work.
 The documentation-only cut-over sequence is:
 
 1. Stop the loop.
-2. Set the journaled params to **recommended** `train64k_params_t3600.json`,
-   or use `train64k_params.json` to retain 40 minutes.
+2. Set the journaled params to **recommended** `train64k_params_t3600_prune.json`
+   for the `ae743aa3` cut-over; the original `train64k_params_t3600.json` does
+   not retain null pruning.
 3. Sync the validator.
 4. Dry-run the weights writer.
 5. Run `warmup.py` on the box, approximately ten minutes with all GPUs in
    parallel.
-6. Start one loop with guarded rollback to `ab4e228c` on the same code.
+6. Start one loop with guarded rollback to `ae743aa3` with
+   `null_prune_params.json` (`1449210f…`).
 
 These instructions are not executed by this change. No service, production
 storage, R2, chain state or weights writer is invoked by the tool or tests.

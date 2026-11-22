@@ -256,7 +256,7 @@ def test_every_reviewed_field_pin_restores_the_same_legacy_params(tmp_path, isol
             assert (old.recipe.train_max_output_tokens, old.recipe.train_max_context_tokens) == (32768, 36864)
             assert old.max_train_token_steps == 16_000_000 and old.train_time_budget_s == 2400
             changed = dict(data, max_train_token_steps=data["max_train_token_steps"] + 1)
-            with pytest.raises(ConfigError, match="historical params"):
+            with pytest.raises(ConfigError, match="historical params|reviewed null-prune"):
                 CompatParams.from_dict(changed)
             with pytest.raises(Exception, match="historical params"):
                 historical_params(changed)

@@ -121,11 +121,12 @@ def test_train64k_prune_retains_live_params_and_changes_only_four_values(tmp_pat
     assert cli_main([
         "set-params", "--state-dir", str(world.root), "--stack", "sn120_v2.sim:stack", "--params", str(TRAIN64K_T3600_PRUNE),
     ]) == 0
-    assert world.controller.state.params.params_hash == selected.params_hash
+    from sn120_v2.state import load
+    assert load(world.root / "journal.jsonl").params.params_hash == selected.params_hash
     assert cli_main([
         "set-params", "--state-dir", str(world.root), "--stack", "sn120_v2.sim:stack", "--params", str(LIVE_WITH_PRUNE),
     ]) == 0
-    assert world.controller.state.params.params_hash == live.params_hash
+    assert load(world.root / "journal.jsonl").params.params_hash == live.params_hash
 
 
 @pytest.mark.parametrize("path,minutes", [(TRAIN64K, 40), (TRAIN64K_T3600, 60), (TRAIN64K_T3600_PRUNE, 60)])

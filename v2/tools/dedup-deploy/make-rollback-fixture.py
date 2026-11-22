@@ -187,7 +187,7 @@ def main() -> int:
     ):
         assert (full.recipe.train_max_output_tokens, full.recipe.train_max_context_tokens) == (65536, 69632)
         assert full.max_train_token_steps == 22_130_000
-        assert full.train_time_budget_s == (3600 if full.params_hash.startswith("05b688fc") else 2400)
+        assert full.train_time_budget_s == (2400 if full.params_hash.startswith("a8d0f5fe") else 3600)
     # Stage A plus no-result survivor accounting: three seats, one charged copy,
     # two uncharged genuine seats returned to the queue after a failed lease.
     for uid, quality in ((1, 0.9), (2, 0.0), (3, 0.0)):
