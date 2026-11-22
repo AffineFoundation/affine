@@ -184,6 +184,7 @@ def main() -> int:
         "a8d0f5fe50a1d47de9cb5bac618453321ce58d460f75618290a0db3001d695ac",
         "05b688fcc0ceddb4bc78b56cef471110a9b9b107cc82bf2b6318c7d1ad355f40",
         "c5d4405bcfb01b68766f97409f7ce1bfc98f875cf77af661421a8a3a28df2057",
+        "073ef680cf338de5e085100704e60f80ba96657d6d4e19d12995e4cb971ef6f8",
     ):
         assert (full.recipe.train_max_output_tokens, full.recipe.train_max_context_tokens) == (65536, 69632)
         assert full.max_train_token_steps == 22_130_000

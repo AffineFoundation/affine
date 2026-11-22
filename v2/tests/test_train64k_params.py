@@ -1,16 +1,20 @@
 """Opt-in full-eval-length training caps, without changing the production recipe."""
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
 import pytest
 
-from sn120_v2.admission import check_batch, trained_tokens
+from sn120_v2.admission import Invalid, check_batch, trained_tokens
+from sn120_v2.canonical import canonical_json
+from sn120_v2.cli import changed_params, main as cli_main
 from sn120_v2.gpu.batch import fit_tokens
+from sn120_v2.gpu.trainer import LoraTrainer
+from sn120_v2.publisher import check_pair, contract, render
 from sn120_v2.params import load_params
 from sn120_v2.public import snapshot
-from sn120_v2.publisher import check_pair, render
 from sn120_v2.sim import SimWorld
 
 ROOT = Path(__file__).parents[1]
@@ -18,7 +22,9 @@ PRODUCTION = ROOT / "tools" / "dedup-deploy" / "new-params.json"
 TRAIN64K = ROOT / "ops" / "train64k_params.json"
 TRAIN64K_T3600 = ROOT / "ops" / "train64k_params_t3600.json"
 TRAIN64K_T3600_PRUNE = ROOT / "ops" / "train64k_params_t3600_prune.json"
+TRAIN64K_T3600_PRUNE_OPEN = ROOT / "ops" / "train64k_params_t3600_prune_open.json"
 LIVE_WITH_PRUNE = ROOT / "ops" / "null_prune_params.json"
+OPEN_PIN = "073ef680cf338de5e085100704e60f80ba96657d6d4e19d12995e4cb971ef6f8"
 CAP_CHANGES = {
     "recipe.train_max_output_tokens": (32768, 65536),
     "recipe.train_max_context_tokens": (36864, 69632),
@@ -113,7 +119,6 @@ def test_train64k_prune_retains_live_params_and_changes_only_four_values(tmp_pat
     assert selected.params_hash == "c5d4405bcfb01b68766f97409f7ce1bfc98f875cf77af661421a8a3a28df2057"
     assert selected.recipe_id == "61c2a8e642fbeb953d921d4fd2b4d0f388ce32d166ac091323e26e3964a3efe6"
     assert selected.recipe.code_digest == live.recipe.code_digest == "22b2d191b32e394d4621ce477e702b50410a6ef7706cce6cfd20c60ff64e42e1"
-    from sn120_v2.cli import changed_params, main as cli_main
     assert set(changed_params(live, selected)) == set(CAP_CHANGES) | {"train_time_budget_s"}
 
     # Exercise the real CLI against a disposable simulated state only.
@@ -129,7 +134,9 @@ def test_train64k_prune_retains_live_params_and_changes_only_four_values(tmp_pat
     assert load(world.root / "journal.jsonl").params.params_hash == live.params_hash
 
 
-@pytest.mark.parametrize("path,minutes", [(TRAIN64K, 40), (TRAIN64K_T3600, 60), (TRAIN64K_T3600_PRUNE, 60)])
+@pytest.mark.parametrize("path,minutes", [
+    (TRAIN64K, 40), (TRAIN64K_T3600, 60), (TRAIN64K_T3600_PRUNE, 60), (TRAIN64K_T3600_PRUNE_OPEN, 60),
+])
 def test_publisher_shows_the_budget_and_training_time(tmp_path, path, minutes):
     params = load_params(path)
     world = SimWorld(tmp_path / "world", params)
@@ -141,4 +148,117 @@ def test_publisher_shows_the_budget_and_training_time(tmp_path, path, minutes):
     assert f"| `train_time_budget_s` | {minutes * 60} |" in text
     assert "| `train_max_output_tokens` | 65536 |" in text
     assert "| `train_max_context_tokens` | 69632 |" in text
+
+
+def changed_scalars(before, after):
+    def flatten(value, prefix=""):
+        out = {}
+        for key, item in value.items():
+            key = f"{prefix}.{key}" if prefix else key
+            if isinstance(item, dict):
+                out.update(flatten(item, key))
+            elif key == "recipe.miner_bounds":
+                for bound in item:
+                    out.update(flatten(bound, f"{key}.{bound['key']}"))
+            else:
+                out[key] = item
+        return out
+
+    old, new = flatten(before), flatten(after)
+    assert old.keys() == new.keys()
+    return {key: (old[key], new[key]) for key in old if old[key] != new[key]}
+
+
+def test_open_recipe_changes_only_bounds_and_cap_and_preserves_old_batches(tmp_path):
+    fallback_raw = json.loads(TRAIN64K_T3600_PRUNE.read_text())
+    opened_raw = json.loads(TRAIN64K_T3600_PRUNE_OPEN.read_text())
+    fallback, opened = load_params(TRAIN64K_T3600_PRUNE), load_params(TRAIN64K_T3600_PRUNE_OPEN)
+    live = load_params(LIVE_WITH_PRUNE)
+    assert opened.params_hash == OPEN_PIN
+    assert opened.recipe_id == "beabb5a0a5852c8ea94a73fa54b1b6a2c7a05d62843b8e015803156575174f76"
+    assert opened.to_dict() == opened_raw and fallback.to_dict() == fallback_raw
+    assert opened.recipe.code_digest == fallback.recipe.code_digest
+    assert opened.null_prune_from_round == "r000098"
+
+    expected = {
+        "recipe.global_norm_cap": (6.0, 1_000_000.0),
+        "recipe.miner_bounds.lora_lr.high": (0.0001, 0.01),
+        "recipe.miner_bounds.steps.high": (4.0, 64.0),
+        "recipe.miner_bounds.global_norm_cap.high": (6.0, 1_000_000.0),
+    }
+    assert changed_scalars(fallback_raw, opened_raw) == expected
+    assert set(changed_params(fallback, opened)) == {"recipe.global_norm_cap", "recipe.miner_bounds"}
+    live_changes = changed_scalars(json.loads(LIVE_WITH_PRUNE.read_text()), opened_raw)
+    assert live_changes == expected | CAP_CHANGES | {"train_time_budget_s": (2400, 3600)}
+    assert opened.recipe.max_grad_norm == 1.0
+
+    def batch(train):
+        return canonical_json({
+            "version": "affine-batch-v3", "hotkey": "5OldQueuedMiner", "train": train,
+            "groups": [{"prompt": "p", "rollouts": [{"output": "word " * 40, "reward": 1.0}, {"output": "word " * 40, "reward": 0.0}]}],
+        })
+
+    old_train = {"lora_lr": 0.0001, "steps": 4, "global_norm_cap": 6.0}
+    old_raw = batch(old_train)
+    old_batch = check_batch(old_raw, "5OldQueuedMiner", fallback)
+    new_batch = check_batch(old_raw, "5OldQueuedMiner", opened)
+    assert dataclasses.asdict(new_batch) == dataclasses.asdict(old_batch)
+    assert new_batch.train == old_train
+    assert new_batch.train_token_steps == old_batch.train_token_steps
+    assert opened.recipe.for_miner(old_train).global_norm_cap == 6.0
+    assert opened.recipe.for_miner({}).global_norm_cap == 1_000_000.0
+
+    new_train = {"lora_lr": 0.01, "steps": 64, "global_norm_cap": 1_000_000.0}
+    with pytest.raises(Invalid, match="train"):
+        check_batch(batch(new_train), "5OldQueuedMiner", fallback)
+    admitted = check_batch(batch(new_train), "5OldQueuedMiner", opened)
+    assert admitted.train == new_train
+    with_tokens = check_batch(batch(new_train), "5OldQueuedMiner", opened, tokens=WordTokens())
+    assert with_tokens.train_token_steps == 64 * 6080 <= opened.max_train_token_steps
+    costly = json.loads(batch(new_train))
+    costly["groups"] = [{"prompt": "p", "rollouts": [{"output": "word " * 60_000, "reward": float(i % 2)} for i in range(6)]}]
+    with pytest.raises(Invalid) as error:
+        check_batch(canonical_json(costly), "5OldQueuedMiner", opened, tokens=WordTokens())
+    assert error.value.rule == "train_cost"
+    with pytest.raises(Invalid, match="train"):
+        check_batch(batch({"steps": 65}), "5OldQueuedMiner", opened)
+    with pytest.raises(Invalid, match="train"):
+        check_batch(batch({"steps": 64.0}), "5OldQueuedMiner", opened)
+    with pytest.raises(Invalid, match="train"):
+        check_batch(batch({"lora_lr": 0.010001}), "5OldQueuedMiner", opened)
+    with pytest.raises(Invalid, match="train"):
+        check_batch(batch({"global_norm_cap": 1_000_001.0}), "5OldQueuedMiner", opened)
+
+    LoraTrainer._check({"status": "ok", "loss": 0.0, "step_norm": 7.0}, opened.recipe)
+    LoraTrainer._check({"status": "ok", "loss": 0.0, "step_norm": 1_000_000.0}, opened.recipe)
+    with pytest.raises(Exception, match="larger than recipe.global_norm_cap"):
+        LoraTrainer._check({"status": "ok", "loss": 0.0, "step_norm": 1_000_001.0}, opened.recipe)
+
+    world = SimWorld(tmp_path / "world", fallback)
+    assert cli_main([
+        "set-params", "--state-dir", str(world.root), "--stack", "sn120_v2.sim:stack", "--params", str(TRAIN64K_T3600_PRUNE_OPEN),
+    ]) == 0
+    from sn120_v2.state import load
+    assert load(world.root / "journal.jsonl").params.params_hash == OPEN_PIN
+
+
+def test_open_recipe_publishes_new_bounds_and_cap_without_code_changes(tmp_path):
+    opened = load_params(TRAIN64K_T3600_PRUNE_OPEN)
+    published = contract(opened, "https://example.org")
+    assert published["params_hash"] == OPEN_PIN
+    assert published["recipe_id"] == opened.recipe_id
+    assert opened.to_dict()["null_prune_from_round"] == "r000098"
+    rows = {row["key"]: row for row in published["miner_settable"]}
+    assert rows["lora_lr"]["high"] == 0.01 and rows["lora_lr"]["low"] == 1e-6
+    assert rows["steps"]["high"] == 64.0 and rows["steps"]["integer"] is True
+    assert rows["global_norm_cap"]["high"] == rows["global_norm_cap"]["default"] == 1_000_000.0
+    assert rows["global_norm_cap"]["decided"] is True
+
+    world = SimWorld(tmp_path / "world", opened)
+    mining, llms = render(snapshot(world.controller.state, opened, 1_800_000_000), "https://example.org")
+    text = llms.decode()
+    assert "a number from 1e-06 to 0.01, both ends included" in text
+    assert "a whole number from 1 to 64, both ends included" in text
+    assert "`train.global_norm_cap` sets the cap of your LoRA, from 0.01 to 1e+06." in text
+    assert "It is 1e+06 now." in text
     assert check_pair(mining, llms) == []

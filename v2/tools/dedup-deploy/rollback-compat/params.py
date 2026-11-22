@@ -49,12 +49,23 @@ NULL_PRUNE_PARAMS_HASH = "1449210f89f30a65dc3f6e8d4ac956f5f2c1c8d37364a46b20e5cf
 TRAIN64K_PARAMS_HASH = "a8d0f5fe50a1d47de9cb5bac618453321ce58d460f75618290a0db3001d695ac"
 TRAIN64K_T3600_PARAMS_HASH = "05b688fcc0ceddb4bc78b56cef471110a9b9b107cc82bf2b6318c7d1ad355f40"
 TRAIN64K_T3600_PRUNE_PARAMS_HASH = "c5d4405bcfb01b68766f97409f7ce1bfc98f875cf77af661421a8a3a28df2057"
-TRAIN64K_PARAMS_HASHES = (TRAIN64K_PARAMS_HASH, TRAIN64K_T3600_PARAMS_HASH, TRAIN64K_T3600_PRUNE_PARAMS_HASH)
+TRAIN64K_T3600_PRUNE_OPEN_PARAMS_HASH = "073ef680cf338de5e085100704e60f80ba96657d6d4e19d12995e4cb971ef6f8"
+TRAIN64K_T3600_OPEN_PARAMS_HASH = "ddb5ff2a32aa250889ef5315a3b9b4b307ca61124e7ba76e9aa2ba2504b533c3"
+TRAIN64K_PARAMS_HASHES = (
+    TRAIN64K_PARAMS_HASH, TRAIN64K_T3600_PARAMS_HASH, TRAIN64K_T3600_OPEN_PARAMS_HASH,
+    TRAIN64K_T3600_PRUNE_PARAMS_HASH, TRAIN64K_T3600_PRUNE_OPEN_PARAMS_HASH,
+)
 TRAIN64K_LEGACY_VALUES = {
     "recipe.train_max_output_tokens": (65536, 32768),
     "recipe.train_max_context_tokens": (69632, 36864),
     "max_train_token_steps": (22130000, 16000000),
     "train_time_budget_s": ((2400, 3600), 2400),
+}
+TRAIN64K_OPEN_PARAMS_HASHES = (TRAIN64K_T3600_OPEN_PARAMS_HASH, TRAIN64K_T3600_PRUNE_OPEN_PARAMS_HASH)
+TRAIN64K_OPEN_LEGACY_BOUNDS = {
+    "lora_lr": (0.01, 0.0001),
+    "steps": (64.0, 4.0),
+    "global_norm_cap": (1000000.0, 6.0),
 }
 OLD_FIELD_GATE_PARAMS_HASHES = (
     "17c20f822fb9c97b397d24272e18eaebf8de9574a9d0056361c8d529856696d4",
@@ -425,10 +436,13 @@ class Params(Record):
         if not isinstance(data, Mapping):
             raise ConfigError("Params must be a JSON object")
         if NULL_PRUNE_FIELD in data:
-            if digest(data) not in (NULL_PRUNE_PARAMS_HASH, TRAIN64K_T3600_PRUNE_PARAMS_HASH) or data[NULL_PRUNE_FIELD] != NULL_PRUNE_CUTOFF:
+            if digest(data) not in (
+                NULL_PRUNE_PARAMS_HASH, TRAIN64K_T3600_PRUNE_PARAMS_HASH,
+                TRAIN64K_T3600_PRUNE_OPEN_PARAMS_HASH,
+            ) or data[NULL_PRUNE_FIELD] != NULL_PRUNE_CUTOFF:
                 raise ConfigError("rollback compatibility accepts only the reviewed null-prune params record")
             data = {key: value for key, value in data.items() if key != NULL_PRUNE_FIELD}
-            if digest(data) not in (ARGMAX_PARAMS_HASH, TRAIN64K_T3600_PARAMS_HASH):
+            if digest(data) not in (ARGMAX_PARAMS_HASH, TRAIN64K_T3600_PARAMS_HASH, TRAIN64K_T3600_OPEN_PARAMS_HASH):
                 raise ConfigError("null-prune params do not reduce to the reviewed argmax record")
         fields = set(data) & set(RELEASE_FIELDS)
         if fields:
@@ -467,6 +481,19 @@ class Params(Record):
                 data = dict(data)
                 data["recipe"] = dict(recipe, train_max_output_tokens=32768, train_max_context_tokens=36864)
                 data.update(max_train_token_steps=16000000, train_time_budget_s=2400)
+                if params_hash in TRAIN64K_OPEN_PARAMS_HASHES:
+                    if recipe.get("global_norm_cap") != 1000000.0:
+                        raise ConfigError("rollback compatibility accepts only the reviewed open recipe cap")
+                    restored = []
+                    for bound in recipe.get("miner_bounds", ()):
+                        key = bound.get("key") if isinstance(bound, dict) else None
+                        if key in TRAIN64K_OPEN_LEGACY_BOUNDS:
+                            new_value, old_value = TRAIN64K_OPEN_LEGACY_BOUNDS[key]
+                            if bound.get("high") != new_value:
+                                raise ConfigError("rollback compatibility accepts only the reviewed open miner bounds")
+                            bound = dict(bound, high=old_value)
+                        restored.append(bound)
+                    data["recipe"].update(global_norm_cap=6.0, miner_bounds=restored)
             # Strip every release-only judging override, including z_bar. Old
             # rollback behavior stays at the legacy z_bar=1.0 for every pin.
             data = {key: value for key, value in data.items() if key not in RELEASE_FIELDS}

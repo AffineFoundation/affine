@@ -482,6 +482,26 @@ def test_the_trainer_refuses_a_report_over_the_cap():
     assert LoraTrainer._check(report | {"step_norm": 99.0}, Recipe(global_norm_cap=None, miner_bounds=()))["step_norm"] == 99.0  # null: no cap
 
 
+def test_open_recipe_keeps_an_ordinary_update_unscaled_and_records_new_maxima(tmp_path):
+    from sn120_v2.params import load_params
+    recipe = load_params(Path(__file__).parents[1] / "ops" / "train64k_params_t3600_prune_open.json").recipe
+    recipe = recipe.for_miner({"lora_lr": 0.01, "steps": 64})
+    a = torch.tensor([[0.01, 0.02], [0.03, 0.04]])
+    b = torch.tensor([[0.05, 0.06], [0.07, 0.08]])
+    layer = types.SimpleNamespace(lora_A=torch.nn.Parameter(a.clone()), lora_B=torch.nn.Parameter(b.clone()))
+    replica = types.SimpleNamespace(layers={"model.layers.0.self_attn.q_proj": layer}, device="cpu")
+    facts = {"losses": [0.1], "grad_norms": [1.0], "trained_tokens": 2, "truncated_rows": 0, "dropped_rows": 0}
+    result = train_job.save(replica, recipe, {"base_hash": "b" * 64, "seed": 7}, tmp_path / "lora", facts)
+    assert result["step_norm"] == result["step_norm_before_cap"] < 6.0
+    assert torch.equal(layer.lora_A, a) and torch.equal(layer.lora_B, b)
+    report = json.loads((tmp_path / "lora" / "train_report.json").read_text())
+    assert report["recipe_values"] == {
+        "lora_lr": 0.01, "steps": 64, "alpha": 32.0, "group_size": 0, "sample_temperature": 1.0,
+        "rank": 16, "max_grad_norm": 1.0, "global_norm_cap": 1_000_000.0,
+    }
+    assert report["grad_norms"] == [1.0]
+
+
 # ---- the bounds of the two new miner values ----
 
 REFUSED = {

@@ -25,12 +25,14 @@ OLD_COMMIT = "c525286580c84d795b3ca7cbdf2302e96fce31ba"
 PROD_COMMIT = "ae743aa353d75420e629aa5763a04390963eb072"
 NULL_PRUNE_PIN = "1449210f89f30a65dc3f6e8d4ac956f5f2c1c8d37364a46b20e5cfb01c24eace"
 TRAIN64K_PRUNE_PIN = "c5d4405bcfb01b68766f97409f7ce1bfc98f875cf77af661421a8a3a28df2057"
+TRAIN64K_PRUNE_OPEN_PIN = "073ef680cf338de5e085100704e60f80ba96657d6d4e19d12995e4cb971ef6f8"
 OLD_PIN = "bba7a409fc12d9ceb7b85f4e935fadfbd3f4b1efccedb7a6fde90c451f6e534a"
 DEDUP_PIN = "8caddd9c6fc276a9669dff9e01e1bb7e437d98bed5b12a605141e6025b9f9ec4"
 HISTORICAL_PIN = "d5979c301c7acf8a56cb6a9989e5b212e5887ec1bf0117f9250202af6a95f35c"
 FIELD_PINS = {
     NULL_PRUNE_PIN: "v2/ops/null_prune_params.json",
     TRAIN64K_PRUNE_PIN: "v2/ops/train64k_params_t3600_prune.json",
+    TRAIN64K_PRUNE_OPEN_PIN: "v2/ops/train64k_params_t3600_prune_open.json",
     "ab4e228c961058a29ed062bc67f6da6881cf3c13396eb03730d54badb4f261c0": "ops/field_gate_params_argmax.json",
     "a8d0f5fe50a1d47de9cb5bac618453321ce58d460f75618290a0db3001d695ac": "v2/ops/train64k_params.json",
     "05b688fcc0ceddb4bc78b56cef471110a9b9b107cc82bf2b6318c7d1ad355f40": "v2/ops/train64k_params_t3600.json",
@@ -69,7 +71,7 @@ def _params(path: str, revision: str = "14ae80f5") -> dict:
 def _field_fixture(tmp_path: Path, field_name: str) -> Path:
     """Run the real controller fixture at the exact reviewed field pin."""
     output = tmp_path / "fixture"
-    path = ROOT / ("v2/ops" if field_name in ("null_prune_params.json", "train64k_params_t3600_prune.json") else "ops") / field_name
+    path = ROOT / ("v2/ops" if field_name.startswith(("null_prune_params", "train64k_params")) else "ops") / field_name
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1",
                DEDUP_REVIEWED_PARAMS=str(path),
                DEDUP_REVIEWED_PARAMS_HASH=str(Params.from_dict(json.loads(path.read_text())).params_hash))
@@ -87,7 +89,7 @@ def _copy_with_transition(tmp_path: Path, fixture: Path, field_name: str) -> tup
     root.mkdir()
     source = read_journal(fixture / "journal.jsonl")
     rows = [next(row for row in source if row.kind == "genesis")]
-    field = json.loads((ROOT / ("v2/ops" if field_name in ("null_prune_params.json", "train64k_params_t3600_prune.json") else "ops") / field_name).read_text())
+    field = json.loads((ROOT / ("v2/ops" if field_name.startswith(("null_prune_params", "train64k_params")) else "ops") / field_name).read_text())
     for data in (_params("v2/tools/dedup-deploy/old-params.json"),
                  _params("v2/tools/dedup-deploy/new-params.json"), field):
         rows.append(JournalRecord(len(rows), 1, len(rows) + 1, "params_set", {"params": data}, rows[-1].checksum))
@@ -135,9 +137,10 @@ def _install_old_overlay(old_v2: Path) -> None:
 @pytest.mark.parametrize("field_name,pin", [
     ("null_prune_params.json", NULL_PRUNE_PIN),
     ("train64k_params_t3600_prune.json", TRAIN64K_PRUNE_PIN),
+    ("train64k_params_t3600_prune_open.json", TRAIN64K_PRUNE_OPEN_PIN),
 ])
 def test_null_prune_journal_replays_under_old_overlay_and_native_prod_accepts_its_params(tmp_path, field_name, pin):
-    """ae743aa3 reads both null-prune records; the older overlay translates them."""
+    """ae743aa3 reads the null-prune records; the older overlay translates them."""
     selected = ROOT / "v2/ops" / field_name
     production_v2 = _source_v2(tmp_path, PROD_COMMIT, "production-source")
     native = subprocess.run([
