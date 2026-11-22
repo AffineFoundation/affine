@@ -116,7 +116,7 @@ class Node:
     def out(self, cmd, timeout=0):
         if ".verified" in cmd: return "yes" if cmd.split("/.verified")[0].rsplit("/", 1)[-1] in self.have else ""
         if "echo ok=1" in cmd and self.busy: return self.busy
-        if "echo ok=1" in cmd: return "done=\nalive=\nlines=0\nok=1\n" if self.dies else "done=1\nalive=\nlines=4\nok=1\n"
+        if "echo ok=1" in cmd: return "done=\nalive=\nlines=0\nstate=1\nok=1\n" if self.dies else "done=1\nalive=\nlines=4\nstate=1\nok=1\n"
         bid = cmd.split(" 2>")[0].split("/")[-2] if "summary.json" in cmd or "per_task.jsonl" in cmd else None  # .../runs/<model>/<benchmark>/<file>
         if bid in self.results: return self.results[bid]["summary.json" in cmd]
         if "summary.json" in cmd:
@@ -458,7 +458,7 @@ def test_a_pod_lives_six_hours_at_most_and_a_row_that_fails_or_hangs_keeps_no_po
     lium, gen = world.lium, ids(world.genesis)
     assert (P.POD_MAX_HOURS, P.MAX_PODS, P.MAX_RENTS_PER_DAY, P.RENT_TRIES, D.MAX_FAIL) == (6, 8, 16, 4, 3)
     world.steps()
-    node = world.nodes[gen]; node.busy = "done=\nalive=1\nlines=9\nfinished=2\nok=1\n"  # a run that never ends: two benchmarks are finished
+    node = world.nodes[gen]; node.busy = "done=\nalive=1\nlines=9\nfinished=2\nstate=1\nok=1\n"  # a run that never ends: two benchmarks are finished
     for b in RUNNABLE[2:]: node.results[b["id"]] = {True: "", False: ""}
     pod = dict(lium.pods[0])
     rec = D.pod_of(gen).load(); rec["rented_at"] = D.now() - 6 * 3600 - 1; D.pod_of(gen).save(rec)
@@ -615,7 +615,7 @@ def test_the_single_node_record_that_names_the_pod_of_a_row_never_brings_a_delet
     """BENCH_POD_NAME is the name of a row's pod, and pod.json of the single-node service names that pod."""
     lium = world.lium; king = green(world.v2, 1); mid = ids(king)
     monkeypatch.setattr(P, "MAX_PRICE", 35.0); monkeypatch.setattr(D, "RELEASE_RETRY_S", 0)
-    world.node(mid).busy = "done=\nalive=1\nlines=7\nfinished=1\nok=1\n"
+    world.node(mid).busy = "done=\nalive=1\nlines=7\nfinished=1\nstate=1\nok=1\n"
     world.steps()
     pod = world.pod_of(mid); assert pod and D.row_state(mid)["running"]
     for name in (P.name_of(mid), "affine-v2-bench-1"):  # by the name, and by the id alone
@@ -849,7 +849,7 @@ def test_two_rows_whose_short_names_are_equal_never_share_a_pod(world, monkeypat
     monkeypatch.setattr(P, "NAME_MAX", len(P.PREFIX) + 4)  # every king has the name affine-v2-bench-king
     first, second = green(world.v2, 1), green(world.v2, 2)
     assert P.name_of(ids(first)) == P.name_of(ids(second))
-    world.node(ids(second)).busy = "done=\nalive=1\nlines=7\nfinished=1\nok=1\n"  # the newer row starts first, and its run goes on
+    world.node(ids(second)).busy = "done=\nalive=1\nlines=7\nfinished=1\nstate=1\nok=1\n"  # the newer row starts first, and its run goes on
     world.steps(P.RENT_TRIES)
     # the newer row has the pod; the other row takes no pod and makes none, and says so
     pods = [p for p in world.lium.pods if p["name"] == P.name_of(ids(first))]
@@ -988,13 +988,13 @@ def test_the_table_says_each_five_minutes_that_a_worker_looks_at_its_row_in_work
     store, gen = world.store, ids(world.genesis)
     world.steps()
     assert table()["progress"]["checked_at"] is None  # launched in this step: no look at the node yet
-    node = world.nodes[gen]; node.busy = "done=\nalive=1\nlines=7\nfinished=3\nok=1\n"
+    node = world.nodes[gen]; node.busy = "done=\nalive=1\nlines=7\nfinished=3\nstate=1\nok=1\n"
     before = D.now(); world.steps()
     progress = table()["progress"]; tables = len(store.tables)
     assert progress["checked_at"] >= before and (progress["output_lines"], progress["benchmarks_finished"]) == (7, 3)
     assert before <= progress["output_grew_at"] <= progress["checked_at"] and json.loads(store.tables[-1])["progress"] == progress
     assert model(gen)["benchmarks_done"] == 0 and model(gen)["progress"]["output_lines"] == 7  # the row's own count is of collected results
-    node.busy = "done=\nalive=1\nlines=8\nfinished=4\nok=1\n"
+    node.busy = "done=\nalive=1\nlines=8\nfinished=4\nstate=1\nok=1\n"
     world.steps(2)
     assert len(store.tables) == tables and table()["progress"]["output_lines"] == 7  # not at each poll
     monkeypatch.setattr(D, "BEAT_S", 0)
@@ -1010,7 +1010,7 @@ def test_a_restart_of_the_service_leaves_each_run_and_each_wait_as_it_is(world):
     world.steps()
     king = green(v2, 1); mid, gen = ids(king), ids(genesis)
     store.gone = base_keys(v2, king)
-    world.nodes[gen].busy = "done=\nalive=1\nlines=9\nfinished=2\nok=1\n"
+    world.nodes[gen].busy = "done=\nalive=1\nlines=9\nfinished=2\nstate=1\nok=1\n"
     world.steps()
     started = D.row_state(gen)["running"]["started"]
     state = D.rj(D.SF); D.S.clear(); D.S.update(state); D.SYNCED.clear(); D.KIDS.clear()  # a new process has only the files of the state directory
@@ -1188,6 +1188,7 @@ def test_the_operator_document_and_the_unit_file_are_true_to_the_code():
         f"asks again every {P.NO_OFFER_RETRY_S:.0f} seconds", f"no progress for {D.STALL_S} seconds",
         f"After {D.MAX_FAIL} fails", f"within one poll ({D.POLL_S} seconds)", f"more than {D.WAIT_LATE_S // 60} minutes after its head was applied",
         f"about each {D.BEAT_S // 60} minutes", f"After {D.POD_CHECK_AFTER_S // 60} minutes the worker asks Lium",
+        f"unreachability for {D.NODE_LOST_S:.0f} seconds (`BENCH_NODE_LOST_S`)", f"At most {D.MAX_NODE_SWAPS} swaps (`BENCH_MAX_NODE_SWAPS`)", "`node-lost`",
         f"waits {D.CONFIRM_WAIT_S // 60} minutes at most", f"`{derive.RULE}`", "BENCH_V1_KING_SOURCE",
         *(f"`{x}`" for x in P.PROTECTED_IDS + P.PROTECTED_NAMES),
         f"runs the {len(RUNNABLE)} benchmarks", f"`bids` names {len(RUNNABLE)} benchmarks", f"`n_gpus = {defaults['n_gpus']}`",
@@ -1227,7 +1228,7 @@ def test_the_benchmark_is_informational_only():
 
 
 # ---------------------------------------------------------------------------------------------- faults: no pod costs money with no end and no word
-def one_row_in_work(world, busy="done=\nalive=1\nlines=9\nfinished=2\nok=1\n"):
+def one_row_in_work(world, busy="done=\nalive=1\nlines=9\nfinished=2\nstate=1\nok=1\n"):
     """The launch model's row with a pod and a run that goes on. Returns (row id, its node, a copy of its pod)."""
     gen = ids(world.genesis); world.steps()
     node = world.nodes[gen]; node.busy = busy
@@ -1268,6 +1269,74 @@ def test_a_listing_without_the_pod_is_no_proof_that_the_pod_is_gone(world, monke
     world.steps()
     assert lium.removed == [rm(pod)] and not lium.pods and model(gen)["pod"]["state"] == "released" and table()["alarms"] == []
     assert "release_refused" not in D.row_state(gen)
+
+
+def test_a_silent_node_is_released_and_the_row_rents_again_without_a_fail(world, capsys):
+    assert (D.NODE_LOST_S, D.MAX_NODE_SWAPS) == (900, 2)
+    gen, node, old = one_row_in_work(world, busy="not-an-ssh-answer")
+    row = D.Row(gen); run = row.S["running"]
+    row.S["node_down"] = dict(since=D.now() - D.NODE_LOST_S + 1, checked=0, state=None)
+    row.node_down(run)
+    assert not world.lium.removed and row.S["running"] == run  # the bound has not passed
+    row.S["node_down"] = dict(since=D.now() - D.NODE_LOST_S - 1, checked=0, state=None)
+    row.node_down(run)
+    lost = next(e for e in events(capsys) if e["event"] == "node-lost")
+    assert (lost["pod"], lost["lium_id"], lost["node_swaps"]) == (old["huid"], old["id"], 1) and "unreachable" in lost["reason"]
+    assert world.lium.removed == [rm(old)] and not D.pod_of(gen).load()
+    assert row.S["running"] is None and "node_down" not in row.S and row.S["fails"] == 0 and row.S["node_swaps"] == 1
+    row.S["model"] = next(m for m in D.model_rows() if m["model_id"] == gen)
+    row.step(row.S["model"], RUNNABLE); row.save()
+    assert len(world.lium.ups) == 2 and world.pod_of(gen)["id"] != old["id"] and row.S["running"]["pod_id"] == world.pod_of(gen)["id"]
+    assert row.S["fails"] == 0 and row.S["node_swaps"] == 1
+
+
+@pytest.mark.parametrize("fault,status,reason", [
+    ("process", "done=\nalive=\nlines=0\nfinished=0\nstate=1\nok=1\n", "process gone"),
+    ("state", "done=\nalive=1\nlines=0\nfinished=0\nok=1\n", "run state is missing"),
+])
+def test_node_back_after_a_reboot_is_an_immediate_node_lost(world, capsys, fault, status, reason):
+    gen, node, old = one_row_in_work(world)
+    row = D.Row(gen); run = row.S["running"]
+    row.S["node_down"] = dict(since=D.now(), checked=0, state="listed"); row.save()
+    node.busy = status
+    row.step(row.S["model"], RUNNABLE); row.save()
+    said = events(capsys); lost = next(e for e in said if e["event"] == "node-lost")
+    assert "node-back" in [e["event"] for e in said] and reason in lost["reason"]
+    assert (lost["pod"], lost["lium_id"]) == (old["huid"], old["id"])
+    assert world.lium.removed == [rm(old)] and not D.pod_of(gen).load()
+    assert row.S["fails"] == 0 and row.S["node_swaps"] == 1 and "stalled" not in [e["event"] for e in said]
+    assert row.S["running"] is None
+    row.step(row.S["model"], RUNNABLE); row.save()  # the next step rents afresh and starts what is still missing
+    assert len(world.lium.ups) == 2 and world.pod_of(gen)["id"] != old["id"] and row.S["running"]["pod_id"] == world.pod_of(gen)["id"]
+
+
+def test_the_node_swap_cap_falls_back_to_the_existing_fail_path(world, monkeypatch):
+    gen, node, old = one_row_in_work(world, busy="not-an-ssh-answer")
+    row = D.Row(gen); run = row.S["running"]; row.S["node_swaps"] = D.MAX_NODE_SWAPS
+    row.S["node_down"] = dict(since=D.now() - D.NODE_LOST_S - 1, checked=0, state=None)
+    row.node_down(run)
+    assert not world.lium.removed and row.S["running"] == run and row.S["fails"] == 0
+    node.busy = "done=\nalive=\nlines=0\nfinished=0\nstate=1\nok=1\n"
+    row.step(row.S["model"], RUNNABLE); row.save()
+    assert row.S["fails"] == 1 and row.S["node_swaps"] == D.MAX_NODE_SWAPS and row.S["running"]["pod_id"] == old["id"]
+    assert world.lium.pods == [old] and len(world.lium.ups) == 1  # the ordinary run-died retry keeps its node
+
+
+def test_a_refused_node_lost_release_keeps_the_run_and_the_exact_pod_record(world, capsys):
+    gen, node, pod = one_row_in_work(world, busy="not-an-ssh-answer")
+    row = D.Row(gen); run = row.S["running"]
+    row.S["node_down"] = dict(since=D.now() - D.NODE_LOST_S - 1, checked=0, state=None)
+    rec = D.pod_of(gen).load(); rec["huid"] = pod["huid"] = "casper-h100-ask-before-delete"
+    D.pod_of(gen).save(rec)
+    row.node_down(run)
+    assert not world.lium.removed and row.S["running"] == run and D.pod_of(gen).load()["id"] == pod["id"]
+    assert row.S["fails"] == 0 and row.S["node_swaps"] == 0
+    said = events(capsys)
+    assert [e["event"] for e in said].count("node-lost") == 1 and [e["event"] for e in said].count("release-refused") == 1
+    pod["huid"] = "fresh-node"
+    rec = D.pod_of(gen).load(); rec["huid"] = pod["huid"]; D.pod_of(gen).save(rec)
+    row.node_down(run)
+    assert world.lium.removed == [rm(pod)] and row.S["running"] is None and row.S["node_swaps"] == 1 and row.S["fails"] == 0
 
 
 def test_a_pod_that_lium_says_it_deleted_is_released_with_no_delete_and_only_then(world):

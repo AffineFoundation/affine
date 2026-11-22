@@ -49,6 +49,8 @@ for d in (ST, RES, PRIV, ROWS):
 os.chmod(PRIV, 0o700)
 SF = ST + "/daemon.json"
 MAX_FAIL = 3; STALL_S = 2400; POLL_S = 30
+NODE_LOST_S = float(os.environ.get("BENCH_NODE_LOST_S", "900"))
+MAX_NODE_SWAPS = int(os.environ.get("BENCH_MAX_NODE_SWAPS", "2"))
 ROLLOUT_TRIES = 3; ROLLOUT_MAX_ATTEMPTS = 3; ROLLOUT_BACKOFF_S = 300; ROLLOUT_MAX_BACKOFF_S = 86400
 ROLLOUT_FETCH_WAIT_S = 600
 WAIT_LATE_S = 3600  # weight files still not in the store this long after the head was applied: the table says `waiting`
@@ -252,6 +254,7 @@ class Row:
         self.mid = mid; self.dir = f"{ROWS}/{mid}"; os.makedirs(self.dir, exist_ok=True)
         self.sf = self.dir + "/daemon.json"
         self.S = row_state(mid); self.S.setdefault("fails", 0); self.S.setdefault("history", [])
+        self.S.setdefault("node_swaps", 0)
         self.S.setdefault("rollout_uploads", {})
         self.S.setdefault("rollout_pending", {})  # only files this worker saw; never discovered from legacy results
         self.attach()
@@ -304,7 +307,7 @@ class Row:
 
     def node_status(self, rk):
         o = self.node.out(f"cd {C.NODE_ROOT}/runs/{rk} 2>/dev/null && echo done=$(test -f DONE && echo 1); echo alive=$(flock -n {C.NODE_ROOT}/runs/.node-run.lock true 2>/dev/null || echo 1); "
-                          f"echo lines=$(cat */vf/*/traces.jsonl 2>/dev/null | wc -l); echo finished=$(ls */summary.json 2>/dev/null | wc -l); echo ok=1", timeout=90)
+                          f"echo lines=$(cat */vf/*/traces.jsonl 2>/dev/null | wc -l); echo finished=$(ls */summary.json 2>/dev/null | wc -l); echo state=1; echo ok=1", timeout=90)
         d = {}
         for line in o.splitlines():
             if "=" in line: a, b = line.split("=", 1); d[a] = b.strip()
@@ -495,6 +498,9 @@ class Row:
         whether the pod still exists. A reclaimed pod never comes back (2026-11-02: noble-comet-40 was reclaimed at 06:00 CR and
         the old daemon polled it for 3.5 h), so drop it: the run is requeued without a failure and the row rents a pod of its own."""
         d = self.S["node_down"] = self.S.get("node_down") or dict(since=now(), checked=0, state=None)
+        down_min = round((now() - d["since"]) / 60)
+        if now() - d["since"] >= NODE_LOST_S and self.swap_node(run, f"node unreachable for {down_min} minutes"):
+            return
         if now() - d["since"] < POD_CHECK_AFTER_S or now() - d["checked"] < POD_CHECK_EVERY_S:
             self.log(event="node-unreachable"); self.save(); return
         d["checked"] = now(); st = P.state(self.rec.get("id")); d["state"] = st
@@ -503,8 +509,22 @@ class Row:
             self.pod.save(dict(gone=now(), last=dict(self.rec))); self.S["running"] = None; self.S.pop("node_down", None)
             self.attach()
         else:
-            self.log(event="node-unreachable", lium=st, down_min=round((now() - d["since"]) / 60))
+            self.log(event="node-unreachable", lium=st, down_min=down_min)
         self.save()
+
+    def swap_node(self, run, reason):
+        """A lost node is replaced without counting a model fail. Until MAX_NODE_SWAPS the next step rents afresh;
+        at the cap the existing run-died/stalled path applies. A refused release keeps both records for a guarded retry."""
+        S = self.S
+        if S.get("node_swaps", 0) >= MAX_NODE_SWAPS:
+            return False
+        rec = dict(self.rec)
+        self.log(event="node-lost", pod=rec.get("huid"), lium_id=rec.get("id"), reason=reason, node_swaps=S.get("node_swaps", 0) + 1)
+        if not self.pod.release(self.log, why=reason):
+            self.save(); return True
+        S["running"] = None; S.pop("node_down", None); S["node_swaps"] = S.get("node_swaps", 0) + 1
+        self.attach(); self.tell("released"); self.save()
+        return True
 
     # ---- pod
     def pod_ready(self):
@@ -589,8 +609,15 @@ class Row:
             st = self.node_status(run["run_key"])
             if st is None:
                 self.node_down(run); return False
-            if S.pop("node_down", None):
-                self.log(event="node-back"); self.save()
+            down = S.pop("node_down", None)
+            if down:
+                self.log(event="node-back")
+            if not st.get("state") and self.swap_node(run, "the node's run state is missing (rebooted or recreated)"):
+                return False
+            if down:
+                if st.get("alive") != "1" and self.swap_node(run, "node-back with the recorded run's process gone"):
+                    return False
+                self.save()
             lines = int(st.get("lines") or 0)
             if lines > run.get("progress", 0):
                 run["progress"] = lines; run["last_progress"] = now(); self.save()
