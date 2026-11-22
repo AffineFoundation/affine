@@ -930,6 +930,13 @@ class Controller:
                                                   publish=index == len(pairs) - 1)
             data["rotation_state_sha"] = closed_rotation.digest()
             self._rotation = closed_rotation
+        elif self.pool is not None and outcome in (NO_DECISION, ABANDONED) and record.rotation is not None:
+            # ROUND_OPENED already advances replayed state to this exact artifact.
+            # Advance the long-lived runtime too, but do not fold an unscored ledger.
+            from .pool_runtime import load_rotation
+            opened_rotation = load_rotation(self.store, record.rotation["state_sha"])
+            self.pool.commit(opened_rotation)
+            self._rotation = opened_rotation
         data |= {"served": served, "front": front, "attempted": attempted, "held": held, "released": released}
         self._log(ROUND_CLOSED, data, now)
         if self.rollout_publisher is not None:

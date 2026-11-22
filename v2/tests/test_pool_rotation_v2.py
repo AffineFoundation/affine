@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -215,6 +216,92 @@ def test_info_controller_lifecycle_restores_table_and_replays(tmp_path):
     assert set(restored.previous.ledger).isdisjoint(restored.previous.retired_ledger), (
         "a returned task keeps its ledger only in the active pool until it retires again"
     )
+
+
+def test_info_rotation_no_decision_advances_live_boundary_like_replay(tmp_path):
+    from test_rotation_controller import rotated_world
+    from sn120_v2.journal import read_journal
+    from sn120_v2.controller import stored_irt_snapshot
+    from sn120_v2.pool_runtime import PoolRuntime
+    from sn120_v2.state import load
+
+    world, pool = rotated_world(tmp_path, 20, rotation_rule="info", rotation_active_size=4, rotation_churn_frac=0.25)
+    first = world.round()
+    assert first is not None and first.outcome == "null"
+    first_archive = Rotation.from_json(world.store.get(layout.pool_rotation(first.round_id))).retired_archive
+    world.register(2, 0.0)
+    assert world.controller.open_round(world.clock(), "no-decision-entropy")
+    opened = world.controller._rotation
+    while world.controller.state.round is not None:
+        lease = next(lease for lease in world.controller.state.round.leases if lease.status == "open")
+        world.controller.fail_lease(lease.lease_id, "offline reproduction", world.clock())
+
+    closed = world.controller.state.rounds[-1]
+    assert closed.outcome == "no_decision" and closed.rotation is not None
+    assert opened.retired_archive
+    assert opened.retired_archive != first_archive
+    assert json.loads(world.store.get(layout.RETIRED_POOL)) == list(opened.retired_archive)
+    close = read_journal(world.root / "journal.jsonl")[-1]
+    assert close.kind == "round_closed" and "rotation_state_sha" not in close.data
+    assert world.controller.state.rotation_state_sha == opened.digest()
+    replayed_closed = load(world.root / "journal.jsonl")
+    source = stored_irt_snapshot(world.store, world.controller.state)
+    fresh = PoolRuntime(world.store, world.params, replayed_closed, root=tmp_path / "reserve", initial_ids=world.pool)
+    next_round = f"r{world.controller.state.round_seq + 1:06d}"
+    expected, _ = fresh.open(next_round, source, world.controller.state)
+
+    # This is a second open by the same long-lived controller, not the restart
+    world.now += world.params.apply_retry_s
+    assert world.controller.open_round(world.clock(), "after-no-decision-entropy")
+    third = world.controller._rotation
+    assert pool.admitted_counts == fresh.admitted_counts
+    assert third == expected
+    assert third.prev_state_sha == opened.digest()
+    assert third.retired_archive[:len(opened.retired_archive)] == opened.retired_archive
+    stored_archive = json.loads(world.store.get(layout.RETIRED_POOL))
+    assert stored_archive == list(third.retired_archive)
+    assert len(stored_archive) > len(opened.retired_archive)
+
+    while world.controller.state.round is not None:
+        lease = next(lease for lease in world.controller.state.round.leases if lease.status == "open")
+        world.controller.fail_lease(lease.lease_id, "offline reproduction", world.clock())
+    replayed_closed = load(world.root / "journal.jsonl")
+    assert pool.admitted_counts == PoolRuntime(
+        world.store, world.params, replayed_closed, root=tmp_path / "reserve", initial_ids=world.pool
+    ).admitted_counts
+
+
+def test_info_rotation_abandoned_advances_live_boundary(tmp_path):
+    from test_rotation_controller import incident_world
+    from sn120_v2.journal import read_journal
+    from sn120_v2.pool_runtime import PoolRuntime
+
+    world = incident_world(tmp_path, "info")
+    pool = world.controller.pool
+    world.controller.set_params(dataclasses.replace(world.params, rotation_active_size=8, min_scored_tasks=2), world.clock())
+    world.register(2, 0.5)
+    world.register(3, 0.0)
+    world.register(4, -0.25)
+    ticket, = world.controller.open_round(world.clock(), "abandoned-entropy")
+    opened = world.controller._rotation
+    result = world.runner.run(ticket)
+    artifact = next(entry.lora for entry in result.entries if entry.lora is not None)
+    world.store.put(f"{artifact.prefix}/adapter_model.bin", b"corrupted")
+    world.controller.submit_result(result, world.clock())
+    assert world.controller.state.rounds[-1].outcome == "abandoned", [
+        (entry.uid, entry.status, entry.reason) for entry in world.controller.state.rounds[-1].decision.entries
+    ]
+    assert world.controller._rotation == opened and pool.previous == opened
+    assert "rotation_state_sha" not in read_journal(world.root / "journal.jsonl")[-1].data
+
+    world.register(5, 0.0)
+    assert world.controller.open_round(world.clock(), "after-abandoned-entropy")
+    third = world.controller._rotation
+    assert third.prev_state_sha == opened.digest()
+    assert third.retired_archive[:len(opened.retired_archive)] == opened.retired_archive
+    assert pool.admitted_counts == PoolRuntime(
+        world.store, world.params, world.controller.state, root=tmp_path / "reserve", initial_ids=world.pool
+    ).admitted_counts
 
 
 def test_info_rotation_open_no_decision_then_next_open_restarts(tmp_path):
