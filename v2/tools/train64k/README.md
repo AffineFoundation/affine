@@ -72,6 +72,27 @@ that was near the cost cap and valid under the 32k recipe can exceed the cap
 and become invalid under this recipe. Miner settings still cannot override
 these two validator-owned caps.
 
-## Results
+## Results (8xB200 on-demand, pod noble-orbit-8b, 2026-11-22; prod trainer @ 0edaebe6 unmodified; torch 2.14.0+cu130, transformers 5.20.2, fla 0.6.0, no causal_conv1d; base = genesis MiMo-V2.6-Distill-Qwen-9B, same architecture as the head)
 
-Pending final measurements from the 8xB200 benchmark box.
+Peak torch memory per GPU (one row pair: a 64k+ PASS and a capped 65,536-token FAIL, truncated to the cap):
+
+| cap (output/context) | max allocated GiB | max reserved GiB |
+|---|---|---|
+| 32768 / 36864 | 38.0 | 41.7 |
+| 49152 / 53248 | 47.1 | 52.9 |
+| 65536 / 69632 | 56.1 | 62.3 |
+| 65536, rank 64 + all 10 target modules (worst miner settings) | 58.2 | 63.5 |
+| 32768, rank 64 + all 10 targets | 39.5 | 43.5 |
+
+Real 128-row batch (64 mixed-outcome r000104 tasks x 2 king rollouts; 50 rows > 32k; 2.61M trained tokens at 32k, 3.59M at 64k): peak 38/44 GiB at 32k, 56/68-72 GiB at 64k. Usable torch memory is ~171 GiB on B200 and ~267 GiB on B300, so 64k uses about a quarter of a B300. Memory grows linearly (~0.56 GiB per 1k tokens): the per-layer Replay checkpoint, chunked output layer and one-row micro-batches already make it O(T); sdpa attention never builds a T x T matrix.
+
+Step time on that batch, warm Triton/FLA caches:
+
+| layout | 32k step s | 64k step s | ratio |
+|---|---|---|---|
+| 1 GPU per LoRA (6 batches) | 307 | 436 | 1.42x |
+| 2 GPUs per LoRA (<=4 batches) | 158 | 238 | 1.51x |
+
+Trained tokens rose 1.38x, so the cost per token is +3.5% (1 GPU) / +9% (2 GPUs, worse row balance). Cold first run on a GPU: +~630 s, once, because FLA's l2norm kernels autotune per length class (key NB = cdiv(tokens*16, 65536), a new class every 4096 tokens); the result is cached in the per-GPU TRITON_CACHE_DIR.
+
+Equivalence: a batch whose rows are all under 32k (short.json, 64 rows) gives a bit-identical adapter under the 32k and 64k recipes (sha256 0ba75530...). Every config run twice (cold and warm) gave the same adapter sha256. The rows above 32k are the only intended change.
