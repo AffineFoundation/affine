@@ -35,6 +35,7 @@ import re
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -54,6 +55,7 @@ POOL_DATA = "pool-data.json"
 V1_DATA = "v1-data.json"
 V1_SCHEMA = "sn120-v1-archive-1"
 NOTED: dict[str, str] = {}  # the last note printed per topic
+ON_SITE: dict[str, bool] = {}  # per http(s) location: is the file there. A head manifest is written once and is not removed
 FLAGS = ("front", "demoted", "held")
 # The state of the benchmark run of one row. The benchmark file of v1 says "evaluating" for a run in progress.
 SCORED, QUEUED, RUNNING, FAILED, NO_RUN = "scored", "queued", "running", "failed", "none"
@@ -75,6 +77,25 @@ def read(source: str, key: str) -> bytes:
     return fetch(f"{source.rstrip('/')}/{key}")
 
 
+def exists(source: str, key: str) -> bool:
+    """True when the object is under the root. Over http(s), a yes or a 404 is kept for this process; a failed read is asked again."""
+    location = f"{source.rstrip('/')}/{key}"
+    if not location.startswith(("http://", "https://")):
+        return Path(location).is_file()
+    if location not in ON_SITE:
+        try:
+            fetch(location)
+        except urllib.error.HTTPError as error:
+            if error.code != 404:
+                return False
+            ON_SITE[location] = False
+        except OSError:
+            return False
+        else:
+            ON_SITE[location] = True
+    return ON_SITE[location]
+
+
 def write(path: Path, data: bytes) -> None:
     """Atomic write: a reader sees the old file or the new file, never a part of one. The same bytes are not written again."""
     if path.is_file() and not path.is_symlink() and path.read_bytes() == data:
@@ -90,12 +111,16 @@ def write(path: Path, data: bytes) -> None:
         raise
 
 
-def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str], str]) -> dict[str, Any]:
+def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str], str],
+         on_site: Callable[[str], bool] = lambda key: False) -> dict[str, Any]:
     """The public snapshot (``sn120_v2.public.snapshot``), cut down to what the page shows.
 
     Every output field is named here, so an unknown or private snapshot field
     cannot reach the page. A batch link and a LoRA hash are set for an applied
     winner only. Caps and the winner bar come from the snapshot's ``Params``.
+    ``on_site`` says if a public object is there to link. A head gets the link
+    to its manifest when it is the current head or when its manifest is there:
+    the validator writes the manifest of a head only while that head is current.
     """
     if snap.get("schema") != SCHEMA:
         raise ValueError(f"unknown snapshot schema {snap.get('schema')!r}; this builder reads {SCHEMA!r}")
@@ -151,10 +176,14 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
         "file_valid": valid, "flags": flags,
     } for line, (seat, valid, flags) in enumerate(seats, 1)]
 
+    def manifest_link(version_id: str) -> str | None:
+        key = layout.head_manifest(version_id)
+        return link(key) if version_id == head_id or on_site(key) else None
+
     heads = [{
         "head": head["version_id"], "current": head["version_id"] == head_id, "round_id": head["round_id"],
         "file_url": round_link(head["round_id"]), "folded": head["folded"], "at": head["applied_at"],
-        "manifest": link(layout.head_manifest(head["version_id"])) if head["version_id"] == head_id else None,
+        "manifest": manifest_link(head["version_id"]),
     } for head in snap["heads"][::-1]]
 
     return {
@@ -348,7 +377,8 @@ def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing
                   lambda error: quiet_missing and missing(error))  # no file yet is the state at launch
     kept = tried("kept", "no reference model from the v1 history", v1_models, missing)  # a site can have no v1 history
     table = bench_view(bench, heads, kept)
-    write(out / DATA, json.dumps(view(snap, table, link), separators=(",", ":"), allow_nan=False).encode())
+    data = view(snap, table, link, lambda key: exists(source, key))
+    write(out / DATA, json.dumps(data, separators=(",", ":"), allow_nan=False).encode())
 
 
 def install_v1(location: str, out: Path) -> None:

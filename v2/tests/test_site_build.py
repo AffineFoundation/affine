@@ -9,6 +9,7 @@ import runpy
 import shutil
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 
 from sn120_v2 import layout, sim
@@ -209,6 +210,81 @@ def test_a_round_with_no_result_is_listed_and_its_entries_have_no_status(tmp_pat
     assert (charts["r000003"]["outcome"], charts["r000003"]["with_z"]) == ("null", 1) and charts["r000003"]["null_pass"] is not None
     script = (out / "site.js").read_text()  # the page names such an entry; it does not print the missing status
     assert "r.status == null ? NO_RESULT" in script and "'NO RESULT'" in script
+
+
+def test_a_head_links_its_manifest_when_it_is_current_or_when_the_file_is_on_the_site(tmp_path):
+    """The validator writes the manifest of a head only while that head is current. An older head has its file, or it has none."""
+    snap = snapshot(tmp_path)
+    current, stacked, genesis = (line["version_id"] for line in snap["heads"][::-1])
+    assert snap["head"]["head"]["version_id"] == current and snap["heads"][0]["round_id"] == "genesis"
+    links = lambda text: [line["manifest"] for line in json.loads(text)["heads"]]  # noqa: E731
+    assert links(build(tmp_path, snap)[2]) == [f"{URL}/{layout.head_manifest(current)}", None, None]  # no file but the snapshot
+    path = tmp_path / "store" / layout.head_manifest(genesis)
+    path.parent.mkdir(parents=True)
+    path.write_text("{}")
+    assert links(build(tmp_path, snap)[2]) == [f"{URL}/{layout.head_manifest(current)}", None, f"{URL}/{layout.head_manifest(genesis)}"]
+    assert stacked not in json.dumps(links(build(tmp_path, snap)[2]))
+
+    # over http(s): a yes and a 404 are kept for the process; a read that failed in another way gives no link and is asked again
+    exists, asked = runpy.run_path(str(BUILD))["exists"], []
+    answers = {"a": b"{}", "b": urllib.error.HTTPError(URL, 404, "Not Found", None, None),
+               "c": urllib.error.HTTPError(URL, 503, "Busy", None, None), "d": TimeoutError("slow")}
+
+    def fetch(location: str) -> bytes:
+        asked.append(location)
+        answer = answers[location.removeprefix(f"{URL}/")]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    exists.__globals__["fetch"] = fetch
+    assert [exists(f"{URL}/", name) for name in "abcd" * 2] == [True, False, False, False] * 2
+    assert asked == [f"{URL}/{name}" for name in "abcdcd"]
+
+
+def test_a_cell_with_no_value_says_why_in_words(tmp_path):
+    """On the v2 page a cell with no value is a short word, and its tooltip says why. No dash and no dots stand for a value."""
+    script = (BUILD.parent / "static" / "site.js").read_text()
+    column = dict(re.findall(r"^    (\w+): (\{ h: .*)$", script, re.M))
+    tables = {name: re.findall(r"'(\w+)'", cols) for name, cols in re.findall(r"^    (\w+): \{ cols: \[([^\]]+)\]", script, re.M)}
+    for name in ("z", "gain", "bar", "capHit", "look", "head"):  # a batch with no score, and a king that came from v1
+        assert "unscored(r)" in column[name] and "—" not in column[name], name
+    assert "noM(r)" in column["mPass"] and "noM(r)" in column["mCap"] and "'no file')" in column["manifest"]
+    unscored = script[script.index("const unscored = "):script.index("const noM = ")]
+    assert "V1 ? mute('—')" in unscored and "Carried over from v1" in unscored and "'Not scored. '" in unscored  # the v1 page keeps its dash
+    # each other column of a v2 table that can print a dash prints it only for a field that the builder always sets
+    always = {"round": "round_id", "uid": "uid", "reg": "registration_block"}
+    for name in {name for table in ("kings", "queue", "history", "rounds", "heads") for name in tables[table]}:
+        assert "—" not in column[name] or name in always, name
+    snap = snapshot(tmp_path)
+    data = json.loads(build(tmp_path, snap)[2])
+    rows = {"round": data["kings"] + data["history"] + data["rounds"] + data["heads"], "uid": data["kings"] + data["queue"]["rows"] + data["history"],
+            "reg": data["queue"]["rows"]}
+    for name, field in always.items():
+        assert rows[name] and all(row[field] is not None for row in rows[name]), name
+    assert all(row[field] for field, part in (("hotkey", "kings"), ("hotkey", "history"), ("sha", "history"), ("at", "kings"), ("at", "history"),
+                                               ("at", "rounds"), ("at", "heads"), ("head", "rounds"), ("head", "heads")) for row in data[part])
+
+    # the benchmark table: a cell with no score says the state of the run of its row. "queued", "running" and "failed" are words of
+    # the benchmark service's table; a model that no table names has "no run yet" ("not run" in the narrow column of the average)
+    states = re.findall(r"^    (\w+): \['([^']+)', '\w+', '[^']+', '([^']+)'\],$", script[script.index("const RUN = {"):script.index("RUN.evaluating")], re.M)
+    assert states == [("queued", "queued", "queued"), ("running", "running", "running"), ("failed", "failed", "failed"), ("none", "no run yet", "no run yet")]
+    table = script[script.index("  function bench(b) {"):script.index("  /* The chart tiles")]
+    assert "—" not in table and "…" not in table and "pending" not in script
+    assert "'No run yet: no benchmark file is published.'" in script and "!b.updated_at && !V1" in table
+    assert 'the benchmark file says "evaluating"' in script and "The benchmark file lists this model as queued" in script
+    assert "'No run yet: the benchmark file does not name this model.'" in script
+    assert "c === AVG && r.status === 'none' ? 'not run' : run(r)[3]" in table and "b.updated_at || V1 ? 'none' : 'no run yet'" in table
+    assert "'no benchmark run yet'" in table and "'No run yet: no benchmark file is published.'" in table
+    assert not re.search(r"'(queued|running|failed)'", table)  # the page gives a row no state of its own
+    assert "['no score', `This model has no score in ${c.label}.`]" in table and "'No average: a row has one only when it has every counted benchmark.'" in table
+    bare = data["bench"]  # what the page reads to say "no benchmark has run": no time of a table, and the state of each row
+    assert bare["updated_at"] is None and [(row["status"], row["cells"], row["avg"]) for row in bare["rows"]] == [("none", {}, None)] * 2
+    # the live round and the tooltips of the charts
+    live = script[script.index("  function render() {"):script.index("  function status(")]
+    tiles = script[script.index("  function tiles(d) {"):script.index("  function renderV1() {")]
+    assert "r.id || 'none open'" in live and "r.seats == null ? 'no round'" in live and "—" not in live + tiles
+    assert "'none: no batch was scored'" in tiles and tiles.count("'not scored'") == 2 and "'no winner'" in tiles
 
 
 def test_queue_lists_the_round_first_and_its_total_matches_the_rows(tmp_path):
