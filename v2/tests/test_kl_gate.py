@@ -226,10 +226,13 @@ def test_entry_decision_and_public_round_fields(build):
                          ticket.draw.round_seed, ticket.draw.snapshot_id, len(ticket.draw.task_ids), ticket.issued_at, (lease,), decision=decision)
     report = round_report(record, [(ticket, result)])
     assert report["null_kl_seq"] == 0.5 and report["null_kl_k"] == 8
-    assert report["entry_outcomes"][0]["kl_seq"] == 0.5
-    assert report["entries"][0]["kl_tok"] == 0.01
+    for name, value in METRICS.items():
+        assert report["entries"][0][name] == value
+        assert report["entry_outcomes"][0][name] == value
+    assert set(METRICS) == {"kl_seq", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens"}
     published = contract(ticket.params, "https://example.org")["duplicate_policy"]
-    rule = "Your LoRA must change the model: the mean KL(new||head) over 128 of its own eval rollouts must be at least 0.25 nats per sequence, else the entry is a charged null_update."
+    rule = kl_rule(ticket.params)
+    assert "at least 0.25 nats per sequence" in rule and "kl_seq, kl_seq_se, kl_tok, kl_k and kl_tokens" in rule
     assert published["min_kl_seq_rule"] == rule == kl_rule(ticket.params)
     from sn120_v2.public import snapshot
     from sn120_v2.publisher import render

@@ -90,6 +90,7 @@ class SoloScheduler:
         self.scored: dict[int, list[str]] = {}
         self.judged: set[tuple[int, int]] = set()
         self.cut = False
+        self.confirmation_needed = ticket.parent is not None
         self.failure: BaseException | None = None
         self.training_done = False
         self.seen_results: dict[tuple[str, int, int], str] = {}
@@ -119,7 +120,7 @@ class SoloScheduler:
 
     def _cancel_null_if_unused(self) -> None:
         """No future LoRA can use king work after training and the last drop."""
-        if self.training_done and not self.alive:
+        if self.training_done and not self.alive and not self.confirmation_needed:
             cancel = getattr(self.runner.evaluator.http, "cancel", None)
             if cancel is not None:
                 cancel(NULL_MODEL)
@@ -139,7 +140,7 @@ class SoloScheduler:
     def steal(self, gpu: int, owner: str) -> tuple[str, int, int] | None:
         with self.changed:
             while True:
-                if self.failure is not None or self.cut or (self.training_done and not self.alive):
+                if self.failure is not None or self.cut or (self.training_done and not self.alive and not self.confirmation_needed):
                     return None
                 names = {lora.lora_hash for lora in self.trained.values()}
                 claim = choose_claim(self.remaining, names & {self.trained[pos].lora_hash for pos in self.alive}, self.n, self.runner.settings.steal_block_tasks, owner, own_first=self.params.eval_merged)
@@ -231,11 +232,13 @@ class SoloScheduler:
                 self.null[:] = [text[:common] for text in self.null]
                 for pos in self.alive:
                     self.scored[pos][:] = [text[:common] for text in self.scored[pos]]
-            elif not self.alive:
+            elif not self.alive and not self.confirmation_needed:
                 last = max(self.dropped.values(), default=-1)
                 keep = self.params.look_sizes(self.n)[last] if last >= 0 else 0
                 self.null[:] = [text[:keep] for text in self.null]
             else:
+                if self.confirmation_needed and any(len(text) != self.n for text in self.null):
+                    raise InfraError("confirmation scoring ended before the new-head null completed the full fresh draw")
                 for pos in self.alive:
                     if any(len(text) != self.n for text in self.scored[pos]) or any(len(text) != self.n for text in self.null):
                         raise InfraError("solo scoring ended before null and every live LoRA completed")
@@ -355,7 +358,8 @@ class SoloWorker:
                         raise InfraError(f"the vLLM server on GPU {self.gpu} died during solo scoring")
             finally:
                 if stopped and ((self.deadline and time.time() >= self.deadline)
-                                or (self.scheduler is not None and self.scheduler.training_done and not self.scheduler.alive)):
+                                or (self.scheduler is not None and self.scheduler.training_done and not self.scheduler.alive
+                                    and not self.scheduler.confirmation_needed)):
                     cancel = getattr(self.evaluator.http, "cancel", None)
                     if cancel is not None:
                         cancel(NULL_MODEL)
@@ -403,6 +407,9 @@ class SoloRunner(LocalRunner):
 
     def _solo_run_round(self, ticket: RoundTicket):
         started, params = self.clock(), ticket.params
+        begin_round = getattr(self.evaluator, "begin_round", None)
+        if begin_round is not None:
+            begin_round(ticket)
         if hasattr(self.evaluator, "solo_client_budget"):
             self.evaluator._solo_clients = self.evaluator.solo_client_budget(params.n_gpus, self.evaluator.clients_for(params))
         elif hasattr(self.evaluator, "settings"):
@@ -517,6 +524,10 @@ class SoloRunner(LocalRunner):
         if not failed.empty():
             raise failed.get()
         outcome = scheduler.finish()
+        if any(len(text.rstrip(NOT_RUN)) != len(ticket.draw.task_ids) for text in outcome[0]):
+            parent_outcomes, parent_error = (), "the new-head null did not complete the full fresh draw"
+        else:
+            parent_outcomes, parent_error = self._score_parent(ticket, limit)
         tested = dict(scheduler.tested)
         eval_done = self.clock()
         if params.min_kl_seq > 0 and (any(isinstance(report, LoRAArtifact) for report in reports.values()) or outcome[0]):
@@ -548,7 +559,8 @@ class SoloRunner(LocalRunner):
                 clients_per_server=clients,
                 open_files_limit=resource.getrlimit(resource.RLIMIT_NOFILE)[0],
             )
-        return self._solo_result(ticket, reports, *outcome, started, train_done[0], null_kl, kl_wall_s, kl_metrics, eval_done=eval_done)
+        return self._solo_result(ticket, reports, *outcome, started, train_done[0], null_kl, kl_wall_s, kl_metrics, eval_done=eval_done,
+                                 parent_outcomes=parent_outcomes, parent_error=parent_error)
 
     @staticmethod
     def _kl_reports(ticket, reports, measurements, null, stopped):
@@ -569,7 +581,7 @@ class SoloRunner(LocalRunner):
                 updated[pos] = EntryResult(pos, NO_DECISION, reason=reason)
         return updated
 
-    def _solo_result(self, ticket, reports, null, scored, dropped, stopped, started, train_done, null_kl=None, kl_wall_s=0.0, kl_metrics=None, eval_done=None):
+    def _solo_result(self, ticket, reports, null, scored, dropped, stopped, started, train_done, null_kl=None, kl_wall_s=0.0, kl_metrics=None, eval_done=None, parent_outcomes=(), parent_error=""):
         params = ticket.params
         first_look = params.look_sizes(len(ticket.draw.task_ids))[0]
         n_scored = len(null[0].rstrip(NOT_RUN)) if null else 0
@@ -604,4 +616,6 @@ class SoloRunner(LocalRunner):
             stopped_at_limit=stopped,
             phase_s={"training": train_done - started, "evaluation": (finished if eval_done is None else eval_done) - train_done} | ({"kl": max(0, int(kl_wall_s))} if ticket.params.min_kl_seq > 0 else {}),
             **{f"null_{key}": value for key, value in (null_kl or {}).items()},
+            parent_outcomes=parent_outcomes if ticket.parent is not None else (),
+            parent_error=parent_error if ticket.parent is not None else "",
         )

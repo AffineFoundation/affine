@@ -25,7 +25,7 @@ from ..params import Params
 from ..rollouts import RolloutCapture
 from ..sampling import rollout_seed
 from ..seams import ObjectStore
-from ..types import CAP, ERROR, FAIL, NULL_MODEL, PASS, EvalChunk, EvalRequest, HeadVersion
+from ..types import CAP, ERROR, FAIL, NOT_RUN, NULL_MODEL, PASS, EvalChunk, EvalRequest, HeadVersion, RoundTicket
 
 from .batch import CHAT_TEMPLATE_KWARGS, END_OF_TURN
 from .fold_input import FoldInput, unchanged
@@ -283,6 +283,7 @@ class VllmEvaluator:
         self._solo_urls: dict[int, str] = {}
         self._solo_loaded: dict[int, set[str]] = {}
         self._solo_models: dict[int, str] = {}
+        self._solo_base_dirs: dict[int, str] = {}
         self._merged_lock = threading.Lock()
         self._merged_reserved: dict[str, int] = {}
         self._solo_start_locks: dict[int, threading.Lock] = {}
@@ -293,6 +294,51 @@ class VllmEvaluator:
         self._grade_lock = threading.Lock()
         # Side-effect-only public rollout spool. It is not read by any scoring path.
         self.capture: RolloutCapture | None = RolloutCapture(config.work_dir / "rollouts", pool)
+        self._round_head: HeadVersion | None = None
+        self._confirming_parent: HeadVersion | None = None
+
+    def begin_round(self, ticket: RoundTicket) -> None:
+        """Retain the new head and one old parent through this round's confirming settlement."""
+        self._round_head = ticket.head
+        self._confirming_parent = ticket.parent.manifest.head if ticket.parent is not None and ticket.parent.manifest is not None else None
+
+    def score_parent(self, ticket: RoundTicket, deadline: int = 0) -> tuple[str, ...]:
+        """One fresh parent sample 0 on GPU 0, outside the candidate LoRA table and ordinary scheduler."""
+        if ticket.parent is None or ticket.parent.manifest is None:
+            raise InfraError("the pinned parent manifest is unavailable")
+        if not ticket.params.eval_merged:
+            raise InfraError("production parent confirmation requires merged-model evaluation")
+        parent = ticket.parent.manifest.head
+        base_dir = resident_head(self.resident, ticket.parent.manifest)
+        # One additional merged-base switch is expected. The candidate count/table is unchanged.
+        url = self._serve_one(parent, ticket.params, len(ticket.entries), 0, model="parent", base_dir=base_dir)
+        request = EvalRequest(ticket.round_id, parent, (), ticket.draw.task_ids, ticket.draw.round_seed, 0,
+                              ticket.params, deadline, len(ticket.entries))
+        jobs = [("parent", 0, index) for index in range(len(ticket.draw.task_ids))]
+        written: list[tuple[int, float]] = []
+        # Parent rollout archives are optional. Do not send an extra model through the existing head/winner archiver.
+        capture, self.capture = self.capture, None
+        try:
+            def rollout(job):
+                try:
+                    return self._rollout(request, url, job, written)
+                except _Deadline:
+                    return None
+
+            with ThreadPoolExecutor(self._solo_clients or self.clients_for(ticket.params)) as threads:
+                replies = list(threads.map(rollout, jobs))
+            if self.clock_expired(deadline) or any(reply is None for reply in replies):
+                raise InfraError("the parent did not complete sample 0 on the full fresh draw")
+            if not self._solo_servers[0].alive():
+                raise InfraError("the parent vLLM server died during confirmation")
+            codes = self._grade(request.task_ids, jobs, replies, request)
+            return ("".join(codes[job] for job in jobs),)
+        finally:
+            self.capture = capture
+
+    @staticmethod
+    def clock_expired(deadline: int) -> bool:
+        return bool(deadline and time.time() >= deadline)
 
     def _reset_grader(self) -> None:
         """Discard every worker after a failure; the next round starts clean."""
@@ -723,13 +769,16 @@ class VllmEvaluator:
         """One GPU startup, without blocking startup or loading on its peers."""
         clients = self._solo_clients if self._solo_clients is not None else self.clients_for(params)
         with self._solo_lock:
+            base_dir = base_dir or resident_head(self.resident, head)
+            base_key = str(base_dir)
             models = getattr(self, "_solo_models", {})
             existing = self._solo_servers.get(gpu)
-            if existing is not None and existing.alive() and self._head is not None and self._head.version_id == head.version_id and self._table == table and self._solo_server_clients.get(gpu) == clients and models.get(gpu, NULL_MODEL) == model:
+            if existing is not None and existing.alive() and self._head is not None and self._head.version_id == head.version_id and self._table == table and self._solo_server_clients.get(gpu) == clients and models.get(gpu, NULL_MODEL) == model and self._solo_base_dirs.get(gpu) == base_key:
                 return self._solo_urls[gpu]
             self._solo_servers.pop(gpu, None)
             self._solo_server_clients.pop(gpu, None)
             self._solo_urls.pop(gpu, None)
+            self._solo_base_dirs.pop(gpu, None)
             self._solo_loaded.pop(gpu, None)
             models.pop(gpu, None)
         if existing is not None:
@@ -750,11 +799,12 @@ class VllmEvaluator:
             if gpu in self._solo_servers:
                 server.stop()
                 existing = self._solo_servers[gpu]
-                if existing.alive() and self._head is not None and self._head.version_id == head.version_id and self._table == table and self._solo_server_clients.get(gpu) == clients and getattr(self, "_solo_models", {}).get(gpu, NULL_MODEL) == model:
+                if existing.alive() and self._head is not None and self._head.version_id == head.version_id and self._table == table and self._solo_server_clients.get(gpu) == clients and getattr(self, "_solo_models", {}).get(gpu, NULL_MODEL) == model and self._solo_base_dirs.get(gpu) == base_key:
                     return self._solo_urls[gpu]
                 self._solo_servers.pop(gpu, None)
                 self._solo_server_clients.pop(gpu, None)
                 self._solo_urls.pop(gpu, None)
+                self._solo_base_dirs.pop(gpu, None)
                 self._solo_loaded.pop(gpu, None)
                 getattr(self, "_solo_models", {}).pop(gpu, None)
                 existing.stop()
@@ -765,6 +815,7 @@ class VllmEvaluator:
             self._solo_loaded[gpu] = set()
             models[gpu] = model
             self._solo_models = models
+            self._solo_base_dirs[gpu] = base_key
         waited = 0.0
         while True:
             try:
@@ -778,6 +829,7 @@ class VllmEvaluator:
                             self._solo_servers.pop(gpu, None)
                             self._solo_server_clients.pop(gpu, None)
                             self._solo_urls.pop(gpu, None)
+                            self._solo_base_dirs.pop(gpu, None)
                             self._solo_loaded.pop(gpu, None)
                             getattr(self, "_solo_models", {}).pop(gpu, None)
                     raise InfraError(f"the vLLM server at {url} did not start") from None
@@ -789,6 +841,7 @@ class VllmEvaluator:
             server = self._solo_servers.pop(gpu, None)
             self._solo_server_clients.pop(gpu, None)
             self._solo_urls.pop(gpu, None)
+            self._solo_base_dirs.pop(gpu, None)
             self._solo_loaded.pop(gpu, None)
             getattr(self, "_solo_models", {}).pop(gpu, None)
         if server is not None:
@@ -797,6 +850,12 @@ class VllmEvaluator:
     def close(self) -> None:
         servers, self._servers, self._urls, self._loaded = self._servers, [], [], set()
         head, self._head = self._head, None
+        keep = {
+            identity
+            for item in (self._round_head, self._confirming_parent, head)
+            if item is not None
+            for identity in (item.base_hash, item.base_fp32_master_digest)
+        }
         if self.capture is not None:
             self.capture.close()
         errors = []
@@ -807,6 +866,7 @@ class VllmEvaluator:
                 errors.append(exc)
         self._solo_servers, self._solo_server_clients, self._solo_urls, self._solo_loaded = {}, {}, {}, {}
         self._solo_models = {}
+        self._solo_base_dirs = {}
         self._solo_start_locks = {}
         self._solo_clients = None
         self._solo_scheduler = None
@@ -814,9 +874,9 @@ class VllmEvaluator:
             self._reset_grader()
         except Exception as exc:  # noqa: BLE001 - a cache cleanup failure cannot mask this one
             errors.append(exc)
-        if head is not None:
+        if keep:
             try:
-                self.resident.prune({head.base_hash, head.base_fp32_master_digest})
+                self.resident.prune(keep)
             except Exception as exc:  # noqa: BLE001 - every close path is attempted
                 errors.append(exc)
         if errors:

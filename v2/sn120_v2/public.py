@@ -108,6 +108,17 @@ def phase(state: State) -> str:
     return "RUNNING" if state.round.decision is None else "APPLY"
 
 
+def confirmation_view(confirmation: Any) -> dict[str, Any]:
+    """The same paid/unpaid paired result in round.json and mining.json round/history."""
+    return confirmation.to_dict() | {
+        "new_head_pass_rate": confirmation.new_pass_rate,
+        "old_head_pass_rate": confirmation.old_pass_rate,
+        "paid": confirmation.confirmed,
+        "payout_status": "paid" if confirmation.confirmed else "unpaid",
+        "reason": public_text(confirmation.reason),
+    }
+
+
 def round_view(record: RoundRecord) -> dict[str, Any]:
     seats = [entry for lease in record.leases for entry in lease.entries]
     view: dict[str, Any] = {
@@ -125,6 +136,7 @@ def round_view(record: RoundRecord) -> dict[str, Any]:
         "skipped": len(record.skipped),
         "duplicate_clusters": list(record.duplicate_clusters),
         "duplicates": [entry_view(entry) | {"reason": public_text(entry.reason)} for entry in record.duplicate_decisions],
+        **({"confirmation": confirmation_view(record.confirmation)} if record.confirmation is not None else {}),
     }
     if record.decision is None:
         view["entries"] = sorted([
@@ -277,6 +289,15 @@ def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxRes
         (list(entry.outcomes) for _, result in leases for entry in result.entries if winner and entry.queue_pos == winner.queue_pos),
         None,
     )
+    if record.confirmation is not None:
+        report["confirmation"] = confirmation_view(record.confirmation)
+    parent_results = [result for ticket, result in leases if ticket.parent is not None]
+    if parent_results or record.parent is not None:
+        # Parent archives are optional; the fresh sealed sample-0 outcomes and decision are mandatory public evidence,
+        # including a no-result or duplicate-only close.
+        report["parent_outcomes"] = next((list(result.parent_outcomes) for result in parent_results if result.parent_outcomes), None)
+        error = next((result.parent_error for result in parent_results if result.parent_error), "")
+        report["parent_error"] = public_text(error) if error else (None if report["parent_outcomes"] else "no fresh parent result arrived")
     from . import layout
 
     scored = {entry.queue_pos: entry for _, result in leases for entry in result.entries if entry.outcomes}

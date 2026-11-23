@@ -353,6 +353,47 @@ class FoldArtifact(Record):
 
 
 @dataclass(frozen=True)
+class PendingKing(Record):
+    """A crown already installed but not yet eligible for payout."""
+
+    uid: int
+    hotkey: str
+    crown_round_id: str
+    parent_version_id: str
+    new_version_id: str
+    batch_sha256: str
+    applied_at: int
+    z: float = 0.0
+
+
+@dataclass(frozen=True)
+class ParentEval(Record):
+    """The exact old merged head to score in the confirming round."""
+
+    pending: PendingKing
+    manifest: HeadManifest | None = None  # None is an explicit unavailable-parent no_decision, never a confirmation
+
+
+@dataclass(frozen=True)
+class Confirmation(Record):
+    """Public, fresh sample-0 comparison of the installed new head and its old parent."""
+
+    parent_version_id: str
+    pending_round_id: str
+    pending_uid: int
+    new_version_id: str
+    delta: float = 0.0
+    se: float = 0.0
+    z: float = 0.0
+    new_pass_rate: float = 0.0
+    old_pass_rate: float = 0.0
+    n_tasks: int = 0
+    excluded_training_prompts: int = 0
+    confirmed: bool = False
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class RoundTicket(Record):
     """Everything one box needs to run its leased part of a round. Its digest pins all of it."""
 
@@ -365,6 +406,8 @@ class RoundTicket(Record):
     entries: tuple[Entry, ...]
     issued_at: int
     expires_at: int
+    LEFT_OUT_AT_DEFAULT = ("parent",)
+    parent: ParentEval | None = None  # old parent head for the previous crown's fresh confirmation; omitted when absent
 
     def __post_init__(self) -> None:
         _need(len(self.entries) >= 1, "a ticket needs at least one entry")
@@ -448,7 +491,7 @@ class EntryResult(Record):
 class BoxResult(Record):
     """The sealed result of one lease. Its digest is the seal. The box never picks the winner."""
 
-    LEFT_OUT_AT_DEFAULT = tuple(f"null_{name}" for name in KL_FIELDS)
+    LEFT_OUT_AT_DEFAULT = (*tuple(f"null_{name}" for name in KL_FIELDS), "parent_outcomes", "parent_error")
 
     round_id: str
     lease_id: str
@@ -467,6 +510,8 @@ class BoxResult(Record):
     null_kl_tok: float | None = None
     null_kl_k: int | None = None
     null_kl_tokens: int | None = None
+    parent_outcomes: tuple[str, ...] = ()  # exactly one fresh sample-0 string when the pinned parent ran
+    parent_error: str = ""  # parent-only infrastructure failure; ordinary entry judging remains valid
 
     def __post_init__(self) -> None:
         check_kl(self, "null", prefix="null_")
