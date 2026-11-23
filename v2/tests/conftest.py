@@ -22,6 +22,8 @@ from sn120_v2.types import (
     FrozenBatch,
     HeadVersion,
     LoRAArtifact,
+    ParentEval,
+    PendingKing,
     QueueEntry,
     Registration,
     RoundTicket,
@@ -120,6 +122,20 @@ class Build:
             target_modules=recipe.target_modules,
             report=TrainReport(seed=train_seed("seed-0", entry.batch.batch_sha256, params.train_seed_scope), steps=1, loss=0.5, step_norm=0.1, tokens=100, wall_s=1.0, gpu_class="cpu", image_digest=IMAGE),
         )
+
+    @staticmethod
+    def parent(head: HeadVersion, *, manifest="valid", uid: int = 99) -> ParentEval:
+        from sn120_v2.types import HeadManifest
+
+        base_files = {"model.bin": h("parent-base")}
+        parent = HeadVersion.make(
+            parent_version_id=None, base_hash=manifest_digest(base_files), base_fp32_master_digest=h("parent-master"),
+            loras=(), round_id="r000000", applied_at=999,
+        )
+        pending = PendingKing(uid, f"hk{uid}", "r000000", parent.version_id, head.version_id, h("winner-batch"), 1000)
+        if manifest == "valid":
+            manifest = HeadManifest(parent, base_files, {"master.bin": h("parent-master")}, {})
+        return ParentEval(pending, manifest)
 
     @staticmethod
     def ticket(

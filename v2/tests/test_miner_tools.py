@@ -242,12 +242,13 @@ def test_the_live_public_params_and_future_fields_are_readable_only_by_the_publi
     assert params.params_hash == frozen["params_hash"]
     assert (params.crown_gate, params.z_bar, params.z_field_bar) == ("argmax_symmetric", 0.0, 0.0)
     future = copy.deepcopy(raw)
-    future.update(min_kl_seq=0.0, confirm_next_round=True)
+    future.update(min_kl_seq=0.0, confirm_next_round=True, future_validator_setting="ignored by old miners")
     future["recipe"]["future_recipe"] = {"anything": [1, 2]}
     future["recipe"]["miner_bounds"][0]["future_bound"] = "new"
     with pytest.raises(ContractError, match="unknown field"):
         Params.from_dict(future)
-    assert Params.from_public_dict(future) == params
+    # Old miners ignore a validator-only confirmation switch, while this miner-aware build reads the real KL field.
+    assert Params.from_public_dict(future) == dataclasses.replace(params, confirm_next_round=True)
     with pytest.raises(ContractError, match="expected an integer"):
         Params.from_public_dict(raw | {"n_tasks": "2000"})
 
@@ -257,8 +258,8 @@ def test_the_live_public_params_and_future_fields_are_readable_only_by_the_publi
     document = json.loads(mining.read_text())
     document["params"] = future
     mining.write_text(json.dumps(document))
-    assert tool.load_contract(str(mining))[0] == params
-    assert Contract.load(str(mining)).params == params
+    assert tool.load_contract(str(mining))[0] == Params.from_public_dict(future)
+    assert Contract.load(str(mining)).params == Params.from_public_dict(future)
 
 
 def test_every_read_of_an_address_names_its_client(build, tmp_path, monkeypatch):
