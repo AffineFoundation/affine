@@ -52,14 +52,14 @@ def test_confirm_production_params_exact_identity_and_effective_diffs():
     new = load_params(new_path)
     assert live.params_hash == "073ef680cf338de5e085100704e60f80ba96657d6d4e19d12995e4cb971ef6f8"
     assert kl8k.params_hash == "dcab97d47d2f4b02ef7a14d5d8786a0f5a14885ddbf2634845435612fb9b4b1e"
-    assert new.params_hash == "8a64d605a3d7544c45807df9c29d4bb787d8089895e302d977bdbb06f2ea341e"
-    assert new.recipe_id == "9e5890e02b7a95c9fa8e0f5bf0e7690d16e85aa63e714ae8cee9b8a5f81aea5a"
+    assert new.params_hash == "46791df11c9b8b55a83bfed44f9c579900aa2253b3ae6716c667e2f01582f876"
+    assert new.recipe_id == "3631cb3accac35c785e946b95870245ef54b2fd37429572782490ad92e12558e"
     assert Params.from_dict(new.to_dict()) == new
     assert json.loads(new_path.read_text())["kl_rollouts"] == 128  # explicit in the file; omitted at the canonical default
     assert new.confirm_next_round is True and new.min_kl_seq == 22
     assert (new.kl_max_tokens, new.kl_rollouts, new.kl_time_limit_s) == (8192, 128, 1200)
     assert new.batch_cap == 6 and new.n_gpus == 8
-    assert new.recipe.code_digest == code_digest() == "e1a7b6af03451847c349d7b4db459d15d6efec1e7316eacc234c9a384d7ce7fd"
+    assert new.recipe.code_digest == code_digest() == "ab2922c88558afd37e95938773a7e148e88c1a6ec543f96c1ce05483fd1b7941"
     assert new.recipe.image_digests == live.recipe.image_digests == kl8k.recipe.image_digests == (
         "9a4b16ff282b21baf44350e54c852ed59586b9efb6fe09e5cd2f1e288f4c108a",
     )
