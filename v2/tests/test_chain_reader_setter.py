@@ -141,6 +141,9 @@ class StubSubtensor:
     def query_map(self, item, params, *, block=None):
         return {"Keys": [(0, "hk0"), (1, "hk1")], "BlockAtRegistration": [(0, 5), (1, 800)]}[item]
 
+    def query_batch(self, item, param_sets, *, block=None):
+        return [{"Owner": {"hk0": "ck0", "hk1": "ck1"}}[item][hotkey] for (hotkey,) in param_sets]
+
     def plan(self, intent, wallet):
         return SimpleNamespace(signer_address="hk0", violations=["too soon"])
 
@@ -149,7 +152,7 @@ class StubSubtensor:
         return SimpleNamespace(success=True, message="", block_hash="0xabc")
 
 
-ITEMS = ("SubnetworkN", "LastUpdate", "WeightsSetRateLimit", "WeightsVersionKey", "Keys", "BlockAtRegistration")
+ITEMS = ("SubnetworkN", "LastUpdate", "WeightsSetRateLimit", "WeightsVersionKey", "Keys", "BlockAtRegistration", "Owner")
 STUB_SDK = SimpleNamespace(
     storage=SimpleNamespace(SubtensorModule=SimpleNamespace(**{name: name for name in ITEMS})),
     SetWeights=lambda **fields: fields,
@@ -164,6 +167,7 @@ def test_sdk_client_reads_at_one_block_and_submits_exactly_once():
     snap = Reader(client, 120, clock=lambda: 1_800_000_000).snapshot()
     assert snap.block == 900 and snap.hotkeys() == {0: "hk0", 1: "hk1"}
     assert snap.registrations[1].registration_block == 800 and client.block_hash(3) == "0xhash3"
+    assert [reg.coldkey for reg in snap.registrations] == ["ck0", "ck1"]
     assert client.last_update(900) == [10, 20] and client.rate_limit(900) == 100
     assert client.plan({1: 1.0}) == ("hk0", ["too soon"])
     assert client.submit({1: 0.25, 0: 0.75}) == (True, "0xabc")
