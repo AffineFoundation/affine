@@ -77,7 +77,7 @@ def test_real_grade_pool_kills_a_hung_row_and_skips_only_that_file(build):
 
     grade_pool = math_grader.GradePool(workers=2, timeout_s=3.0, job=scripted_job)
     try:
-        official = pool_grader(pool, grade_pool)
+        official = pool_grader(pool, grade_pool, chunk=2)  # as in the assembly: one row for each worker
         official.probe()  # the first pool tasks pass with their own answers
         now = [1000.0]
         adm = StoreAdmission(Store(), build.params(), tokens=WordTokens(), grader=official, clock=lambda: now[0])
@@ -104,7 +104,7 @@ def test_real_grade_pool_kills_a_hung_row_and_skips_only_that_file(build):
     one_group = file(groups()[:1], "good")
     for job in (os._exit, hang):  # every job kills its worker, or never ends: the pool is dead, or too slow, for every row
         down = math_grader.GradePool(workers=4, timeout_s=0.5, job=job)
-        adm = StoreAdmission(Store({layout.miner_object("good"): one_group}), build.params(), tokens=WordTokens(), grader=pool_grader(pool, down))
+        adm = StoreAdmission(Store({layout.miner_object("good"): one_group}), build.params(), tokens=WordTokens(), grader=pool_grader(pool, down, chunk=4))
         try:
             for _ in range(2):  # loud each time, and nothing is held against the honest file
                 with pytest.raises(InfraError, match="known-good"):
