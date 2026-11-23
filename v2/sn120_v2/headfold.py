@@ -53,6 +53,7 @@ from . import fold_kernel, layout
 from .afterking import Beside
 from .canonical import file_sha256, manifest_digest
 from .errors import ConfigError, ContractError, HeadLost, InfraError, V2Error, VerifyError
+from .gpu.fold_input import FoldInput, unchanged
 from .gpu.folder import fold_files, read_lora
 from .gpu.plan import BoxConfig, check_pins, log_phase
 from .gpu.resident import Resident, hash_tree
@@ -281,8 +282,8 @@ class ChainFolder:
     every folded file goes into the head manifest, as in ``full`` mode.
     """
 
-    def __init__(self, store: ObjectStore, config: BoxConfig, settings: FoldSettings | None = None, run: Runner = in_children) -> None:
-        self.store, self.config, self.settings, self.run = store, config, settings or FoldSettings(), run
+    def __init__(self, store: ObjectStore, config: BoxConfig, settings: FoldSettings | None = None, run: Runner = in_children, *, fold_input: FoldInput = unchanged) -> None:
+        self.store, self.config, self.settings, self.run, self.fold_input = store, config, settings or FoldSettings(), run, fold_input
         self.resident = Resident(store, config.work_dir)
         self._read_back: ReadBack | None = None
 
@@ -343,6 +344,7 @@ class ChainFolder:
         except (KeyError, VerifyError) as exc:
             raise VerifyError(f"the local files of the head are lost or changed ({exc}). Stop run and start it again: the start rebuilds the head from the chain") from None
         loras = tuple((self.resident.tree(lora_prefixes.get(ref.lora_hash) or layout.public_lora_prefix(ref.lora_hash), ref.lora_hash), ref.rank) for ref in head.loras)
+        base_dir = self.fold_input(base_dir, head)
         # A new directory for each try, and nothing of an older try: a fold process that outlived its ``run`` can then write into no file of this one.
         shutil.rmtree(Path(self.config.work_dir) / "fold", ignore_errors=True)
         out = Path(self.config.work_dir) / "fold" / f"{head.version_id}.{os.getpid()}.{time.monotonic_ns()}"

@@ -351,6 +351,7 @@ def test_the_example_file_trains_and_every_rule_code_is_listed(tmp_path):
     assert all(meaning.strip() for meaning in RULES.values()) and set(TRANSIENT) <= set(RULES)
     assert "Not a final verdict: " + ", ".join(f"`{code}`" for code in TRANSIENT) + "." in " ".join(text.split())
     assert "- `no_signal`: your file must train something." in text
+    assert publisher.SAMPLING_GUIDANCE in " ".join(text.split())
     flat = " ".join(text.split())
     assert f"are in https://files.example/{publisher.READ_LINKS}." in flat and doc["contract"]["read_links"] == publisher.READ_LINKS
     assert "also at https://files.example/llms.txt and https://files.example/mining.json." in flat

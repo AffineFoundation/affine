@@ -27,7 +27,7 @@ parser.add_argument("--control-plane", required=True, type=Path, help="PR #297 w
 parser.add_argument("--out", type=Path, default=Path(__file__).parent / "fixtures" / "generator")
 arguments = parser.parse_args()
 CONTROL, OUT = arguments.control_plane, arguments.out
-sys.path.insert(0, str(CONTROL.resolve()))
+sys.path.insert(0, str(CONTROL.resolve()))  # sn120-standalone-source-path
 
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.generator.common import PublicSink, atomic_json, json_bytes

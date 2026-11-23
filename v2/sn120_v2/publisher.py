@@ -94,6 +94,9 @@ LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt
 OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps from recipe (default 1e-8), weight decay 0"  # gpu/train_job.py
 GRADER_VERSION = "math-verify-0.9.0+lenient-v1"  # envs/math_grader.py
 RETIRED_KING_Z_BAR = 1.5
+# A measured planning example, not a guarantee of a miner's sample.
+SAMPLING_GUIDANCE = ("With 2 rollouts per prompt, plan on about 5–8 times as many prompts as the mixed-reward groups you need. "
+                     "One official-head sample of 160 prompts produced only 18 mixed-reward groups; the file needs 80 mixed groups.")
 MERGED_EXPLANATION = (
     "Each candidate is tested as the merged model round_bf16(fp32 king master + your LoRA update), "
     "built with the same arithmetic as the install fold; the model that is tested is bit-for-bit the model that is installed. "
@@ -901,6 +904,7 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  least 1 output token inside the training caps. The advantage is the reward minus the mean reward of its",
         "  group (`group_size`, section 2). A file in which no rollout trains is invalid. One rollout per prompt never",
         "  trains. So the example above has two rollouts with different rewards.",
+        *textwrap.wrap("- " + SAMPLING_GUIDANCE, width=118, subsequent_indent="  "),
         f"- `{TRAIN_COST}`: cost = steps x the tokens of the rollouts that train. The tokens of one rollout are its",
         f"  prompt tokens plus its output tokens. room = min({recipe.train_max_output_tokens},",
         f"  {recipe.train_max_context_tokens} - prompt tokens). An output shorter than the room counts its tokens + 1",

@@ -53,6 +53,10 @@ def violations(source: str, path: Path, approved: frozenset[str]) -> list[str]:
         # Reviewed standalone deploy helpers and their tests deliberately load
         # isolated, exact old/new sources. The overlay never ships in v2's runtime.
         return []
+    if path in (V2_ROOT / "tests/generate_generator_fixtures.py", V2_ROOT / "tools/train64k/bench.py"):
+        # These standalone development tools select an explicit v2 source tree.
+        # Keep checking every import; only their marked source-path line is exempt.
+        source = "\n".join(line for line in source.splitlines() if "sn120-standalone-source-path" not in line)
     tree = ast.parse(source, filename=str(path))
     problems = []
     for line, root in imported_roots(tree):

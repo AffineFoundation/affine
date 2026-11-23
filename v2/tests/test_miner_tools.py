@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import contextlib
 import importlib.util
@@ -18,9 +19,9 @@ from sn120_v2 import layout, public, publisher, sampling, sim
 from sn120_v2.admission import Invalid, StoreAdmission
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.envs.math_pool import load_pool
-from sn120_v2.errors import BatchRejected, InfraError
+from sn120_v2.errors import BatchRejected, ContractError, InfraError
 from sn120_v2.irt import IRTSampler, draw_from_snapshot
-from sn120_v2.params import MinerBound, Recipe
+from sn120_v2.params import MinerBound, Params, Recipe
 from sn120_v2.types import NULL_MODEL, Draw, EvalChunk
 from sn120_v2.worker import LocalRunner
 
@@ -213,6 +214,36 @@ def test_upload_checks_first_and_sends_the_signed_header(build, tmp_path, capsys
     assert code == 0 and json.loads(out)["uploaded"] and "secret" not in out
     assert (sent[0].full_url, sent[0].get_method(), sent[0].data) == (link, "PUT", batch_bytes())
     assert dict(sent[0].header_items()) == {"Content-type": "application/octet-stream", "User-agent": tool.CLIENT["User-Agent"]}
+
+
+def test_the_live_public_params_and_future_fields_are_readable_only_by_the_public_loader(build, tmp_path):
+    """Frozen 2026-11-23 public params: a miner must not need a same-day code upgrade."""
+    from sn120_v2.replicate import Contract
+
+    frozen = json.loads((Path(__file__).parent / "data" / "params_live_073ef680.json").read_text())
+    raw = frozen["params"]
+    assert frozen["params_hash"] == frozen["contract_params_hash"] == "073ef680cf338de5e085100704e60f80ba96657d6d4e19d12995e4cb971ef6f8"
+    params = Params.from_dict(raw)
+    assert params.params_hash == frozen["params_hash"]
+    assert (params.crown_gate, params.z_bar, params.z_field_bar) == ("argmax_symmetric", 0.0, 0.0)
+    future = copy.deepcopy(raw)
+    future.update(min_kl_seq=0.0, confirm_next_round=True)
+    future["recipe"]["future_recipe"] = {"anything": [1, 2]}
+    future["recipe"]["miner_bounds"][0]["future_bound"] = "new"
+    with pytest.raises(ContractError, match="unknown field"):
+        Params.from_dict(future)
+    assert Params.from_public_dict(future) == params
+    with pytest.raises(ContractError, match="expected an integer"):
+        Params.from_public_dict(raw | {"n_tasks": "2000"})
+
+    world = sim.SimWorld(tmp_path / "world", build.params())
+    mining = tmp_path / "mining.json"
+    mining.write_bytes(publisher.render(world.publisher.snapshots[-1])[0])
+    document = json.loads(mining.read_text())
+    document["params"] = future
+    mining.write_text(json.dumps(document))
+    assert tool.load_contract(str(mining))[0] == params
+    assert Contract.load(str(mining)).params == params
 
 
 def test_every_read_of_an_address_names_its_client(build, tmp_path, monkeypatch):

@@ -654,6 +654,63 @@ def test_merged_deadline_keeps_the_paired_complete_block_prefix(build):
 
 
 
+def test_real_controller_installs_the_tested_processor_files(tmp_path):
+    """An old parent stays sealed; its candidate and the published head gain the same metadata."""
+    from sn120_v2.gpu.fold_input import FoldInputs
+    from sn120_v2.headfold import FoldSettings
+    from sn120_v2.params import GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, GenesisSpec
+    from sn120_v2.sim import sim_params
+    from sn120_v2.sim_head import ChainWorld
+
+    metadata = {
+        "preprocessor_config.json": b'{"processor":"vision"}',
+        "processor_config.json": b'{"processor":"chat"}',
+        "video_preprocessor_config.json": b'{"processor":"video"}',
+        "tokenizer_config.json": b'{"tokenizer_class":"Tiny"}',
+        "tokenizer.json": b'{"model":{}}',
+        "config.json": b'{"model":"genesis must not replace the parent"}',
+        "special_tokens_map.json": b'{"eos_token":"<eos>"}',
+        "generation_config.json": b'{"eos_token_id":2}',
+        "chat_template.jinja": b'{{ messages }}',
+    }
+
+    def download(repo, revision, out):
+        assert (repo, revision) == (GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION)
+        out.mkdir(parents=True, exist_ok=True)
+        for name, blob in metadata.items():
+            (out / name).write_bytes(blob)
+
+    prepared = FoldInputs(tmp_path / "work", GenesisSpec(GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, "f" * 64, "f" * 64, "5Validator"), download=download)
+    world = ChainWorld(tmp_path / "world", sim_params(eval_merged=True), mode="chain", settings=FoldSettings(twice=False),
+                       fold_input=prepared, model_repo=GENESIS_MODEL_REPO, model_revision=GENESIS_MODEL_REVISION)
+    world.start("chain")
+    parent = world.head
+    sealed = hash_tree(world.local(parent.head.base_hash))
+
+    def with_proof(ticket):
+        result = world.runner.__class__.run(world.runner, ticket)
+        entries = []
+        for entry in result.entries:
+            if entry.status == SCORED:
+                lora_dir = world.folder.resident.tree(entry.lora.prefix, entry.lora.lora_hash)
+                base_dir = prepared(world.local(world.head.head.base_hash), world.head.head)
+                built = build_candidate_base(world.local(world.head.head.base_fp32_master_digest), base_dir, lora_dir, entry.lora.rank,
+                                             tmp_path / "candidate", kernel=FIXED_ORDER, threads=1)
+                assert set(metadata) <= set(built.base_files)
+                entry = dataclasses.replace(entry, tested_base_hash=built.base_hash, tested_fold_kernel=FIXED_ORDER)
+            entries.append(entry)
+        return dataclasses.replace(result, entries=tuple(entries))
+
+    world.runner.run = with_proof
+    manifest = world.king()
+    assert set(metadata) <= set(manifest.base_files)
+    assert hash_tree(world.local(parent.head.base_hash)) == sealed == parent.base_files
+    from sn120_v2 import layout
+    for name, blob in metadata.items():
+        if name not in parent.base_files:
+            assert world.store.get(layout.public_base_file(manifest.head.base_hash, name)) == blob
+
+
 def test_merged_publication_uses_the_real_snapshot_and_explains_both_paths(tmp_path):
     from sn120_v2 import layout, publisher
     from sn120_v2.canonical import sha256_hex

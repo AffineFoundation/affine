@@ -1,5 +1,15 @@
 # Affine epoch subnet
 
+> **SN120 is now v2. Miners must follow the [`v2` branch](https://github.com/AffineFoundation/affine/tree/v2), not this branch's v1 mining tools.**
+> Read the live protocol at **https://affine.io/llms.txt** and the machine-readable contract at **https://affine.io/mining.json**.
+> Use **`python v2/miner/affine_miner.py`** to see bounds, check and upload a batch, or reproduce a round.
+> Start with [`v2/miner/affine_miner.py`](v2/miner/affine_miner.py) and [train and score your batch at home](v2/REPLICATE.md).
+
+## Historical v1 documentation — not the live protocol
+
+The GREEN/RED material and v1 commands below are retained only as history. They are not the SN120 v2 protocol.
+
+
 Bittensor subnet 120 (MiMo GRPO). **Miners upload one free batch file** (prompts, rollouts,
 rewards) to a private per-hotkey object; at the miner's turn the validator copies it,
 checks the format, trains one GRPO step from the published head (trainer v8.3.3l) and the

@@ -15,7 +15,7 @@ import pytest
 from sn120_v2.canonical import canonical_json
 from sn120_v2.envs.math_grader import Grade
 from sn120_v2.errors import ConfigError, InfraError, VerifyError
-from sn120_v2.generator.epoch import epoch_deadline
+from sn120_v2.generator.epoch import epoch_deadline, epoch_id
 from sn120_v2.generator.fake_vllm import FAIL, PASS, FakeFarm, FakePool
 from sn120_v2.generator.http import BudgetDeadline, LocalHttp, loopback_url
 from sn120_v2.generator.runner import recover, run_job
@@ -24,7 +24,9 @@ from sn120_v2.generator.worker import BatchRunner, atomic_write, repair_checkpoi
 
 
 def job_for(count=2, *, deadline=None, secret="recovery-secret"):
-    epoch = "20261120T0000Z"
+    # Exercise inference relative to the run, not a deadline that has since
+    # passed on the wall clock; epoch_id always returns the next UTC boundary.
+    epoch = epoch_id(time.time())
     return ScoringJob(
         version=JOB_VERSION,
         epoch=epoch,

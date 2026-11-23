@@ -159,6 +159,23 @@ def write_contract(world, params=None, round="view", history=(), manifest=None) 
     return str(path)
 
 
+def test_public_contract_ignores_future_params_fields_but_keeps_strict_values(world, capsys):
+    contract = json.loads(Path(world.write()).read_text())
+    contract["params"].update(min_kl_seq=0.0, confirm_next_round=True)
+    contract["params"]["recipe"]["future_recipe"] = {"future": True}
+    contract["params"]["recipe"]["miner_bounds"][0]["future_bound"] = "new"
+    path = world.tmp / "future.json"
+    path.write_text(json.dumps(contract))
+    assert replicate.Contract.load(str(path)).params == world.params
+    with pytest.raises(ContractError, match="unknown field"):
+        from sn120_v2.params import Params
+        Params.from_dict(contract["params"])
+    contract["params"]["n_tasks"] = "8"
+    path.write_text(json.dumps(contract))
+    with pytest.raises(ContractError, match="expected an integer"):
+        replicate.Contract.load(str(path))
+
+
 def cli(capsys, *argv: str) -> tuple[int, dict]:
     code = replicate.main(list(argv))
     return code, json.loads(capsys.readouterr().out)

@@ -12,6 +12,7 @@ pytest
 # tests: local test helpers and the site's standalone pull module
 conftest
 test_dedup
+test_generator_remote
 test_rotation_controller
 pull
 
@@ -32,9 +33,10 @@ moto
 # chain: weights writer and chain reader
 bittensor
 
-# miner: miner tooling and llms.txt
+# miner: miner tooling and llms.txt; R2 downloads need boto3 (botocore is listed with r2)
 transformers
 jinja2
+boto3
 
 # envs: math task pool and grader
 math_verify

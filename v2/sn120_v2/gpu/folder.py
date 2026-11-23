@@ -26,6 +26,7 @@ from ..errors import ContractError, InfraError, VerifyError
 from ..params import Params
 from ..seams import ObjectStore
 from ..types import FoldArtifact, HeadVersion
+from .fold_input import FoldInput, unchanged
 from .plan import BoxConfig, check_pins, log_phase
 from .resident import Resident, hash_tree, upload_tree
 
@@ -119,8 +120,8 @@ def upcast(base_dir: Path, out_dir: Path, part_bytes: int = PART_BYTES) -> str:
 
 
 class LoraFolder:
-    def __init__(self, store: ObjectStore, config: BoxConfig):
-        self.store, self.config = store, config
+    def __init__(self, store: ObjectStore, config: BoxConfig, *, fold_input: FoldInput = unchanged):
+        self.store, self.config, self.fold_input = store, config, fold_input
         self.resident = Resident(store, config.work_dir)
 
     def fold(self, head: HeadVersion, params: Params, out_prefix: str, tested=None) -> FoldArtifact:
@@ -138,7 +139,7 @@ class LoraFolder:
             master_dir = self.resident.tree(layout.public_master_prefix(head.base_fp32_master_digest), head.base_fp32_master_digest)
         except KeyError as exc:
             raise VerifyError("a file of the fp32 master is missing") from exc
-        base_dir = self.resident.tree(layout.public_base_prefix(head.base_hash), head.base_hash)
+        base_dir = self.fold_input(self.resident.tree(layout.public_base_prefix(head.base_hash), head.base_hash), head)
         loras = [read_lora(self.resident.tree(layout.public_lora_prefix(ref.lora_hash), ref.lora_hash), ref.rank) for ref in head.loras]
         out = Path(self.config.work_dir) / "fold" / head.version_id
         shutil.rmtree(out, ignore_errors=True)

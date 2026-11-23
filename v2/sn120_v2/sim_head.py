@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -28,6 +28,7 @@ from .canonical import canonical_json, manifest_digest, sha256_hex
 from .controller import Controller, HeadPublish, stored_irt_snapshot
 from .errors import BatchRejected, InfraError
 from .fold_kernel import upcast_master
+from .gpu.fold_input import FoldInput, unchanged
 from .gpu.folder import LoraFolder
 from .gpu.plan import BoxConfig
 from .gpu.resident import hash_tree, upload_tree
@@ -165,6 +166,9 @@ class ChainWorld(SimWorld):
     order: str = SERIAL
     settings: FoldSettings = FoldSettings()
     run: Runner = inline  # the folds in this process: a child process costs seconds, and one test has it
+    fold_input: FoldInput = field(default=unchanged, compare=False)
+    model_repo: str = "sim/model"
+    model_revision: str = "rev0"
 
     def __post_init__(self) -> None:
         self.store = WatchedStore(self.root / STORE_DIR)
@@ -181,7 +185,7 @@ class ChainWorld(SimWorld):
             master_files = upcast_master(base, master)
             base_files = upload_tree(self.store, base, layout.public_base_prefix(manifest_digest(hash_tree(base))))[0]
             assert upload_tree(self.store, master, layout.public_master_prefix(manifest_digest(master_files)))[0] == master_files
-            genesis = GenesisSpec("sim/model", "rev0", manifest_digest(base_files), manifest_digest(master_files), "5SimValidator")
+            genesis = GenesisSpec(self.model_repo, self.model_revision, manifest_digest(base_files), manifest_digest(master_files), "5SimValidator")
             self.controller.bootstrap(genesis, base_files, master_files, self.clock(), None)
 
     def reopen(self) -> Controller:
@@ -192,11 +196,11 @@ class ChainWorld(SimWorld):
         head = HeadPublish()
         if self.mode == CHAIN:
             self.writer = ChainWriter(self.store)
-            self.folder = ChainFolder(self.store, self.box, self.settings, self.run)
+            self.folder = ChainFolder(self.store, self.box, self.settings, self.run, fold_input=self.fold_input)
             self.keeper = HeadKeeper(self.store, self.box.work_dir, self.writer, self.every, self.settings, self.run, self.folder.proven)
             head = HeadPublish(promote_fold, self.writer, self.keeper.prepare, self.keeper.after_round, self.keeper.checkpoint, self.folder.proven)
         else:
-            self.folder = LoraFolder(self.store, self.box)
+            self.folder = LoraFolder(self.store, self.box, fold_input=self.fold_input)
         self.controller = Controller(journal, self.store, self.admission, self.sampler, self.params, folder=self.folder, publisher=self.publisher, head=head)
         if self.order == OVERLAP and self.mode == CHAIN:  # as ``cli.cmd_run`` does for a stack with ``overlap``
             self.overlap = Overlap()

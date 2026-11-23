@@ -245,6 +245,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "an even 0/1 split gives 0.5",
         "or 0 when `field_se` is 0.",
         f"The old z {publisher.RETIRED_KING_Z_BAR}",
+        publisher.SAMPLING_GUIDANCE,
     ]  # fmt: skip
 
 
@@ -304,7 +305,7 @@ def test_the_typed_constants_of_the_text_are_those_of_the_code():
     # The stack of the box must not set others.
     stack = (PACKAGE / "assembly.py").read_text()
     assert "SoloRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)" in stack
-    assert "VllmEvaluator(store, box, evaluator_pool, LazyPool(GradePool))" in stack
+    assert "VllmEvaluator(store, box, evaluator_pool, LazyPool(GradePool), fold_input=fold_input)" in stack
 
 
 def played(tmp_path: Path) -> sim.SimWorld:

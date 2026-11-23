@@ -28,6 +28,7 @@ from ..seams import ObjectStore
 from ..types import CAP, ERROR, FAIL, NULL_MODEL, PASS, EvalChunk, EvalRequest, HeadVersion
 
 from .batch import CHAT_TEMPLATE_KWARGS, END_OF_TURN
+from .fold_input import FoldInput, unchanged
 from .plan import BoxConfig, check_pins, log_phase
 from .procs import Child, Process, Spawn, gpu_env, nvidia_smi, stop_all, wait_gpus_free
 from .resident import Resident, resident_head
@@ -265,8 +266,9 @@ class VllmEvaluator:
         settings: ServeSettings = ServeSettings(),
         sleep: Callable[[float], None] = time.sleep,
         room: Callable[[int, int], int] = socket_room,
+        fold_input: FoldInput = unchanged,
     ):
-        self.store, self.config, self.pool, self.grader = store, config, pool, grader
+        self.store, self.config, self.pool, self.grader, self.fold_input = store, config, pool, grader, fold_input
         self.spawn, self.gpus_free, self.settings, self.sleep, self.room = spawn, gpus_free, settings, sleep, room
         self.http = CancellableHttp() if http is None else http
         self.resident = Resident(store, config.work_dir)
@@ -463,7 +465,7 @@ class VllmEvaluator:
         if not params.eval_merged:
             raise InfraError("a merged candidate can only be built with eval_merged")
         kernel, threads = candidate_fold_settings()
-        base_dir = self.resident.tree(layout.public_base_prefix(head.base_hash), head.base_hash)
+        base_dir = self.fold_input(self.resident.tree(layout.public_base_prefix(head.base_hash), head.base_hash), head)
         master_dir = self.resident.tree(layout.public_master_prefix(head.base_fp32_master_digest), head.base_fp32_master_digest)
         lora_dir = self.resident.tree(lora.prefix, lora.lora_hash)
         out = self.config.work_dir / "merged-candidates" / round_id / lora.lora_hash
@@ -732,7 +734,7 @@ class VllmEvaluator:
             models.pop(gpu, None)
         if existing is not None:
             existing.stop()
-        base_dir = base_dir or resident_head(self.resident, head)
+        base_dir = base_dir or getattr(self, "fold_input", unchanged)(resident_head(self.resident, head), head)
         self._wait_one_gpu_free(gpu)
         logs = self.config.work_dir / "logs"
         logs.mkdir(parents=True, exist_ok=True)
@@ -853,7 +855,7 @@ class VllmEvaluator:
             if all(server.alive() for server in self._servers):
                 return
         self.close()
-        base_dir = resident_head(self.resident, head)
+        base_dir = getattr(self, "fold_input", unchanged)(resident_head(self.resident, head), head)
         self.gpus_free(self.settings.free_limit_mib, self.settings.free_timeout_s)
         logs = self.config.work_dir / "logs"
         logs.mkdir(parents=True, exist_ok=True)

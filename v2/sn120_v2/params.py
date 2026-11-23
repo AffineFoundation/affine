@@ -14,6 +14,8 @@ import json
 import math
 import os
 import re
+import types
+import typing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -344,6 +346,35 @@ class Params(Record):
                 object.__setattr__(params, name, cls.LEGACY_VALUES[name])
             object.__setattr__(params, "_legacy_fields", frozenset(legacy))
         return params
+
+    @classmethod
+    def from_public_dict(cls, data: Mapping[str, Any]) -> Params:
+        """Read a public mining.json, ignoring fields a newer validator adds.
+
+        Journal and ticket decoding must use ``from_dict``: it stays strict.
+        Unknown record fields are removed recursively for this read-only path;
+        every known field is still checked by the strict constructor.
+        """
+        if not isinstance(data, Mapping):
+            return cls.from_dict(data)
+
+        def known(tp: Any, value: Any) -> Any:
+            if typing.get_origin(tp) in (typing.Union, types.UnionType):
+                args = [arg for arg in typing.get_args(tp) if arg is not type(None)]
+                tp = args[0] if len(args) == 1 else Any
+            if dataclasses.is_dataclass(tp) and isinstance(value, Mapping):
+                return {key: known(hint, value[key]) for key, hint in _hints(tp).items()
+                        if not key.startswith("_") and key in value}
+            origin, args = typing.get_origin(tp), typing.get_args(tp)
+            if origin in (dict, list, tuple) and isinstance(value, (list, tuple, Mapping)):
+                if origin is dict:
+                    return {key: known(args[1] if len(args) == 2 else Any, item) for key, item in value.items()}
+                if origin is list or (len(args) == 2 and args[1] is Ellipsis):
+                    return [known(args[0] if args else Any, item) for item in value]
+                return [known(hint, item) for hint, item in zip(args, value)]
+            return value
+
+        return cls.from_dict(known(cls, data))
 
     def to_dict(self) -> dict[str, Any]:
         legacy = self._legacy_fields or ()

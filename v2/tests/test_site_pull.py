@@ -31,7 +31,8 @@ PULL = Path(__file__).parents[1] / "site" / "pull.py"
 URL = "https://site.example"
 SECRET = "fake-secret-value-never-shown"
 LINKS, INDEX = "public/read_links.json", "public/pull_index.json"
-BUILT = {"index.html", "v1.html", "pool.html", "pool/index.html", "pool.js", "site.css", "site.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"}
+BUILT = {"index.html", "v1.html", "pool.html", "pool/index.html", "pool.js", "site.css", "site.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf",
+         "generator.html", "generator/index.html", "generator.js", "generator.css", "generator-guide.md", "generator/generator-guide.md", "generator-guide.html", "generator-guide/index.html"}
 FOREIGN = {  # what other software keeps under public/ of the same bucket, and keys that only look like v2's
     "public/41/current.json": b'{"epoch": 41}',
     "public/streams/main/current.json": b'{"stream": "main"}',

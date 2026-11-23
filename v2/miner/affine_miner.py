@@ -55,7 +55,7 @@ def load_contract(source: str) -> tuple[Params, HeadVersion]:
     else:
         raw = Path(source).read_bytes()
     doc = json.loads(raw)
-    return Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
+    return Params.from_public_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
 
 
 def bounds_text(params: Params) -> str:

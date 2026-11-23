@@ -2,7 +2,7 @@
 import argparse, json, sys, time, hashlib, os
 from pathlib import Path
 import torch
-sys.path.insert(0, os.environ.get("SN120_SRC", "/root/t64/v2"))
+sys.path.insert(0, os.environ.get("SN120_SRC", "/root/t64/v2"))  # sn120-standalone-source-path
 from sn120_v2.params import Recipe
 from sn120_v2.gpu.batch import training_rows
 from sn120_v2.gpu import train_job
