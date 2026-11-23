@@ -215,4 +215,4 @@ def stack(context: StackContext) -> Stack:
             keeper = HeadKeeper(store, box.work_dir, writer, checkpoint_every(), settings, proven=head.proven)
             head = dataclasses.replace(head, prepare=keeper.prepare, after_round=keeper.after_round, checkpoint=keeper.checkpoint)
     overlap = order == OVERLAP and context.command == "run"
-    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True, head=head, rollout_publisher=rollout_publisher, settings=shown, overlap=overlap, entropy_now=entropy_now, pool=pool_runtime)
+    return Stack(store, admission, sampler, runner, folder, publisher, entropy=entropy, chain=chain, pins=pins, mirror=True, head=head, rollout_publisher=rollout_publisher, settings=shown, overlap=overlap, entropy_now=entropy_now, pool=pool_runtime, prompt_pool=pool)

@@ -297,13 +297,13 @@ class IRTSampler:
     def snapshot_id(self) -> str:
         return self._id
 
-    def draw(self, head: HeadVersion, round_seed: str, n_tasks: int) -> Draw:
+    def draw(self, head: HeadVersion, round_seed: str, n_tasks: int, exclude: frozenset[str] = frozenset()) -> Draw:
         """A pure function of the snapshot and the seed. It never changes the table.
 
         The masses favour the head named in the snapshot. A draw for another
         head still uses them: the weights stay exact, only less well aimed.
         """
-        masses = {task: row[3] for task, row in self._body["tasks"].items()}
+        masses = {task: row[3] for task, row in self._body["tasks"].items() if task not in exclude}
         draw = draw_from_masses(masses, self._id, round_seed, n_tasks)
         self._last_draw = {"round_seed": round_seed, "n_tasks": len(draw.task_ids), "for_head_version_id": head.version_id}
         return draw

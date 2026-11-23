@@ -150,6 +150,17 @@ class SimEvaluator:
         self.store = store
         self.fail_looks: set[int] = set()  # every call for these looks fails
         self.closed = 0
+        self.parent_quality = 0.0  # tests may make the old parent stronger to reject a lucky first-round crown
+
+    def score_parent(self, ticket, deadline: int = 0) -> tuple[str, ...]:
+        """Fresh r+1 parent sample 0, with exactly null's seed derivation and no prior winner outcomes."""
+        quality = self.parent_quality(ticket) if callable(self.parent_quality) else self.parent_quality
+        codes = []
+        for task_id in ticket.draw.task_ids:
+            luck = rollout_seed(ticket.draw.round_seed, task_id, 0) / 2**63
+            base = 0.25 + 0.5 * _unit("difficulty", task_id)
+            codes.append(PASS if luck < base + quality else FAIL)
+        return ("".join(codes),)
 
     def evaluate(self, request: EvalRequest) -> EvalChunk:
         if request.look in self.fail_looks:

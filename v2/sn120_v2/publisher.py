@@ -255,9 +255,13 @@ def object_keys() -> dict[str, str]:
 
 
 def kl_rule(params: Params) -> str:
+    if params.min_kl_seq <= 0:
+        return "measured KL gate off"
+    cap = f" at the first {params.kl_max_tokens} completion tokens" if params.kl_max_tokens else ""
     return (
-        f"Your LoRA must change the model: the mean KL(new||head) over {params.kl_rollouts} of its own eval rollouts must be at least {show(params.min_kl_seq)} nats per sequence, else the entry is a charged null_update."
-        if params.min_kl_seq > 0 else "measured KL gate off"
+        f"Your LoRA must change the model: the mean KL(new||head){cap} over {params.kl_rollouts} of its own eval rollouts "
+        f"must be at least {show(params.min_kl_seq)} nats per sequence, else the entry is a charged null_update. "
+        "The public round output publishes every entry's kl_seq, kl_seq_se, kl_tok, kl_k and kl_tokens."
     )
 
 
@@ -299,6 +303,7 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "kl_max_tokens": params.kl_max_tokens,
             "kl_time_limit_s": params.kl_time_limit_s,
             "min_kl_seq_rule": kl_rule(params),
+            "kl_public_round_entry_fields": ["kl_seq", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens"],
             "min_step_norm_rule": (
                 "static global_norm_cap and stored step_norm must be at least min_step_norm"
                 if params.min_step_norm > 0 else "no minimum norm; only a non-finite stored step_norm is null_update"
@@ -307,6 +312,22 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "stages": DUPLICATE_STAGES,
         },
         "outcome_codes": {"pass": PASS, "fail": FAIL, "token_cap": CAP, "infra_error": ERROR, "not_run": NOT_RUN},
+        "crown_confirmation": {
+            "enabled": params.confirm_next_round,
+            "fresh_round": "crown round + 1",
+            "comparison": "weighted mean(new head sample-0 pass - old parent sample-0 pass) on the same fresh tasks and rollout seeds",
+            "tie_tolerance": TIE_TOLERANCE,
+            "confirm_rule": "delta > tie_tolerance; exact ties and losses fail; SE and z are diagnostics only",
+            "new_samples": 1,
+            "parent_samples": 1,
+            "new_head_null_samples": params.null_samples,
+            "prior_winner_outcomes_used": False,
+            "deferred_payout": True,
+            "no_decision_unpaid": True,
+            "training_prompt_exclusion": "map the pending crown's winner-batch prompts through task.batch_prompt(); skip unmapped prompts; exclude mapped task ids before the shared draw",
+            "public_round_fields": ["parent_outcomes", "parent_error", "confirmation"],
+            "confirmation_fields": ["parent_version_id", "pending_round_id", "pending_uid", "new_version_id", "delta", "se", "z", "new_pass_rate", "old_pass_rate", "new_head_pass_rate", "old_head_pass_rate", "n_tasks", "excluded_training_prompts", "confirmed", "paid", "payout_status", "reason"],
+        } if params.confirm_next_round else {"enabled": False, "payout": "historical immediate apply-and-pay; no parent slot or training-prompt exclusion"},
         "null_model": NULL_MODEL,
         "public_url": public_url,
         "links_url": links_url,
@@ -1368,7 +1389,10 @@ def _payout_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         ]
     return [
         f"- From `{params.null_prune_from_round}`, each round with no new king (the king held) removes the oldest king from the paid set, down to one.",
-        f"  A new king joins the paid set (and pushes out the oldest if {params.kings_window} are paid). Pruned kings return only by winning again.",
+        f"  A new king joins the paid set (and pushes out the oldest if {params.kings_window} are paid). Pruned kings return only by winning again."
+        if not params.confirm_next_round else
+        f"  A confirmed king joins the paid set at confirmation (and pushes out the oldest if {params.kings_window} are paid); there is no back-payment.",
+        "  Pruned kings return only by winning and confirming again." if params.confirm_next_round else "",
         "  Rounds without a decision (operator stop, failure) do not prune. Paid kings split the weight equally.",
         "- Current paid set, newest first. Registration of each winning hotkey is checked when the writer sets weights.",
         *(rows_table(paid, ("uid", "round_id")) if paid else ["There is no paid king yet."]),
@@ -1433,7 +1457,25 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         ]),
         *_win_rule_lines(params),
         "- The eligible LoRA with the highest delta wins. A tie goes to the miner that was earlier in the queue.",
-        "  With no eligible LoRA, M stays and there is no king. There is no second confirmation round.",
+        "  With no eligible LoRA, M stays and there is no king. There is no second confirmation round."
+        if not params.confirm_next_round else
+        "  With no eligible LoRA, M stays and there is no new crown.",
+        *([
+            f"- Paired crown confirmation (`confirm_next_round`): a winner of round r is applied, folded and served immediately, but payout waits.",
+            f"  In round r+1, the old parent and the installed new head run fresh rollouts on the same task draw and sample-0 seeds.",
+            f"  Null M still runs {params.null_samples} samples per task. The parent runs exactly sample 0; only new-head sample 0 and parent",
+            "  sample 0 are compared. Null sample 1 and round r's winner outcomes are never inputs to confirmation.",
+            f"  Confirm only when the weighted mean of new_pass - old_pass exceeds TIE_TOLERANCE ({show(TIE_TOLERANCE)}). Exact ties and losses",
+            "  fail. SE and diagnostic z are published, but neither is a threshold. Missing parent files or parent-scoring failures are unpaid",
+            "  no_decision, not confirmation and not a round failure. A failed or undecided crown stays installed and is the next training base.",
+            "  The previous pending crown resolves before a new winner applies; every new crown becomes the next pending crown.",
+            "  Only a confirmed king joins the paid set, at its confirmation; the confirming round pays it no back-payment.",
+            "  The pending crown's winner-batch prompts are mapped with task.batch_prompt() and their task ids are excluded before the shared draw.",
+            "  Unmapped prompts are skipped without blocking round open. With no pending crown the draw is unchanged; disabled mode is immediate apply-and-pay.",
+            "  Every confirming round publishes new_head_pass_rate, old_head_pass_rate, n_tasks, delta, se, diagnostic z, paid and",
+            "  payout_status (paid for a confirmed king, otherwise unpaid) in round.json and mining.json's round/history confirmation",
+            "  block, including unavailable or failed parent cases. parent_outcomes is public too; parent rollout archives are optional.",
+        ] if params.confirm_next_round else []),
         f"- Looks: scores are checked after {show(looks)} tasks. The win rule runs only at the last look. An early",
         "  look can only drop a LoRA that can no longer reach the win bar: after a share t of the tasks, it is",
         f"  dropped when (z + c) / sqrt(t) <= {show(params.z_bar)}. c comes from a Pocock-type alpha-spending function with",
@@ -1456,7 +1498,11 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "## 7. Payout",
         "",
         f"- A king is a round winner that was applied. The window is the last {params.kings_window} distinct king UIDs. A UID that wins",
-        "  again has one place in the window, with its newest win.",
+        "  again has one place in the window, with its newest win."
+        if not params.confirm_next_round else
+        f"- A king is a round winner that was applied and then confirmed in the next round. The window is the last {params.kings_window}",
+        "  distinct king UIDs. Pending and failed crowns are never paid. A confirmed UID that wins again keeps one place, with its newest win."
+        if params.confirm_next_round else "",
         f"- Each {beneficiaries} gets an equal share of all the weight, while the hotkey that won is still registered",
         "  on that UID: 1 / (the number of such kings).",
         "- The share of a paid king that is no longer registered is split among the other registered paid kings."
@@ -1635,7 +1681,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
     numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params)
-               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_")) and getattr(params, f.name) == f.default)]
+               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_") or f.name == "confirm_next_round") and getattr(params, f.name) == f.default)]
     url = doc["contract"]["public_url"]
     where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
@@ -1655,7 +1701,8 @@ def llms_text(doc: Mapping[str, Any]) -> str:
             "round and a null copy of M are scored on the same public tasks with the same seeds. At most one LoRA wins,",
         ]),
         f"and only if it beats M by more than {show(params.z_bar)} standard error. The winner is applied to the head and",
-        "its miner becomes a king. Only kings earn.",
+        "its miner becomes a king. Only kings earn." if not params.confirm_next_round else
+        "payout waits for the next round's fresh paired sample-0 confirmation. Only confirmed kings earn.",
         "",
         "## 1. Network and head",
         "",
@@ -1751,7 +1798,7 @@ def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_tex
         problems.append(f"llms.txt and mining.json are not a pair: llms.txt names snapshot {found and found.group(1)}, mining.json {doc['snapshot_digest']}")
     stated = stated_params(text)
     values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params)
-              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_")) and getattr(params, f.name) == f.default)}
+              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_") or f.name == "confirm_next_round") and getattr(params, f.name) == f.default)}
     for name in sorted(values.keys() | stated.keys()):
         if stated.get(name) != values.get(name):
             problems.append(f"`{name}`: llms.txt states {stated.get(name, 'no value')}, mining.json has {values.get(name, 'no such parameter')}")

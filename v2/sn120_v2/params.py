@@ -203,7 +203,7 @@ class Params(Record):
         "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
         "eval_merged", "null_prune_from_round", "min_kl_seq", "kl_rollouts",
-        "kl_max_tokens", "kl_time_limit_s",
+        "kl_max_tokens", "kl_time_limit_s", "confirm_next_round",
     )
 
     netuid: int = 120
@@ -268,6 +268,7 @@ class Params(Record):
     min_scored_tasks: int = 100  # fewer scored tasks than this can never produce a winner
     min_cover: float = 0.95  # share of rollouts that must resolve; below it the entry is no_decision
     calibration_tol: float = 0.003  # multi-box guard on the null-M rate
+    confirm_next_round: bool = False  # apply a crown now; pay it only after a fresh paired win in the next round
     min_kl_seq: float = 0.0  # minimum mean KL(new||head) per sampled rollout; 0 = off
     kl_rollouts: int = 128  # deterministic sample-0 subsample; capped completions included
     kl_max_tokens: int = 0  # first N completion tokens per rollout; 0 = the full completion
@@ -428,6 +429,7 @@ class Params(Record):
         _need(self.rotation_queue_publish >= 0 and self.rotation_churn_max >= 0, "rotation queue and churn cap must be >= 0")
         _need(_unit(self.rotation_retire_p) and _unit(self.rotation_retire_low_p), "rotation pass rates must be in [0, 1]")
         _need(self.fold_every_k >= 1, "fold_every_k must be at least 1")
+        _need(type(self.confirm_next_round) is bool, "confirm_next_round must be true or false")
         _need(type(self.eval_merged) is bool, "eval_merged must be true or false")
         _need(not self.eval_merged or self.fold_every_k == 1, "merged-candidate evaluation needs fold_every_k = 1")
         _need(self.max_output_tokens < self.max_context_tokens, "max_output_tokens must be below max_context_tokens")
