@@ -36,7 +36,7 @@ ROW_OF_NEXT = ("position", "uid", "hotkey", "registration_block", "file_valid", 
 # changes nothing else. A later change that changes a param or the snapshot on purpose puts its new value here.
 PARAMS_HASH_BEFORE = "65ce6ef3bc867172eb87673bdb39461d03a8c85aac743c61e8b3d233b9f26d54"
 PARAMS_BEFORE = Path(__file__).parent / "data" / "params_default_a5c2b6a6.json"
-SNAPSHOT_BEFORE = "a5ffb03f2dd84bfc420f222fb685871452c21c6957546520e4b690d934909021"  # sha256 of the snapshot of ``line_world``
+SNAPSHOT_BEFORE = "76a2ad84c7f938fb6deca1e5597a4d523380e33cde166a49c7e60ae198361716"  # sha256 of the snapshot of ``line_world``
 
 
 def kind(uid: int) -> str:

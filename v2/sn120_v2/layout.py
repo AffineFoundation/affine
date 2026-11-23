@@ -164,6 +164,13 @@ def public_rollout_gate(round_id: str, role: str = "head") -> str:
     return f"{ROLLOUT_GATE_PREFIX}{_part(round_id)}/{role}.jsonl.gz"
 
 
+def public_rollout_gate_entry(round_id: str, queue_pos: int) -> str:
+    """The merged-model eval rollouts of one scored queue entry, including the winner."""
+    if type(queue_pos) is not int or queue_pos < 0:
+        raise ContractError("a public gate entry rollout needs a nonnegative integer queue position")
+    return f"{ROLLOUT_GATE_PREFIX}{_part(round_id)}/entries/{queue_pos}.jsonl.gz"
+
+
 def public_rollout_gate_meta(round_id: str) -> str:
     return f"{ROLLOUT_GATE_PREFIX}{_part(round_id)}/meta.json"
 
@@ -198,6 +205,14 @@ RETIRED_TASKS = "public/pool/retired_tasks.json"
 
 def reserve_shard(name: str, sha256: str) -> str:
     return f"public/pool/reserve/shards/{_part(name)}.{_part(sha256)}.jsonl"
+
+
+DEDUP_FIRST_SEEN = "private/dedup/first_seen.json"
+
+
+def dedup_rollout_hashes(batch_sha256: str) -> str:
+    """Private cached normalized rollout-hash set; batch content is never stored here."""
+    return f"private/dedup/rollout_hashes/{_part(batch_sha256)}.json"
 
 
 JOURNAL = "private/journal"

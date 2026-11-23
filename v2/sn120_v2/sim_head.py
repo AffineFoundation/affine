@@ -108,7 +108,7 @@ class TinyTrainer(SimTrainer):
             rank=recipe.rank,
             alpha=recipe.alpha,
             target_modules=recipe.target_modules,
-            report=TrainReport(request.seed, recipe.steps, 0.5, 0.01, 1000, 0.1, "cpu", SIM_IMAGE),
+            report=TrainReport(request.seed, recipe.steps, 0.5, 0.1, 1000, 0.1, "cpu", SIM_IMAGE),
         )
 
 

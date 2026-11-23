@@ -39,6 +39,8 @@ OUT_OF_TIME = "this batch had the whole training time of the round"
 # Status of one entry in a round decision (NO_DECISION, SKIP, NOT_TRAINED and NOT_SCORED also apply).
 WINNER = "winner"
 LOST = "lost"
+DUPLICATE = "duplicate"  # a copy of an earlier entry or past king: charged, cannot win
+NULL_UPDATE = "null_update"  # stored scaled update is too small: charged, cannot win
 
 
 def _need(ok: bool, message: str) -> None:
@@ -244,6 +246,26 @@ class TrainReport(Record):
     norm_before_cap: float = 0.0  # norm of the update before recipe.global_norm_cap cut it; 0 = not reported
     truncated_rows: int = 0  # rows cut at a training token cap
     dropped_rows: int = 0  # rows with no output token left after the cut
+    # Tagged form of a non-finite value. JSON never carries NaN/Infinity; judging makes these charged null updates.
+    LEFT_OUT_AT_DEFAULT = ("step_norm_nonfinite", "norm_before_cap_nonfinite")
+    step_norm_nonfinite: str = ""
+    norm_before_cap_nonfinite: str = ""
+
+    def __post_init__(self) -> None:
+        for name, tag in (("step_norm", self.step_norm_nonfinite), ("norm_before_cap", self.norm_before_cap_nonfinite)):
+            if tag:
+                _need(tag in ("nan", "inf", "-inf") and getattr(self, name) == 0.0,
+                      f"{name}_nonfinite must tag a zero placeholder")
+                object.__setattr__(self, name, {"nan": math.nan, "inf": math.inf, "-inf": -math.inf}[tag])
+
+    def to_dict(self) -> dict[str, Any]:
+        data = super().to_dict()
+        for name in ("step_norm", "norm_before_cap"):
+            value = getattr(self, name)
+            if not math.isfinite(value):
+                data[name] = 0.0
+                data[f"{name}_nonfinite"] = "nan" if math.isnan(value) else ("inf" if value > 0 else "-inf")
+        return data
 
 
 @dataclass(frozen=True)
@@ -377,6 +399,9 @@ class EntryResult(Record):
     outcomes: tuple[str, ...] = ()  # one string per sample index over the round's task order
     eliminated_at_look: int | None = None
     attempts: int = 1
+    LEFT_OUT_AT_DEFAULT = ("tested_base_hash", "tested_fold_kernel")
+    tested_base_hash: str = ""
+    tested_fold_kernel: str = ""
 
     def __post_init__(self) -> None:
         _need(self.status in (SCORED, NO_DECISION, SKIP, NOT_TRAINED, NOT_SCORED), f"unknown entry status {self.status!r}")
@@ -413,7 +438,9 @@ class BoxResult(Record):
 
 @dataclass(frozen=True)
 class Score(Record):
-    """One LoRA against null M on the same tasks and seeds."""
+    """One LoRA against the king, with optional field-relative final-look measurements."""
+
+    LEFT_OUT_AT_DEFAULT = ("field_delta", "field_se", "field_z")
 
     n_tasks: int  # tasks this LoRA was scored on
     delta: float  # weighted mean of (LoRA pass rate - null M pass rate) per task
@@ -426,6 +453,9 @@ class Score(Record):
     cover: float  # share of this LoRA's rollouts that resolved without an infrastructure error
     eligible: bool
     reasons: tuple[str, ...] = ()  # why it is not eligible; empty when it is
+    field_delta: float | None = None
+    field_se: float | None = None
+    field_z: float | None = None
 
 
 @dataclass(frozen=True)
@@ -437,19 +467,19 @@ class EntryDecision(Record):
     hotkey: str
     registration_block: int
     batch_sha256: str
-    status: str  # WINNER, LOST, NO_DECISION, SKIP, NOT_TRAINED or NOT_SCORED
+    status: str  # WINNER, LOST, DUPLICATE, NULL_UPDATE, NO_DECISION, SKIP, NOT_TRAINED or NOT_SCORED
     reason: str = ""
     lora_hash: str = ""
     score: Score | None = None
     eliminated_at_look: int | None = None
 
     def __post_init__(self) -> None:
-        _need(self.status in (WINNER, LOST, NO_DECISION, SKIP, NOT_TRAINED, NOT_SCORED), f"unknown decision status {self.status!r}")
+        _need(self.status in (WINNER, LOST, DUPLICATE, NULL_UPDATE, NO_DECISION, SKIP, NOT_TRAINED, NOT_SCORED), f"unknown decision status {self.status!r}")
 
     @property
     def charged(self) -> bool:
-        """True when the entry had a fair tournament: its registration is used up."""
-        return self.status in (WINNER, LOST)
+        """True when the entry's registration is used up, including a copy or a null update."""
+        return self.status in (WINNER, LOST, DUPLICATE, NULL_UPDATE)
 
 
 @dataclass(frozen=True)
@@ -464,6 +494,9 @@ class RoundDecision(Record):
     null_pass_rate: float
     null_cap_rate: float
     reason: str = ""
+    # Public evidence only: keeper/dropped identities, SHA, stage, similarity and first_seen; never batch content.
+    LEFT_OUT_AT_DEFAULT = ("duplicate_clusters",)
+    duplicate_clusters: tuple[dict[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         winners = [entry.queue_pos for entry in self.entries if entry.status == WINNER]

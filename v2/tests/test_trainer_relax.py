@@ -1,10 +1,12 @@
 """The trainer relax on a tiny model of the head's architecture (CPU): minibatches, the update cap as a miner value, the larger file caps.
 
-The first test holds the new training job against the job of commit
+The optimizer-parity tests hold the new training job against the job of commit
 ``a5c2b6a6``: ``tests/data/train_job_a5c2b6a6.py.txt`` is that file, byte
-for byte (``git show a5c2b6a6:v2/sn120_v2/gpu/train_job.py``). With one
-minibatch and only rows that train, the two write the same bytes. Zero-advantage
-filler rows no longer shrink the loss: see the filler-row test below.
+for byte (``git show a5c2b6a6:v2/sn120_v2/gpu/train_job.py``). Both jobs consume
+the same token ids in these tests: the matching scoring prompt render of the
+current job is an intentional exception to byte parity, covered by
+``test_train_render_parity.py``. Zero-advantage filler rows no longer shrink
+the loss: see the filler-row test below.
 """
 
 from __future__ import annotations
@@ -213,8 +215,14 @@ def test_one_minibatch_gives_the_bytes_of_the_trainer_of_a5c2b6a6(case, old_job,
     devices = ["cpu"] * settings.pop("n", 1)
     made = job(head_dir, rows=[row for row in ROWS if row["advantage"] != 0], **settings)
     assert "minibatches" not in made["recipe"] and Recipe.from_dict(made["recipe"]).minibatches == 1
-    before = old_job.run(json.loads(json.dumps(made)), tmp_path / "before", devices)
-    now = train_job.train(json.loads(json.dumps(made)), tmp_path / "now", devices)
+    # Give the historical trainer the same token ids: only its prompt renderer intentionally differs.
+    before_encode = old_job.encode
+    try:
+        old_job.encode = train_job.encode
+        before = old_job.run(json.loads(json.dumps(made)), tmp_path / "before", devices)
+        now = train_job.train(json.loads(json.dumps(made)), tmp_path / "now", devices)
+    finally:
+        old_job.encode = before_encode
     # Each byte of each tensor, of the LoRA config and of the train report: so the same lora_hash.
     assert hash_tree(tmp_path / "now") == hash_tree(tmp_path / "before") and sorted(hash_tree(tmp_path / "now")) == sorted(["adapter_config.json", "adapter_model.safetensors", "train_report.json"])
     # What the box takes from the job into the journal (TrainReport: loss, step_norm, norm_before_cap, tokens, the row counts) and into its log.
@@ -224,13 +232,13 @@ def test_one_minibatch_gives_the_bytes_of_the_trainer_of_a5c2b6a6(case, old_job,
     assert "minibatches" not in report and "minibatches" not in report["recipe_values"] and len(report["losses"]) == made["recipe"]["steps"]
 
 
-def test_the_job_of_one_minibatch_is_the_source_of_a5c2b6a6(monkeypatch):
-    """No GPU needed: only dispatch, the active-row denominator and configurable Adam epsilon change the old job."""
+def test_the_job_of_one_minibatch_keeps_the_math_of_a5c2b6a6(monkeypatch):
+    """The prompt render intentionally differs; the rest of the old training job is unchanged."""
     before, now = OLD_TRAINER.read_text(), Path(train_job.__file__).read_text()
     old = {node.name: ast.get_source_segment(before, node) for node in ast.parse(before).body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
     new = {node.name: ast.get_source_segment(now, node) for node in ast.parse(now).body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
     assert {"run", "save", "Replica", "token_scores", "ppo_loss", "encode", "add_lora", "Replay", "main"} <= set(old)
-    assert {name for name in old if old[name] != new.get(name)} == {"main", "run", "save"}
+    assert {name for name in old if old[name] != new.get(name)} == {"main", "run", "save", "encode"}
     assert sorted(set(new) - set(old)) == ["bring", "minibatches_of", "run_minibatches", "score_old", "train"]
     # The one place that picks the job: one minibatch is ``run``, more are ``run_minibatches``.
     called = []
@@ -263,7 +271,13 @@ def test_adam_eps_reaches_both_training_paths_and_default_matches_the_old_optimi
     made = job(head_dir, dtype="float32", steps=1, minibatches=minibatches)
     train_job.train(made, tmp_path / "default", ["cpu"])
     assert [optimizer.defaults["eps"] for optimizer in watch["adams"]] == [1e-8]
-    before = pre_eps_job.train(made, tmp_path / "before", ["cpu"])
+    # Keep the old optimizer inputs fixed; only its prompt renderer intentionally differs.
+    before_encode = pre_eps_job.encode
+    try:
+        pre_eps_job.encode = train_job.encode
+        before = pre_eps_job.train(made, tmp_path / "before", ["cpu"])
+    finally:
+        pre_eps_job.encode = before_encode
     assert hash_tree(tmp_path / "default") == hash_tree(tmp_path / "before"), "default epsilon keeps the previous LoRA and report bytes"
     _, _, high_report = run(head_dir, tmp_path / "high", dtype="float32", steps=1, minibatches=minibatches, adam_eps=1e-4)
     assert watch["adams"][-1].defaults["eps"] == 1e-4 and high_report["recipe_values"]["adam_eps"] == 1e-4
@@ -468,6 +482,26 @@ def test_the_trainer_refuses_a_report_over_the_cap():
     assert LoraTrainer._check(report | {"step_norm": 99.0}, Recipe(global_norm_cap=None, miner_bounds=()))["step_norm"] == 99.0  # null: no cap
 
 
+def test_open_recipe_keeps_an_ordinary_update_unscaled_and_records_new_maxima(tmp_path):
+    from sn120_v2.params import load_params
+    recipe = load_params(Path(__file__).parents[1] / "ops" / "train64k_params_t3600_prune_open.json").recipe
+    recipe = recipe.for_miner({"lora_lr": 0.01, "steps": 64})
+    a = torch.tensor([[0.01, 0.02], [0.03, 0.04]])
+    b = torch.tensor([[0.05, 0.06], [0.07, 0.08]])
+    layer = types.SimpleNamespace(lora_A=torch.nn.Parameter(a.clone()), lora_B=torch.nn.Parameter(b.clone()))
+    replica = types.SimpleNamespace(layers={"model.layers.0.self_attn.q_proj": layer}, device="cpu")
+    facts = {"losses": [0.1], "grad_norms": [1.0], "trained_tokens": 2, "truncated_rows": 0, "dropped_rows": 0}
+    result = train_job.save(replica, recipe, {"base_hash": "b" * 64, "seed": 7}, tmp_path / "lora", facts)
+    assert result["step_norm"] == result["step_norm_before_cap"] < 6.0
+    assert torch.equal(layer.lora_A, a) and torch.equal(layer.lora_B, b)
+    report = json.loads((tmp_path / "lora" / "train_report.json").read_text())
+    assert report["recipe_values"] == {
+        "lora_lr": 0.01, "steps": 64, "alpha": 32.0, "group_size": 0, "sample_temperature": 1.0,
+        "rank": 16, "max_grad_norm": 1.0, "global_norm_cap": 1_000_000.0,
+    }
+    assert report["grad_norms"] == [1.0]
+
+
 # ---- the bounds of the two new miner values ----
 
 REFUSED = {
@@ -491,7 +525,15 @@ def test_a_value_outside_a_new_bound_is_refused(key, value, build):
 @pytest.mark.parametrize("key,value", [(key, value) for key, values in TAKEN.items() for value in values])
 def test_a_value_inside_a_new_bound_is_taken_and_never_clamped(key, value, build):
     assert getattr(Recipe().for_miner({key: value}), key) == value
-    batch = check_batch(file(train={key: value}), HOTKEY, build.params())
+    if key == "minibatches" and value == 8000:
+        # 8000 updates need 8000 active rows: 2000 groups of two right and two distinct wrong answers.
+        right = lambda n, k: {"output": f"{THINK}{k} \\boxed{{{2 * n}}}", "reward": 1}  # noqa: E731
+        wrong = lambda n, offset: {"output": f"{THINK}0 \\boxed{{{-(n + offset)}}}", "reward": 0}  # noqa: E731
+        groups = [{"prompt": f"double {n}", "rollouts": [right(n, 0), right(n, 1), wrong(n, 1), wrong(n, 2)]} for n in range(2000)]
+        raw = json.dumps({"version": "affine-batch-v3", "hotkey": HOTKEY, "groups": groups, "train": {key: value}}).encode()
+    else:
+        raw = file(train={key: value})
+    batch = check_batch(raw, HOTKEY, build.params())
     assert batch.train == {key: value} and getattr(build.params().recipe.for_miner(batch.train), key) == value
 
 

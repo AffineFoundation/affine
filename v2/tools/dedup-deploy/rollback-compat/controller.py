@@ -1,0 +1,946 @@
+"""The controller (sequencer).
+
+It is the only process that leases seats, judges results, changes the head
+or names a king. Every change is one journal record, and the state changes
+only by applying that record. ``tick`` moves any unfinished step forward.
+So a controller that restarts continues from the journal: it never applies
+a winner twice and never loses a seat.
+
+One round:
+
+  open_round     freeze up to ``batch_cap`` valid files in queue order, pin
+                 head, params and the public draw, and lease them to boxes
+  submit_result  check a box's sealed result; when every lease has answered
+                 or failed, judge the round
+  finish         verify and promote the winner's LoRA, append the new head,
+                 fold it when a fold is due, then close the round
+
+Rules:
+
+* An infrastructure failure is ``no_decision``: nobody is charged, the
+  seats go back to the front of the queue, and nothing is promoted. A lease
+  that times out is such a failure, and a late result is never used.
+* A hash that does not match stops the apply. The round is then abandoned
+  and nobody is charged.
+* No round opens while a fold is due: boxes train and score on a folded head.
+* The parameters are pinned in the journal at the first start. Every later
+  process reads them from there, so two machines can never use two sets.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+import sys
+import time
+from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence
+
+from . import layout
+from .admission import SHA_SHOWN, freeze_log, verdict_log, verdict_note
+from .afterking import PUBLISH, Beside, Overlap
+from .canonical import canonical_json, to_jsonable
+from .errors import BatchRejected, ConfigError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
+from .headlog import apply_lora, fold_due, fold_head, genesis_head, lora_ref
+from .journal import JOURNAL_FILE, Journal, pull
+from .judging import check_result, decide
+from .params import GenesisSpec, Params, REVIEWED_NEW_PARAMS_HASHES
+from .public import public_text, round_report, snapshot
+from .queue import SyncPlan, plan_sync, select_round, split_among_boxes, squat_trim, waiting
+from .sampling import make_round_seed
+from .seams import Admission, Folder, ObjectStore, Publisher, RoundRunner, TaskSampler
+from .state import (
+    ABANDONED,
+    APPLIED,
+    APPLY_DEFERRED,
+    GENESIS,
+    HEAD_APPLIED,
+    HEAD_FOLDED,
+    LEASE_FAILED,
+    NO_DECISION,
+    NULL,
+    PARAMS_SET,
+    REGISTRATIONS_SYNCED,
+    ROUND_CLOSED,
+    ROUND_OPENED,
+    ROUND_SETTLED,
+    SEAT_RELEASED,
+    SEATS_DEMOTED,
+    SEATS_FRONTED,
+    V1_IMPORTED,
+    Lease,
+    RoundRecord,
+    State,
+    apply,
+    load,
+    replay,
+)
+from .store import delete_pending, get_record, log_time, promote_fold, promote_lora, publish_head, put_record, timed
+from .types import NO_DECISION as ENTRY_NO_DECISION
+from .types import (
+    NOT_SCORED,
+    NULL_MODEL,
+    SCORED,
+    SKIP,
+    BoxResult,
+    ChainSnapshot,
+    EntryDecision,
+    FoldArtifact,
+    FrozenBatch,
+    HeadManifest,
+    HeadVersion,
+    King,
+    LoRAArtifact,
+    Registration,
+    RoundDecision,
+    RoundTicket,
+    V1Import,
+    Verdict,
+)
+
+Leases = list[tuple[RoundTicket, BoxResult]]
+
+
+@dataclasses.dataclass
+class StackContext:
+    """What a stack builder gets: where the state lives, the parameters, and the command that runs."""
+
+    state_dir: Path
+    params: Params  # after ``load``: the parameters pinned in the journal, when it has them
+    command: str = "run"  # a builder may leave out the runner and the folder for any other command
+
+    def load(self, store: ObjectStore | None = None) -> State:
+        """The replayed state. Call it before ``params`` is read.
+
+        Give the store when it keeps the journal copy (``Stack.mirror``):
+        the local journal is first brought up to date from that copy.
+        """
+        path = self.state_dir / JOURNAL_FILE
+        state = replay(pull(store, path)) if store is not None else load(path) if path.exists() else State()
+        self.params = state.params or self.params
+        return state
+
+
+@dataclasses.dataclass
+class HeadPublish:
+    """How a folded head goes public, and what the box does for its local copy. The default is the full upload.
+
+    ``headchain.py`` and ``headfold.py`` give the other form: the weights stay on the box, and the chain is public.
+    """
+
+    promote: Callable[[ObjectStore, FoldArtifact], None] = promote_fold  # what goes from pending/ to public/ after a fold
+    chain: Callable[[State], Mapping[str, Any]] | None = None  # writes the chain file; returns the part that mining.json shows
+    prepare: Callable[[State], None] | None = None  # at the start of ``run``: prove the local head, or rebuild it
+    after_round: Callable[[State], None] | None = None  # after each pass of the loop of ``run``, with a new round or with none
+    checkpoint: Callable[[State], Mapping[str, Any]] | None = None  # the command ``checkpoint``: upload the full files of the head now
+    proven: Callable[[bool], None] | None = None  # the order ``overlap``: raises HeadLost when the local head did not read back as folded; with True it first waits for that read
+
+
+@dataclasses.dataclass
+class Stack:
+    """Every part the controller needs. ``python -m sn120_v2 run --stack module:function`` builds one."""
+
+    store: ObjectStore
+    admission: Admission
+    sampler: TaskSampler
+    runner: RoundRunner | None = None  # needed by ``run`` only
+    folder: Folder | None = None
+    publisher: Publisher | None = None
+    entropy: Callable[[], str] | None = None  # a value the validator cannot choose, such as the latest block hash
+    chain: Callable[[], ChainSnapshot] | None = None  # when set, the queue is synced before each round
+    mirror: bool = False  # keep the durable copy of the journal in ``store``, one object per record
+    pins: Callable[[Params], None] | None = None  # raises InfraError when this box has another image or code than the parameters pin
+    pool: Any = None  # optional PoolRuntime, rotation only; the ordinary sampler remains untouched when absent
+    head: HeadPublish = dataclasses.field(default_factory=HeadPublish)
+    rollout_publisher: Any = None  # optional local/public gate rollout journal, never a scoring dependency
+    settings: tuple[str, ...] = ()  # one line for each setting that the stack chooses to show, and where its value comes from; ``run`` prints them at its start
+    overlap: bool = False  # ``run`` uses the order ``overlap`` after a king (``afterking.py``)
+    entropy_now: Callable[[], str] | None = None  # the hash of the newest block, in one read: the round's entropy with ``overlap``
+
+
+def public_snapshot(head: HeadPublish, state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None, checked_at: int | None = None) -> dict[str, Any]:
+    """The public snapshot. In chain mode the chain file is written first, and the snapshot shows its newest part."""
+    shown = snapshot(state, params, now, verdicts, checked_at)
+    if head.chain is not None and state.heads:
+        shown["head_chain"] = head.chain(state)
+    return shown
+
+
+def check_env_pin(params: Params) -> None:
+    """Refuse a stack whose non-empty environment pin names another pool or grader."""
+    if not params.env_pin:
+        return
+    # The default and the control plane stay independent of the grader packages.
+    from .envs.math_grader import env_pin
+
+    actual = env_pin()
+    if params.env_pin != actual:
+        raise ConfigError(f"params.env_pin is {params.env_pin}, but this pool and grader have env_pin {actual}")
+
+
+def stored_irt_snapshot(store: ObjectStore, state: State) -> Mapping[str, Any] | None:
+    """The task-table snapshot of the last closed round. Give it to the sampler after a restart."""
+    key = layout.irt_snapshot(state.snapshot_id) if state.snapshot_id else ""
+    return json.loads(store.get(key)) if key and store.exists(key) else None
+
+
+class Controller:
+    def __init__(
+        self,
+        journal: Journal,
+        store: ObjectStore,
+        admission: Admission,
+        sampler: TaskSampler,
+        params: Params,
+        *,
+        folder: Folder | None = None,
+        publisher: Publisher | None = None,
+        pins: Callable[[Params], None] | None = None,
+        head: HeadPublish | None = None,
+        pool: Any = None,
+        rollout_publisher: Any = None,
+    ) -> None:
+        self.journal, self.store, self.admission, self.sampler, self._params = journal, store, admission, sampler, params
+        self.folder, self.publisher, self.pins, self.head = folder, publisher, pins, head or HeadPublish()
+        self.state: State = replay(journal.records)
+        self._dedup_rollback = any(row.kind == PARAMS_SET and row.data.get("params", {}).get("params_hash") in REVIEWED_NEW_PARAMS_HASHES
+                                   or row.kind == ROUND_OPENED and row.data.get("round", {}).get("params_hash") in REVIEWED_NEW_PARAMS_HASHES
+                                   for row in journal.records)
+        if self._dedup_rollback:
+            # The compatibility loader proves this complete historical pin, not
+            # merely its hash field. It also refuses an open undecided dedup
+            # round before this constructor can take the journal fence.
+            from .dedup_compat import require_closed_dedup_history
+            require_closed_dedup_history(journal.records, self.state)
+        self.pool = pool
+        self.rollout_publisher = rollout_publisher
+        self._rotation: Any = None
+        if pool is not None:
+            if self.state.round is not None and pool.active_rotation is not None:
+                self._rotation = pool.active_rotation
+                # Restart reconstructs the exact table named by the open round.
+                # It never calls pool.open and never rotates a second time.
+                from .irt import IRTSampler
+                from .pool_runtime import replay_rotation
+                stored = json.loads(self.store.get(layout.irt_snapshot(self.state.round.snapshot_id)))
+                source = stored
+                if self._rotation.source_snapshot_id:
+                    source = json.loads(self.store.get(layout.irt_snapshot(self._rotation.source_snapshot_id)))
+                expected = replay_rotation(self.store, self.state.round.round_id, source, initial_ids=pool.initial_ids)
+                if not expected["matches"]:
+                    raise VerifyError("stored rotation does not recompute from its public inputs")
+                self.sampler = IRTSampler(pool.active_rotation.active_ids, self.params, snapshot=stored,
+                                         rotation=stored.get("rotation"))
+        self.last_error = ""
+        self._retry_at = 0
+        self._verdicts: dict[str, Verdict] = {}  # admission's last check of the waiting files, for the public snapshot
+        self._verdicts_at: int | None = None
+        self._file_notes: dict[str, str] = {}  # what the log last said of each seat's file, by hotkey; this process only
+        self._published: object = None  # what the last snapshot showed of the queue and its files
+        self._published_at: int | None = None  # how many records the journal had at the last snapshot that reached the store
+        self.overlap: Overlap | None = None  # ``run`` sets it for the order ``overlap``; None: each step in its turn (``serial``)
+        self._pin()
+
+    @property
+    def params(self) -> Params:
+        """The parameters pinned in the journal. Before the first start: the ones this process was given."""
+        return self.state.params or self._params
+
+    def _pin(self) -> None:
+        if hasattr(self.admission, "params"):
+            self.admission.params = self.params
+
+    def _check_pins(self, not_started: str, first: str = "") -> None:
+        """Stop before work that this box may not do: its image or its code is not what the parameters pin.
+
+        The trainer makes the same check, but there it is too late: each
+        refused training is a counted failure of a seat, and the next round
+        opens at once. A box that differs from the pins would hold the whole
+        queue in a few rounds, with nobody there. Here nothing has started,
+        so nothing is counted, and ``run`` ends with a refusal.
+        """
+        if self.pins is None:
+            return
+        try:
+            self.pins(self.params)
+        except InfraError as exc:
+            raise ConfigError(
+                f"this box differs from the pinned digests, so {not_started}. The difference: {exc}. Nothing is counted for a seat. "
+                f"Next: {first}the digest block, then set-params with the whole parameter file in which only the two digests are new "
+                f"(set-params replaces every value: a key that the file does not hold goes back to its default), then start again"
+            ) from None
+
+    def _log(self, kind: str, data: dict[str, Any], now: int) -> None:
+        apply(self.state, self.journal.append(kind, data, now))
+
+    # ------------------------------------------------------------ the order ``overlap`` (afterking.py)
+
+    def use_overlap(self, overlap: Overlap) -> None:
+        """``run`` only: take the steps after a king out of the line. Every other command leaves the order as it is.
+
+        The first kept steps are those that a ``run`` which stopped has possibly not made: the delete of what
+        the last closed round left in ``pending/``, and the public files of the state as it is now.
+        """
+        self.overlap = overlap
+        if self.state.rounds:
+            last = self.state.rounds[-1].round_id
+            overlap.keep(f"the delete of what round {last} left in pending/", lambda _: delete_pending(self.store, layout.pending_round_prefix(last)))
+        overlap.keep("the public files at the start of run", self._publish, PUBLISH)
+
+    def _after(self, step: str, work: Callable[[int], None], now: int, kind: str = "") -> None:
+        """A step that the next open does not need. ``serial``: here, at ``now``. ``overlap``: after that open, while the box trains, at the time of then."""
+        if self.overlap is None:
+            with timed(step):
+                work(now)
+        else:
+            self.overlap.keep(step, work, kind)
+
+    def _kept_done(self, problems: Sequence[str]) -> None:
+        if problems:
+            self.last_error = f"after the open: {problems[-1]}"
+
+    def _proven(self, wait: bool) -> None:
+        """``overlap``: stop with ``HeadLost`` when the local head did not read back as the fold wrote it."""
+        if self.overlap is not None and self.head.proven is not None:
+            self.head.proven(wait)
+
+    # ------------------------------------------------------------ bootstrap
+
+    def bootstrap(
+        self,
+        genesis: GenesisSpec,
+        base_files: Mapping[str, str],
+        master_files: Mapping[str, str],
+        now: int,
+        v1: V1Import | None = None,
+    ) -> HeadVersion:
+        """Write the genesis head, and the state carried over from v1 if any. Only an empty journal accepts it."""
+        if self.state.heads:
+            raise V2Error("this journal already has a genesis; refusing to bootstrap again")
+        manifest = HeadManifest(genesis_head(genesis, now), dict(base_files), dict(master_files), {})
+        self._log(GENESIS, {"genesis": genesis.to_dict(), "manifest": manifest.to_dict()}, now)
+        self._log(PARAMS_SET, {"params": self._params.to_dict()}, now)
+        if v1 is not None:
+            self._log(V1_IMPORTED, {"v1": v1.to_dict()}, now)
+        self._sync_pointer()
+        self._publish(now)
+        return manifest.head
+
+    def set_params(self, params: Params, now: int) -> None:
+        """Operator action: pin new parameters. Refused while a round is open, because a round pins one set.
+
+        One case is allowed in a round: the round is decided, and only the
+        image and code digests change. Training, scoring and judging are done
+        then; the digests only say which code may do the fold that is left.
+        Without this, a fix to the fold code could never finish the round.
+        """
+        record = self.state.round
+        if record is not None:
+            old = self.params.recipe
+            same = dataclasses.replace(params, recipe=dataclasses.replace(params.recipe, image_digests=old.image_digests, code_digest=old.code_digest))
+            if record.decision is None or same != self.params:
+                raise V2Error("a round is open; set the parameters when it has closed (a decided round takes new digests only)")
+        if not self.state.heads:
+            raise V2Error("the journal has no genesis yet; give the parameters to bootstrap")
+        self._log(PARAMS_SET, {"params": params.to_dict()}, now)
+        # set-params runs in its own process, but a controller may also keep
+        # running (the loop uses this method between rounds). Keep its live
+        # sampler and rotation inputs in step with the newly pinned params;
+        # otherwise the next open can seal an old-rule draw under a new hash.
+        if self.pool is not None:
+            self.pool.params = params
+        from .irt import IRTSampler
+        if isinstance(self.sampler, IRTSampler):
+            snapshot = stored_irt_snapshot(self.store, self.state) or self.sampler.public_snapshot()
+            self.sampler = IRTSampler(tuple(snapshot["tasks"]), params, snapshot=snapshot,
+                                      rotation=snapshot.get("rotation"))
+        self._pin()
+
+    def sync_registrations(self, chain: ChainSnapshot, now: int, force: bool = False) -> SyncPlan:
+        """Bring the queue in line with the chain. A suspicious read is refused unless ``force``."""
+        state = self.state
+        plan = plan_sync(state.queue, state.served_regs, state.served_hotkeys, chain, self.params.netuid, self.params.burn_uid, force=force)
+        if not plan.empty:
+            data = {
+                "block": chain.block,
+                "added": [reg.to_dict() for reg in plan.added],
+                "removed": [list(key) for key in plan.removed],
+                "rehotkeyed": [reg.to_dict() for reg in plan.rehotkeyed],
+            }
+            self._log(REGISTRATIONS_SYNCED, data, now)
+        return plan
+
+    def release_seat(self, key: tuple[int, int], now: int) -> None:
+        """Operator action: let a held seat take a turn again."""
+        self._log(SEAT_RELEASED, {"key": list(key)}, now)
+
+    def front_seats(self, keys: Sequence[tuple[int, int]], reason: str, now: int) -> None:
+        """Operator action, between rounds only: waiting seats go to the front and are no longer demoted. Nothing is charged or counted."""
+        if self.state.round is not None:
+            raise V2Error(f"round {self.state.round.round_id} is open; seats go to the front only between rounds")
+        missing = [key for key in keys if key not in self.state.queue]
+        if missing or not keys or not reason.strip():
+            raise V2Error(f"no seat went to the front: it needs a reason and seats of the queue (not in the queue: {missing})")
+        self._log(SEATS_FRONTED, {"keys": [list(key) for key in keys], "reason": reason}, now)
+
+    # ------------------------------------------------------------ open
+
+    def _freeze(self, reg: Registration, round_id: str) -> FrozenBatch | None:
+        batch = self.admission.freeze(reg, round_id)
+        if batch is None:
+            return None
+        try:
+            self.params.recipe.for_miner(batch.train)
+            refused = "" if batch.hotkey == reg.hotkey else "the hotkey test: the batch names another hotkey"
+        except BatchRejected as exc:
+            refused = f"the recipe step: {' '.join(str(exc).split())}"
+        if not refused:
+            return batch
+        read = f"{batch.batch_sha256[:SHA_SHOWN]} valid, then refused by {refused}"
+        checked = self._verdicts.get(reg.hotkey)
+        same = checked.batch_sha256 == batch.batch_sha256 if checked is not None and checked.batch_sha256 else None
+        print(freeze_log(reg.uid, round_id, verdict_note(checked), read, same), file=sys.stderr, flush=True)
+        return None
+
+    def check_files(self, now: int) -> Mapping[str, Verdict]:
+        """Admission's verdict on the stored file of every waiting seat, kept for the public snapshot.
+
+        It reads every waiting file from the store. So it runs before a round's
+        lease starts or between rounds, never inside a round's time.
+        """
+        seats = [(seat.reg.uid, seat.reg.hotkey) for seat in waiting(self.state.queue)]
+        verdicts = dict(self.admission.verdicts([hotkey for _, hotkey in seats]))
+        lines, self._file_notes = verdict_log(seats, verdicts, self._file_notes, now)
+        print("\n".join(lines), file=sys.stderr, flush=True)
+        self._verdicts, self._verdicts_at = verdicts, now
+        return verdicts
+
+    def open_round(
+        self, now: int, entropy: str | Callable[[], str], boxes: Sequence[str] = ("box-0",), clock: Callable[[], int] | None = None
+    ) -> list[RoundTicket]:
+        """Start a round with the seats that are ready now. Returns no ticket when nothing can start.
+
+        With ``clock``, the lease time is read after the waiting files are read
+        and checked, so that work does not use the round's time limit.
+
+        ``entropy`` as a call is read after the batches of the round are frozen, so the value is not
+        older than the files that it draws tasks for.
+        """
+        state, params = self.state, self.params
+        if state.round is not None:
+            raise V2Error("a round is already open")
+        if not params.recipe.image_digests:
+            raise ConfigError("no worker image is pinned in the recipe; refusing to open a round")
+        if fold_due(state.head, params) or now < self._retry_at:
+            return []
+        if state.failed_leases and now < state.last_failure_at + params.apply_retry_s:
+            return []
+        started = time.monotonic()
+        with timed("open: the check of the waiting files"):
+            verdicts = self.check_files(now)
+        moved = squat_trim(state.queue, verdicts, now, state.turns_last_day(now), params.squat_min_wait_s, params.squat_age_factor)
+        if moved:
+            self._log(SEATS_DEMOTED, {"keys": [list(key) for key in moved]}, now)
+        round_id = f"r{state.round_seq + 1:06d}"
+        picked = select_round(state.queue, verdicts, lambda reg: self._freeze(reg, round_id), params.batch_cap)
+        if len(picked.entries) < params.n_min_start:
+            return []
+        if callable(entropy):
+            entropy = entropy()
+        if clock is not None:
+            now = clock()  # the lease starts here
+        head = state.head
+        rotation = None
+        if self.pool is not None:
+            snapshot = stored_irt_snapshot(self.store, state)
+            if snapshot is None:
+                snapshot = self.sampler.public_snapshot()
+            self._rotation, self.sampler, rotation = self.pool.open_and_publish(round_id, snapshot, state)
+            if snapshot.get("snapshot_id"):
+                self.store.put(layout.irt_snapshot(snapshot["snapshot_id"]), canonical_json(to_jsonable(snapshot)))
+        draw = self.sampler.draw(head, make_round_seed(round_id, head.version_id, entropy), params.n_tasks)
+        self._store_snapshot(draw.snapshot_id)
+        tickets, leases = [], []
+        for index, block in enumerate(split_among_boxes(picked.entries, len(boxes))):
+            ticket = RoundTicket(round_id, f"{round_id}-l{index}", boxes[index], head, params, draw, block, now, now + params.lease_timeout_s)
+            put_record(self.store, layout.ticket(round_id, ticket.lease_id), ticket)
+            tickets.append(ticket)
+            leases.append(Lease(ticket.lease_id, ticket.box_id, now, ticket.expires_at, ticket.digest(), block))
+        record = RoundRecord(
+            round_id, head.version_id, params.params_hash, params.recipe_id, draw.round_seed, draw.snapshot_id,
+            len(draw.task_ids), now, tuple(leases), picked.skipped,
+            rotation=rotation,
+        )
+        data = {"round": record.to_dict()}
+        if rotation is not None:
+            data["rotation"] = rotation
+        self._log(ROUND_OPENED, data, now)
+        log_time(f"open: round {round_id} is open, {len(picked.entries)} seats. From the file check to here", started)
+        self._after(f"open: the public files of round {round_id}", self._publish, now, PUBLISH)
+        return tickets
+
+    def _ticket(self, record: RoundRecord, lease: Lease) -> RoundTicket:
+        ticket = get_record(self.store, layout.ticket(record.round_id, lease.lease_id), RoundTicket)
+        if ticket.digest() != lease.ticket_digest:
+            raise VerifyError(f"the stored ticket of lease {lease.lease_id} does not match the journal")
+        return ticket
+
+    def tickets(self) -> list[RoundTicket]:
+        """Tickets of the leases that are still open. Use it to hand work out again after a restart."""
+        record = self.state.round
+        return [self._ticket(record, lease) for lease in record.leases if lease.status == "open"] if record else []
+
+    # ------------------------------------------------------------ results
+
+    def submit_result(self, result: BoxResult, now: int) -> None:
+        """Accept one box's sealed result. A result that fails any check raises and changes nothing."""
+        record = self.state.round
+        if record is None or record.round_id != result.round_id or record.decision is not None:
+            raise LeaseError("no open round is waiting for this result")
+        lease = next((l for l in record.leases if l.lease_id == result.lease_id), None)
+        key = layout.sealed_result(record.round_id, result.lease_id)
+        if lease is None or lease.status != "open" or self.store.exists(key):
+            raise LeaseError("this lease is unknown, has failed, or already has a result")
+        if now >= lease.expires_at:
+            raise LeaseError("the lease has expired; a late result is never used")
+        if record.head_version_id != self.state.head.version_id:
+            raise HeadMismatchError("the round's head is no longer the current head")
+        check_result(self._ticket(record, lease), result)
+        put_record(self.store, key, result)
+        self._settle(now)
+
+    def fail_lease(self, lease_id: str, reason: str, now: int) -> None:
+        """Record that a box failed. Its seats go back to the front of the queue, not charged."""
+        record = self.state.round
+        if record is None or record.decision is not None:
+            raise LeaseError("no open round has a running lease")
+        self._log(LEASE_FAILED, {"round_id": record.round_id, "lease_id": lease_id, "reason": reason}, now)
+        self._settle(now)
+
+    def _lease_failures(self) -> str:
+        """Why the leases of the open round failed, from the journal: the note of a round that closes with no box result."""
+        reasons: list[str] = []
+        for item in reversed(self.journal.records):
+            if item.kind == LEASE_FAILED and item.data["reason"] not in reasons:
+                reasons.insert(0, item.data["reason"])
+            if item.kind == ROUND_OPENED:
+                break
+        return "; ".join(reasons)
+
+    def _leases(self, record: RoundRecord, status: str) -> Leases:
+        pairs = []
+        for lease in record.leases:
+            key = layout.sealed_result(record.round_id, lease.lease_id)
+            if lease.status == status and self.store.exists(key):
+                pairs.append((self._ticket(record, lease), get_record(self.store, key, BoxResult)))
+        return pairs
+
+    def _settle(self, now: int) -> None:
+        record = self.state.round
+        if record is None or record.decision is not None:
+            return
+        open_leases = [lease for lease in record.leases if lease.status == "open"]
+        pairs = self._leases(record, "open")
+        if len(pairs) < len(open_leases):
+            return
+        if not pairs:
+            if record.duplicate_decisions:
+                # The new code already fixed these charged copies at open.
+                # Preserve them when every box lease failed; genuine survivors
+                # return uncharged, exactly as in its no-result close.
+                survivors = [EntryDecision(entry.queue_pos, entry.reg.uid, entry.reg.hotkey,
+                                           entry.reg.registration_block, entry.batch.batch_sha256, ENTRY_NO_DECISION,
+                                           reason="no box result arrived before the round closed")
+                             for lease in record.leases for entry in lease.entries]
+                rows = tuple(sorted((*record.duplicate_decisions, *survivors), key=lambda row: row.queue_pos))
+                decision = RoundDecision(record.round_id, record.head_version_id, None, rows, 0, 0.0, 0.0,
+                                         "no trainable entry remained after duplicate removal", ())
+                self._log(ROUND_SETTLED, {"round_id": record.round_id, "decision": decision.to_dict(), "results": {}}, now)
+                return self._close(NULL, [], now, self._lease_failures())
+            return self._close(NO_DECISION, [], now, self._lease_failures())
+        if record.params_hash in REVIEWED_NEW_PARAMS_HASHES:
+            # This should have been refused before a writer fence. Never
+            # re-judge an already-trained new-code result with old semantics.
+            raise V2Error("an undecided dedup round has a sealed result; finish it with the reviewed new code")
+        decision = decide(pairs)
+        results = {ticket.lease_id: result.digest() for ticket, result in pairs}
+        self._log(ROUND_SETTLED, {"round_id": record.round_id, "decision": decision.to_dict(), "results": results}, now)
+        self._finish(now)
+
+    # ------------------------------------------------------------ apply, fold, close
+
+    def _finish(self, now: int) -> None:
+        record = self.state.round
+        pairs, winner = self._leases(record, "done"), record.decision.winner
+        made = None
+        if winner is not None and not record.applied:
+            if self.overlap is not None:  # the chain read of the next open starts here, beside the fold
+                self.overlap.look_ahead(now)
+            try:
+                made = self._apply(record, pairs, now)
+            except VerifyError as exc:
+                return self._close(ABANDONED, pairs, now, str(exc))
+            except InfraError as exc:
+                if record.apply_attempts + 1 >= self.params.apply_max_attempts:
+                    return self._close(ABANDONED, pairs, now, f"apply failed {self.params.apply_max_attempts} times: {exc}")
+                return self._log(APPLY_DEFERRED, {"round_id": record.round_id, "reason": str(exc)}, now)
+        if fold_due(self.state.head, self.params) and not self.fold_if_due(now, in_round=True, made=made):
+            return
+        charged = any(entry.charged for entry in record.decision.entries)
+        self._close(APPLIED if winner else (NULL if charged else NO_DECISION), pairs, now)
+
+    def _apply(self, record: RoundRecord, pairs: Leases, now: int) -> FoldArtifact | None:
+        """Verify and promote the winner, then append the new head. The journal record is the commit point.
+
+        ``overlap``: the fold of the new head runs while the winner's files go to ``public/``. It is returned for ``fold_if_due``.
+        """
+        winner = record.decision.winner
+        ticket, result = next(pair for pair in pairs if any(e.queue_pos == winner.queue_pos for e in pair[0].entries))
+        seat = next(e for e in ticket.entries if e.queue_pos == winner.queue_pos)
+        artifact = next(e for e in result.entries if e.queue_pos == winner.queue_pos).lora
+
+        def to_public() -> None:
+            with timed(f"king of {record.round_id}: the winner's LoRA to public/"):
+                promote_lora(self.store, artifact)
+            started = time.monotonic()
+            public_batch = layout.winner_batch(record.round_id)
+            try:
+                self.store.copy(seat.batch.uri, public_batch)
+            except KeyError:
+                raise VerifyError("the winner's frozen batch is missing") from None
+            if self.store.sha256(public_batch) != seat.batch.batch_sha256:
+                self.store.delete(public_batch)
+                raise VerifyError("the winner's frozen batch does not match its sha256")
+            log_time(f"king of {record.round_id}: the winner's batch file to public/", started)
+
+        def stacked() -> HeadVersion:
+            return apply_lora(self.state.head, artifact, lora_ref(record.round_id, seat, artifact), now)
+
+        made = None
+        if self.overlap is None:
+            to_public()
+            head = stacked()
+        else:
+            head = stacked()
+            made = self._fold_beside(record, head, artifact, to_public, now)
+        parent = self.state.manifest
+        manifest = HeadManifest(head, parent.base_files, parent.master_files, parent.lora_files | {artifact.lora_hash: artifact.files})
+        king = King(seat.reg.uid, seat.reg.hotkey, record.round_id, head.version_id, now, winner.score.z)
+        self._log(HEAD_APPLIED, {"round_id": record.round_id, "manifest": manifest.to_dict(), "king": king.to_dict()}, now)
+        return made
+
+    def _fold_beside(self, record: RoundRecord, head: HeadVersion, artifact: LoRAArtifact, to_public: Callable[[], None], now: int) -> FoldArtifact | None:
+        """``overlap``: fold ``head`` here while a second thread puts the winner's files in ``public/``.
+
+        ``head`` is not in the journal yet. The fold reads the winner's LoRA from ``pending/``; its hash is
+        the proof of the bytes, as it is for the evaluator. Nothing of the fold is public or recorded before
+        ``HEAD_APPLIED``. When the winner's files do not reach ``public/``, the fold is dropped and the error
+        is raised as ``serial`` raises it. A fold that fails here waits for ``fold_if_due``, as a fold that fails there.
+        """
+        public = Beside(to_public, "sn120-v2-winner-to-public")
+        made, ahead = None, getattr(self.folder, "fold_ahead", None)
+        try:
+            pinned = True
+            try:
+                if self.pins is not None:
+                    self.pins(self.params)
+            except InfraError:
+                pinned = False  # ``fold_if_due`` stops ``run`` for it, after the apply as always
+            if ahead is not None and pinned and fold_due(head, self.params) and now >= self._retry_at:
+                try:
+                    with timed(f"fold of {head.version_id[:12]}: the box, beside the winner's files (the sum, the upload to pending/ and its check)"):
+                        made = ahead(head, self.params, layout.pending_fold_ahead_prefix(record.round_id), {artifact.lora_hash: artifact.prefix})
+                except (InfraError, VerifyError, HeadMismatchError) as exc:
+                    self.last_error, self._retry_at = f"fold failed: {exc}", now + self.params.apply_retry_s
+        finally:
+            public.wait()
+        try:
+            public.result()
+        except BaseException:
+            if made is not None:
+                self.folder.drop(self.state.head)  # the head did not move: the files of the fold leave the box
+            raise
+        return made
+
+    def fold_if_due(self, now: int, in_round: bool = False, made: FoldArtifact | None = None) -> bool:
+        """Fold the stacked LoRAs into a new base when a fold is due. Returns True when the head is folded.
+
+        ``made``: the fold of this head is done already (``_fold_beside``). Its staged files are under the round's prefix.
+        """
+        head = self.state.head
+        if not fold_due(head, self.params) or (self.state.round is not None and not in_round) or now < self._retry_at:
+            return False
+        if self.folder is None:
+            raise ConfigError("a fold is due, but no folder is configured")
+        self._check_pins("the fold was not started")
+        try:
+            if made is not None and made.parent_version_id == head.version_id:
+                fold = made
+            else:
+                with timed(f"fold of {head.version_id[:12]}: the box (the sum, the upload to pending/ and its check)"):
+                    fold = self.folder.fold(head, self.params, layout.pending_fold_prefix(head.version_id))
+            with timed(f"fold of {head.version_id[:12]}: the promotion of the base and the master, all steps"):
+                self.head.promote(self.store, fold)
+            folded = fold_head(head, fold, now)
+        except (InfraError, VerifyError, HeadMismatchError) as exc:
+            self.last_error, self._retry_at = f"fold failed: {exc}", now + self.params.apply_retry_s
+            return False
+        manifest = HeadManifest(folded, fold.base_files, fold.master_files, {})
+        self._log(HEAD_FOLDED, {"manifest": manifest.to_dict()}, now)
+        if fold is not made:  # the delete of the round's prefix, at the close, removes the staged files of a fold made beside
+            with timed(f"fold of {head.version_id[:12]}: the delete of its files in pending/"):
+                delete_pending(self.store, fold.prefix)
+        return True
+
+    def _close(self, outcome: str, pairs: Leases, now: int, reason: str = "") -> None:
+        record, params, queue = self.state.round, self.params, self.state.queue
+        decision = record.decision
+        counted = {e.queue_pos for _, result in pairs for e in result.entries if e.counted_for_seat}
+        served, front, attempted, held, released = [], [], [], [], []
+        for entry in decision.entries if decision else ():
+            key = [entry.uid, entry.registration_block]
+            if entry.status == SKIP:
+                released.append(key)
+            elif entry.charged and outcome != ABANDONED:
+                served.append(key + [entry.hotkey])
+            else:
+                front.append(key)
+                if entry.queue_pos in counted:
+                    attempted.append(key)
+                    if queue[tuple(key)].infra_attempts + 1 >= params.max_infra_attempts:
+                        held.append(key)
+        started = time.monotonic()
+        snapshot_id = self.state.snapshot_id
+        if outcome in (APPLIED, NULL) and pairs:
+            snapshot_id = self._update_sampler(pairs, outcome)
+        closed = dataclasses.replace(record, outcome=outcome, closed_at=now)
+        report = round_report(closed, pairs) | {"note": public_text(reason), "wall_s": self._wall(pairs, now)}
+        # The public file holds the safe form of each text. The journal keeps the text as it was; so does the log of ``run``.
+        texts = [reason, *((decision.reason, *(entry.reason for entry in decision.entries)) if decision else ())]
+        for text in dict.fromkeys(text for text in texts if public_text(text) != text):
+            print(f"round {record.round_id}: the public round file holds a changed form of this text. The full text: {text}", file=sys.stderr, flush=True)
+        report["new_head_version_id"] = self.state.head.version_id if outcome == APPLIED else None
+        self.store.put(layout.round_file(record.round_id), canonical_json(report))
+        data = {"round_id": record.round_id, "outcome": outcome, "reason": reason, "snapshot_id": snapshot_id}
+        if self.pool is not None and self._rotation is not None and outcome in (APPLIED, NULL) and pairs:
+            closed_rotation = self._rotation
+            for index, (ticket, result) in enumerate(pairs):
+                closed_rotation = self.pool.close(closed_rotation, ticket.draw.task_ids, result.null_outcomes,
+                                                  publish=index == len(pairs) - 1)
+            data["rotation_state_sha"] = closed_rotation.digest()
+            self._rotation = closed_rotation
+        data |= {"served": served, "front": front, "attempted": attempted, "held": held, "released": released}
+        self._log(ROUND_CLOSED, data, now)
+        if self.rollout_publisher is not None:
+            # Side effect only: enqueue after the journal commit. The publisher
+            # catches/retries all store failures and cannot delay round close.
+            try:
+                winner = decision.winner if outcome == APPLIED and decision else None
+                self.rollout_publisher.close_round(pairs, winner.uid if winner else None, record.params_hash, record.round_seed, now)
+            except Exception as exc:  # noqa: BLE001
+                self.last_error = f"public rollouts queued for retry: {type(exc).__name__}: {exc}"
+                print(f"public rollouts: {self.last_error}", file=sys.stderr, flush=True)
+        log_time(f"close of {record.round_id} ({outcome}): the task table, the round file and the record", started)
+        with timed(f"close of {record.round_id}: the head pointer"):
+            self._sync_pointer()
+        if self.overlap is not None and self.head.chain is not None:
+            # The chain file is the public record of a new head, and it is one small write. It stays at the close, as with ``serial``.
+            try:
+                with timed(f"close of {record.round_id}: the chain file"):
+                    self.head.chain(self.state)
+            except InfraError as exc:
+                self.last_error = f"publish failed: {exc}"
+        self._after(f"close of {record.round_id}: the delete of its files in pending/", lambda _: delete_pending(self.store, layout.pending_round_prefix(record.round_id)), now)
+        self._after(f"close of {record.round_id}: the public files", self._publish, now, PUBLISH)
+
+    def _wall(self, pairs: Leases, now: int) -> dict[str, int]:
+        """Wall seconds of each phase of the open round. Box phases come from the box; the others from the journal."""
+        at: dict[str, int] = {}
+        for item in reversed(self.journal.records):
+            at.setdefault(item.kind, item.at)
+            if item.kind == ROUND_OPENED:
+                break
+        opened = at[ROUND_OPENED]
+        wall = {name: max((result.phase_s.get(name, 0) for _, result in pairs), default=0) for name in ("training", "evaluation")}
+        wall["total"] = now - opened
+        if HEAD_APPLIED in at:
+            wall["promote"] = at[HEAD_APPLIED] - at[ROUND_SETTLED]
+            wall["lease_to_promotion"] = at[HEAD_APPLIED] - opened
+        if HEAD_FOLDED in at:
+            wall["fold"] = at[HEAD_FOLDED] - at[HEAD_APPLIED]
+        return wall
+
+    def _update_sampler(self, pairs: Leases, outcome: str) -> str:
+        """Fold the round's outcomes into the task table and store the new public snapshot."""
+        ticket, result = pairs[0]
+        outcomes = {NULL_MODEL: result.null_outcomes}
+        outcomes |= {e.lora.lora_hash: e.outcomes for _, r in pairs for e in r.entries if e.lora is not None}
+        winner = self.state.round.decision.winner
+        applied = outcome == APPLIED
+        try:
+            snapshot_id = self.sampler.update(
+                ticket.head,
+                ticket.draw,
+                outcomes,
+                winner_lora_hash=winner.lora_hash if applied else "",
+                new_head_version_id=self.state.head.version_id if applied else "",
+            )
+            self._store_snapshot(snapshot_id)
+            return snapshot_id
+        except InfraError as exc:
+            self.last_error = f"task table update failed: {exc}"
+            return self.state.snapshot_id
+
+    def _store_snapshot(self, snapshot_id: str) -> None:
+        """Publish the sampler's snapshot. The sampler does no I/O, so a restart reads the table back from here."""
+        self.store.put(layout.irt_snapshot(snapshot_id), canonical_json(to_jsonable(self.sampler.public_snapshot())))
+
+    # ------------------------------------------------------------ publish
+
+    def _sync_pointer(self) -> None:
+        """Make the store's head manifest and ``current`` pointer follow the journal."""
+        manifest = self.state.manifest
+        try:
+            if manifest and not (self.store.exists(layout.CURRENT) and self.store.get(layout.CURRENT) == manifest.to_json()):
+                publish_head(self.store, manifest)
+        except (InfraError, VerifyError) as exc:
+            self.last_error = f"head pointer not published yet: {exc}"
+
+    def _shown(self) -> object:
+        """What a snapshot shows of the queue and its files. A change here is a reason to publish between rounds."""
+        seats = [(seat.reg.key, seat.front, seat.demoted, seat.held) for seat in waiting(self.state.queue)]
+        return seats, {hotkey: (verdict.valid, verdict.batch_sha256) for hotkey, verdict in self._verdicts.items()}
+
+    def _publish(self, now: int) -> None:
+        if self.publisher is None:
+            return
+        shown, records = self._shown(), len(self.journal.records)
+        try:
+            self.publisher.publish(public_snapshot(self.head, self.state, self.params, now, self._verdicts, self._verdicts_at))
+            self._published, self._published_at = shown, records
+        except InfraError as exc:
+            self.last_error = f"publish failed: {exc}"
+
+    def publish(self, now: int, check_files: bool = False, only_changes: bool = False) -> bool:
+        """Publish the public snapshot outside a round's own steps. Returns True when it published.
+
+        ``check_files`` reads the file of every waiting seat first; it is
+        refused while a round is open. ``only_changes`` publishes only when
+        the queue or a file verdict differs from the last published snapshot.
+        """
+        if check_files:
+            if self.state.round is not None:
+                raise V2Error("a round is open; the waiting files are not read inside a round's time")
+            try:
+                self.check_files(now)
+            except InfraError as exc:
+                self.last_error = f"file check failed: {exc}"
+        if self.publisher is None or (only_changes and self._shown() == self._published):
+            return False
+        self._publish(now)
+        return True
+
+    # ------------------------------------------------------------ a stop between two rounds (stopafter.py)
+
+    def close_in_public(self, now: int) -> str:
+        """No round is open and ``run`` stops here: bring to the store all that the close of a round writes.
+
+        The record of the close and the round file are there: no round is open. This call makes sure of the rest:
+        the head pointer, the delete of what the last round left in ``pending/``, and the public files (in chain
+        mode the chain file is one of them). A ``run`` that closed the round itself and got no error has done all
+        of it, so this call writes nothing. With ``overlap`` the delete and the public files wait for the next
+        open: there is none now, so they are done here. A ``run`` that started after another one died in a close
+        has written nothing of it. Returns what is not done yet, or an empty text.
+        """
+        if self.state.round is not None:
+            raise V2Error(f"round {self.state.round.round_id} is open; its close is not complete")
+        before, self.last_error = self.last_error, ""
+        try:
+            self._sync_pointer()
+            if self.overlap is not None:
+                self._kept_done(self.overlap.flush(now))
+            if self.state.rounds:
+                delete_pending(self.store, layout.pending_round_prefix(self.state.rounds[-1].round_id))
+            if self._published_at != len(self.journal.records) or self._shown() != self._published:
+                self._publish(now)  # the public files do not show the journal as it is now
+        except InfraError as exc:
+            self.last_error = f"the store did not answer: {exc}"
+        problem, self.last_error = self.last_error, self.last_error or before
+        return problem
+
+    def local_head_proven(self) -> None:
+        """``overlap``: wait for the second sha256 of the local head, and raise ``HeadLost`` when it failed. ``serial``: nothing, the fold made it in its line."""
+        self._proven(wait=True)
+
+    # ------------------------------------------------------------ the loop
+
+    def tick(self, now: int) -> None:
+        """Move every unfinished step forward. Safe to call at any time, and first thing after a restart."""
+        if not self.state.heads:
+            return
+        self._sync_pointer()
+        record = self.state.round
+        if record is not None and record.decision is None:
+            for lease in record.leases:
+                has_result = self.store.exists(layout.sealed_result(record.round_id, lease.lease_id))
+                if lease.status == "open" and now >= lease.expires_at and not has_result:
+                    self._log(LEASE_FAILED, {"round_id": record.round_id, "lease_id": lease.lease_id, "reason": "the lease expired"}, now)
+            self._settle(now)
+        elif record is not None:
+            waiting_to_retry = record.apply_attempts and now < self.state.last_failure_at + self.params.apply_retry_s
+            if not waiting_to_retry:
+                self._finish(now)
+        else:
+            self.fold_if_due(now)
+
+    def run_round(self, runner: RoundRunner, clock: Callable[[], int], entropy: str | Callable[[], str], hold: Callable[[], bool] | None = None) -> RoundRecord | None:
+        """One round on one box, start to end. Returns the closed round, or None when no round could start.
+
+        ``hold`` is asked before a round is opened, and never for a round that is open. True: no round is opened,
+        and the call returns None (``stopafter.py``). What was not finished before this call is finished first.
+
+        ``overlap`` (``afterking.py``): the kept steps run in a second thread while the box trains, and this
+        thread waits for them before its next record. No box result is stored before the local head is proven:
+        a head that did not read back fails the lease, and the next call raises ``HeadLost``, which stops ``run``.
+        """
+        overlap = self.overlap
+        self._proven(wait=False)
+        started = clock()
+        self.tick(started)  # a stored result is judged first, whatever this box is: judging reads the pins of the round's ticket
+        if self.state.round is None:
+            if hold is not None and hold():
+                return None
+            self._check_pins("no round was opened")
+            started = clock()
+            tickets = self.open_round(started, entropy, clock=clock)
+        else:
+            tickets = self.tickets()
+            if tickets:
+                self._check_pins("the open round was not run", "end-round (the round pins the old digests), ")
+        if overlap is not None and not tickets:
+            self._kept_done(overlap.flush(started))
+        for ticket in tickets:
+            try:
+                if overlap is not None:
+                    overlap.release(ticket.issued_at)  # the time of the open: the public files of the round carry it, as with ``serial``
+                try:
+                    result = runner.run(ticket)
+                finally:
+                    if overlap is not None:
+                        self._kept_done(overlap.settle())
+                failed = [entry.reason for entry in result.entries if entry.status == ENTRY_NO_DECISION]
+                if failed and not any(entry.status in (SCORED, NOT_SCORED) for entry in result.entries):
+                    # Not one batch trained, so the fault is taken as the box's, not a seat's: the lease fails, and no failure is counted for a seat.
+                    raise InfraError(f"no training finished in this round: {len(failed)} of {len(result.entries)} batches failed. The first: {failed[0]}")
+                self._proven(wait=True)  # ``HeadLost`` here fails the lease as a fault of the box does: the result is not stored, nobody is charged
+                self.submit_result(result, clock())
+            except Exception as exc:  # a box failure of any kind must not stop the controller
+                record = self.state.round
+                running = record is not None and record.decision is None and record.lease(ticket.lease_id).status == "open"
+                # With the result in the store the box did its work: what failed is the controller's own judging.
+                # The round stays open with its result, and the next start judges it.
+                if not running or self.store.exists(layout.sealed_result(record.round_id, ticket.lease_id)):
+                    raise
+                self.fail_lease(ticket.lease_id, f"{type(exc).__name__}: {exc}", clock())
+        self.tick(clock())
+        return self.state.rounds[-1] if tickets and self.state.round is None else None

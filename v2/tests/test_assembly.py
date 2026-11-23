@@ -12,6 +12,7 @@ pytest.importorskip("math_verify")
 pytest.importorskip("sn120_v2.gpu.trainer")
 
 from sn120_v2 import assembly, controller, headchain, headfold, layout, smoke  # noqa: E402
+from sn120_v2.gpu.batch import MANDATE  # noqa: E402
 from sn120_v2.admission import STREAMS_ENV, StoreAdmission  # noqa: E402
 from sn120_v2.afterking import ORDER_ENV  # noqa: E402
 from sn120_v2.canonical import manifest_digest, sha256_hex  # noqa: E402
@@ -41,8 +42,8 @@ class FakeTokenizer:
     def encode(self, text, add_special_tokens=False):
         return text.split()
 
-    def apply_chat_template(self, messages, tokenize=True, add_generation_prompt=True):
-        return messages[0]["content"].split()
+    def apply_chat_template(self, messages, tokenize=True, add_generation_prompt=True, **kwargs):
+        return " ".join(message["content"] for message in messages)
 
 
 @pytest.fixture
@@ -270,7 +271,7 @@ def test_the_checker_counts_tokens_with_the_verified_tokenizer_files_of_the_head
     with pytest.raises(ConfigError):
         tokens.output_tokens("a b c")  # no head in the store yet
     start(tmp_path, box)
-    assert tokens.output_tokens("a b c") == 3 and tokens.prompt_tokens("one two") == 2
+    assert tokens.output_tokens("a b c") == 3 and tokens.prompt_tokens("one two") == len(MANDATE.split()) + 2
     directory = tmp_path / "tokenizer" / load(tmp_path / "state" / JOURNAL_FILE).head.base_hash
     assert box.loaded == [str(directory)] and sorted(path.name for path in directory.iterdir()) == ["config.json", "tokenizer.json"], "no weight file is fetched"
     key = layout.public_base_file(directory.name, "tokenizer.json")
@@ -311,21 +312,24 @@ def test_the_round_seed_uses_the_block_hash_of_the_last_chain_read():
 def test_the_smoke_copy_with_the_real_parts_writes_a_small_valid_file_and_needs_no_head_pointer(tmp_path, box, monkeypatch, capsys):
     common = start(tmp_path, box)
     think = "step " * 40
-    rows = lambda words: [{"output": f"{think}{'more ' * words}\\boxed{{2}}", "reward": 1}, {"output": f"{think}\\boxed{{3}}", "reward": 0}]
-    groups = [{"prompt": f"what is 1 + {n}", "rollouts": rows(words)} for n, words in enumerate((500, 0, 3))]
+    rows = lambda words, n: [{"output": f"{think}{'more ' * words}\\boxed{{{2 * n}}}", "reward": 1}, {"output": f"{think}\\boxed{{{2 * n + 1}}}", "reward": 0}]
+    groups = [{"prompt": f"what is 1 + {n}", "rollouts": rows(words, n)} for n, words in enumerate([500, *([0] * 31), *([3] * 32)], start=1)]
+    # Supply a small, deterministic local grader: this test exercises the real assembly/copy path without a math-pool process.
+    monkeypatch.setattr(assembly, "pool_grader", lambda pool, grades, chunk=32:
+                        lambda prompt, output, capped: float(output.rsplit("boxed{", 1)[-1].split("}", 1)[0] == str(2 * int(prompt.rsplit(" ", 1)[-1]))))
     v1 = LocalStore(tmp_path / "v1")
     v1.put(layout.miner_object("hk1"), json.dumps({"version": "affine-batch-v3", "hotkey": "hk1", "train": {"steps": 2}, "groups": groups}).encode())
     monkeypatch.setattr(smoke, "R2Store", lambda **settings: v1)
     for name in ("V1_R2_ENDPOINT", "V1_R2_BUCKET", "V1_R2_ACCESS_KEY_ID", "V1_R2_SECRET_ACCESS_KEY"):
         monkeypatch.setenv(name, "x")
     monkeypatch.setenv("SN120_R2_PREFIX", "smoke-test")
-    (tmp_path / "small.json").write_text(json.dumps({"batch_cap": 1, "max_output_tokens": 100, "recipe": {"image_digests": [IMAGE]}}))
+    (tmp_path / "small.json").write_text(json.dumps({"batch_cap": 1, "max_output_tokens": 100, "min_pool_prompt_frac": 1.0, "recipe": {"image_digests": [IMAGE]}}))
     assert main(["set-params", *common, "--params", str(tmp_path / "small.json")]) == 0
     box.delete(layout.CURRENT)  # the checker takes the head from the journal, so the place of the pointer in the store does not matter
     capsys.readouterr()
     assert smoke.main(["copy", "--state-dir", str(tmp_path / "state")]) == 0
     out = capsys.readouterr()
-    assert out.out.startswith("copied hk1 2 of 3 groups, 4 rollouts, longest 44 tokens") and "1 of 1 files copied" in out.err
-    assert json.loads(box.get(layout.miner_object("hk1")))["groups"] == [groups[1], groups[2]], "whole groups, unchanged; the long group is left out"
+    assert out.out.startswith("copied hk1 32 of 64 groups, 64 rollouts, longest 44 tokens") and "1 of 1 files copied" in out.err
+    assert json.loads(box.get(layout.miner_object("hk1")))["groups"] == groups[1:33], "whole groups, unchanged; stop once the 64-active floor is met"
     assert main(["status", *common]) == 0
     assert json.loads(capsys.readouterr().out)["queued_files"] == {"valid": 1, "no file": 1}

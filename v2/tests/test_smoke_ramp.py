@@ -16,7 +16,7 @@ from sn120_v2.canonical import manifest_digest, sha256_hex
 from sn120_v2.cli import main
 from sn120_v2.irt import IRTSampler
 from sn120_v2.journal import JOURNAL_FILE
-from sn120_v2.params import GenesisSpec, Params, load_params
+from sn120_v2.params import GenesisSpec, Params, Recipe, load_params
 from sn120_v2.sim import SIM_IMAGE, STORE_DIR, SimAdmission
 from sn120_v2.state import load
 from sn120_v2.store import LocalStore
@@ -182,6 +182,34 @@ def test_a_small_copy_is_refused_when_its_short_groups_fail_a_share_rule(stores)
     src.put(layout.miner_object("hkG"), miner_file("hkG", [group(21, words=100), answer_only]))
     copied, passed = smoke.copy_files(src, dst, ["hkG"], 1, smoke.admission_cut(admission, groups=2))
     assert copied == [] and passed == ["passed over hkG: a copy of its short groups fails the check: answer_only"] and dst.list("") == []
+
+
+def test_a_small_copy_keeps_an_earlier_valid_prefix_after_a_later_rejection():
+    raw = miner_file("hk", [group(1), group(2), group(3)])
+    # With the floor below the first two-rollout group, the first prefix is fully valid.
+    # The third group introduces an unrelated admission error; it must not discard that prefix.
+    def check(data):
+        count = len(json.loads(data)["groups"])
+        return "min_rollouts" if count == 1 else "" if count == 2 else "answer_only"
+
+    data, note = smoke.cut_batch(raw, 3, 60, lambda text: len(text.split()), check)
+    assert data is not None and len(json.loads(data)["groups"]) == 2
+    assert "2 of 3 groups" in note
+
+
+def test_a_small_copy_never_returns_a_below_floor_provisional_prefix():
+    raw = miner_file("hk", [group(1), group(2)])
+    data, note = smoke.cut_batch(raw, 2, 60, lambda text: len(text.split()),
+                                 lambda data: "min_rollouts" if len(json.loads(data)["groups"]) == 1 else "answer_only")
+    assert data is None and "answer_only" in note
+
+
+def test_default_smoke_group_budget_uses_the_effective_minibatch_floor():
+    params = Params(min_signal_rollouts=64, recipe=Recipe(minibatches=129))
+    floor = max(params.min_signal_rollouts, params.recipe.minibatches)
+    assert (floor + 1) // 2 == 65, "two active rollouts per default-recipe prompt need 65 prompts"
+    assert smoke.cut_batch(miner_file("hk", [group(1)]), 1, 60,
+                           lambda text: len(text.split()), lambda data: "min_rollouts")[0] is None
 
 
 def test_a_tokenizer_that_fails_on_every_group_is_named_and_not_blamed_on_the_reply_cap(stores, monkeypatch, capsys):

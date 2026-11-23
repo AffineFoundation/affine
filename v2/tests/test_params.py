@@ -31,16 +31,55 @@ def test_defaults_match_the_spec_parameter_table():
 def test_serving_defaults_preserve_old_json_params_and_ticket_digests():
     params = Params()
     assert params.kv_cache_dtype == "auto" and params.max_num_seqs == 256
-    assert params.params_hash == "10a121ec5a4ba830057e5510665fee1be7aad34dae259d3427e4547c393c2cf1"
+    assert params.params_hash == "7eb09fa89387d1d2c5db2d8d0ffd627ad87ece8ef31bdfe93f3374f0c7bb1e50"
     assert "kv_cache_dtype" not in params.to_dict() and "max_num_seqs" not in params.to_dict()
+    assert params.null_samples_per_task is None and params.null_samples == params.samples_per_task
+    assert "null_samples_per_task" not in params.to_dict()
+    two = dataclasses.replace(params, null_samples_per_task=2)
+    assert two.to_dict()["null_samples_per_task"] == 2 and Params.from_dict(two.to_dict()).null_samples == 2
+    assert two.params_hash != params.params_hash
     raw = json.dumps(params.to_dict(), sort_keys=True)
     assert Params.from_dict(json.loads(raw)).params_hash == params.params_hash
-    assert dataclasses.replace(params, kv_cache_dtype="fp8", max_num_seqs=512).params_hash == "cf2da207288c978d9452fc5594d156efef6ab46f283cf45018c032073bbf81b1"
+    assert dataclasses.replace(params, kv_cache_dtype="fp8", max_num_seqs=512).params_hash == "5e2169191be5163443b2fb30821234b7a2be058b08589d1eeb95a1488a309571"
     ticket = Build.ticket(params=params)
     assert ticket.digest() == ticket.digest()
     from sn120_v2.types import RoundTicket
     restored = RoundTicket.from_dict(ticket.to_dict())
     assert restored.digest() == ticket.digest() and restored.params == params
+
+    old = Params.from_dict({"n_tasks": 16, "min_scored_tasks": 8})
+    assert old.train_seed_scope == "batch" and old.dedup_enabled is False
+    ticket = Build.ticket(params=old)
+    restored = RoundTicket.from_dict(ticket.to_dict())
+    # Nested Params are legacy records too: a reopened old ticket trains and verifies with its original seed scope.
+    assert restored.params.to_dict() == old.to_dict() and restored.digest() == ticket.digest()
+    assert restored.params.train_seed_scope == "batch" and restored.params.dedup_enabled is False
+    assert "train_seed_scope" not in restored.to_dict()["params"]
+
+
+def test_new_empty_round_fields_keep_the_historical_canonical_form():
+    from sn120_v2.state import RoundRecord
+    from sn120_v2.types import RoundDecision
+
+    decision = RoundDecision("r000001", "head", None, (), 0, 0.0, 0.0)
+    data = decision.to_dict()
+    assert "duplicate_clusters" not in data
+    assert RoundDecision.from_dict(data).to_dict() == data
+    record = RoundRecord("r000001", "head", "params", "recipe", "seed", "snapshot", 1, 1, ())
+    data = record.to_dict()
+    assert "first_seen" not in data and "duplicate_decisions" not in data and "duplicate_clusters" not in data
+    assert RoundRecord.from_dict(data).to_dict() == data
+
+
+def test_nested_reserve_and_existing_factory_defaults_keep_their_identity():
+    from sn120_v2.rotation import Reserve, ReserveShard, Rotation
+
+    reserve = Reserve("a" * 64, ("task",), (ReserveShard("s", "b" * 64, 1, "2026-11-20"),))
+    assert Reserve.from_dict(reserve.to_dict()) == reserve
+    empty = Reserve("a" * 64)
+    assert empty.to_dict()["candidate_meta"] == {}
+    for record in (empty,):
+        assert type(record).from_dict(record.to_dict()).digest() == record.digest()
 
 
 def test_changed_params_shows_left_out_at_default_fields_in_both_directions():
@@ -50,12 +89,12 @@ def test_changed_params_shows_left_out_at_default_fields_in_both_directions():
     off = Params.from_json((Path(__file__).parent / "data" / "params_prod_shaped.json").read_bytes())
     on = dataclasses.replace(off, rotation_enabled=True)
     assert off.params_hash == "5359a448461c3f3a3e09bd9a2d8df9f387d916fb02b8d02eecea3582649c74a1"
-    assert Params().params_hash == "10a121ec5a4ba830057e5510665fee1be7aad34dae259d3427e4547c393c2cf1"
+    assert Params().params_hash == "7eb09fa89387d1d2c5db2d8d0ffd627ad87ece8ef31bdfe93f3374f0c7bb1e50"
     assert changed_params(on, off) == {"rotation_enabled": {"before": True, "after": False}}
     assert changed_params(off, on) == {"rotation_enabled": {"before": False, "after": True}}
 
     default = Params()
-    changes = {"irt_draw_rule": "band", "kv_cache_dtype": "fp8", "max_num_seqs": 512,
+    changes = {"irt_draw_rule": "band", "kv_cache_dtype": "fp8", "max_num_seqs": 512, "null_samples_per_task": 2,
                "rotation_k": 31, "rotation_retire_p": 0.9, "rotation_n_min": 2,
                "rotation_retire_low_p": 0.1, "rotation_n_min_low": 7, "rotation_active_size": 20000}
     for name, value in changes.items():
@@ -115,6 +154,7 @@ def test_look_sizes_end_with_every_task():
         {"looks": (0.5, 0.25, 1.0)}, {"z_bar": float("nan")}, {"cap_hit_floor": 1.5}, {"min_cover": 0.0}, {"min_scored_tasks": 1},
         {"drop_alpha": 0.0}, {"fold_every_k": 0}, {"max_output_tokens": 70000}, {"max_num_seqs": 0}, {"lease_timeout_s": 0}, {"kings_window": 0},
         {"irt_draw_rule": "middle"}, {"irt_draw_rule": ""}, {"irt_draw_rule": "Fisher"}, {"irt_draw_rule": None},
+        {"null_samples_per_task": 0}, {"null_samples_per_task": -1}, {"null_samples_per_task": 1.5}, {"null_samples_per_task": True},
     ],
 )
 def test_an_invalid_setting_fails_closed(change):
@@ -176,6 +216,45 @@ def test_a_rejection_never_repeats_the_miners_own_key_text_and_bounds_must_name_
     for change in ({"steps": 0}, {"rank": 0}, {"lora_lr": 0.0}, {"adam_eps": 0.0}, {"target_modules": ()}):
         with pytest.raises(ConfigError):
             Recipe(**change)
+
+
+def test_kingx2_and_dedup_params_keep_their_combined_and_legacy_identities():
+    base = Params()
+    assert "null_samples_per_task" not in base.to_dict()
+    assert base.params_hash == "7eb09fa89387d1d2c5db2d8d0ffd627ad87ece8ef31bdfe93f3374f0c7bb1e50"
+    both = dataclasses.replace(base, null_samples_per_task=2, irt_draw_rule="sqrt_fisher")
+    assert both.null_samples == 2 and both.dedup_enabled and both.train_seed_scope == "round"
+    restored = Params.from_dict(both.to_dict())
+    assert restored.to_dict() == both.to_dict() and restored.params_hash == both.params_hash
+    assert restored._legacy_fields is None
+
+    old_data = {name: value for name, value in both.to_dict().items() if name not in Params.LEGACY_FIELDS}
+    old = Params.from_dict(old_data)
+    assert (old.null_samples_per_task, old.irt_draw_rule, old.null_samples) == (2, "sqrt_fisher", 2)
+    assert (old.train_seed_scope, old.dedup_enabled, old.min_signal_rollouts, old.min_step_norm) == ("batch", False, 1, 0.0)
+    assert old._legacy_fields == frozenset(Params.LEGACY_FIELDS)
+    assert old.to_dict() == old_data and Params.from_dict(old.to_dict()).params_hash == old.params_hash
+
+    # Enabling the dedup rules on a king-x2 historical record writes only the
+    # explicitly selected legacy field; the king samples and sampler remain.
+    changed = dataclasses.replace(old, dedup_enabled=True)
+    assert changed.to_dict()["dedup_enabled"] is True and "train_seed_scope" not in changed.to_dict()
+    assert changed.null_samples == 2 and changed.irt_draw_rule == "sqrt_fisher"
+    assert Params.from_dict(changed.to_dict()).to_dict() == changed.to_dict()
+
+
+def test_legacy_params_replacement_is_explicit_and_never_keeps_stale_omissions():
+    from pathlib import Path
+    old = Params.from_json((Path(__file__).parent / "data" / "params_prod_shaped.json").read_bytes())
+    unchanged = dataclasses.replace(old, n_tasks=old.n_tasks)
+    assert unchanged.to_dict() == old.to_dict() and unchanged.params_hash == old.params_hash
+    changed = dataclasses.replace(old, dedup_enabled=True)
+    assert changed.train_seed_scope == "batch"
+    # An old round keeps batch-scoped seeds, but an explicitly changed behavior is written and changes the hash.
+    assert "train_seed_scope" not in changed.to_dict()
+    assert changed.to_dict()["dedup_enabled"] is True and changed.params_hash != old.params_hash
+    restored = Params.from_json(changed.to_json())
+    assert restored.params_hash == changed.params_hash and restored.to_dict() == changed.to_dict()
 
 
 def test_load_params_applies_overrides_and_fails_closed(tmp_path):

@@ -306,6 +306,7 @@ def rotate_info(
     retired_archive: Sequence[Mapping[str, Any]] = (),
     source_snapshot_id: str = "",
     prev_state_sha: str = "",
+    allow_unscored_previous: bool = False,
     initial_candidate_meta: Mapping[str, Mapping[str, Any]] | None = None,
     initial_retired_ledger: Mapping[str, Sequence[int]] | None = None,
 ) -> Rotation:
@@ -342,7 +343,7 @@ def rotate_info(
     known = set(archives) - withdrawn
     if set(reserve.queue) & (active_set | known):
         raise VerifyError("the ranked rule needs a reserve queue disjoint from active and retired tasks")
-    if set(irt_snapshot["tasks"]) != active_set:
+    if set(irt_snapshot["tasks"]) != active_set and not allow_unscored_previous:
         raise VerifyError("the ranked rule requires IRT rows exactly matching the previous active set")
 
     rows: dict[str, dict[str, Any]] = {}

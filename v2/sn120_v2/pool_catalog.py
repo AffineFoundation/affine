@@ -84,4 +84,11 @@ def public_rotation_inputs(contract: Any, work: Path, view: Mapping[str, Any]):
     source = rotation.get('source_snapshot_id')
     if source:
         _mirror(contract, layout.irt_snapshot(source), store)
+        if rotation.get('prev_state_sha'):
+            previous = json.loads(store.get(layout.pool_rotation_state(rotation['prev_state_sha'])))
+            snapshot = json.loads(store.get(layout.irt_snapshot(source)))
+            if set(snapshot['tasks']) != set(previous['active_ids']):
+                # The previous close proves uncovered rows were unscored; a
+                # normally scored rotation still refuses a source mismatch.
+                _mirror(contract, layout.round_file(previous['round_id']), store)
     return store, rotation

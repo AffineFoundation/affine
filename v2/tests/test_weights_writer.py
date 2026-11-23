@@ -18,7 +18,7 @@ from sn120_v2.params import Params
 from sn120_v2.sim import SimWorld, sim_params
 from sn120_v2.store import LocalStore
 from sn120_v2.types import King
-from sn120_v2.weights_writer import JOURNAL_FILE, STATE_FILE, View, load_kings, load_state, main, read_view, run_once, single_writer
+from sn120_v2.weights_writer import JOURNAL_FILE, STATE_FILE, View, dry_run, load_kings, load_state, main, read_view, run_once, single_writer
 
 VALIDATOR = "hk0"
 SIM_VALIDATOR = "5SimValidator"  # the validator hotkey in the genesis of the simulation
@@ -40,7 +40,8 @@ class Rig:
         self.chain = FakeChain({uid: f"hk{uid}" for uid in range(16)}, VALIDATOR)
         self.kings = [king(1, 0), king(2, 1)]
         self.pinned = None  # the parameters pinned in the journal
-        self.load_kings = lambda: View(tuple(self.kings), self.chain.validator_hotkey, self.pinned, "a test")
+        self.null_rounds: list[str] = []
+        self.load_kings = lambda: View(tuple(self.kings), self.chain.validator_hotkey, self.pinned, "a test", tuple(self.null_rounds))
         self.state_dir = state_dir
 
     def run(self, **options):
@@ -107,10 +108,12 @@ def test_fewer_kings_than_the_window_split_all_the_weight_and_uid_0_gets_none(ri
         lambda rig: rig.kings.clear(),  # the state loads empty: the kings vanished
         lambda rig: rig.kings.pop(),  # the state loads a shorter kings list
         lambda rig: rig.kings.__setitem__(1, king(2, 0)),  # the state loads an older kings list
+        lambda rig: rig.null_rounds.clear(),  # a shorter append-only judged-null list is a bad read too
         lambda rig: rig.chain.keys.update({1: "new-miner-a", 2: "new-miner-b"}),  # no king is registered: no burn
     ],
 )
 def test_an_outage_keeps_the_last_valid_weights_and_defers(rig, damage):
+    rig.null_rounds = ["r000001"]
     assert rig.run().status == "set"
     rig.chain.advance(HOUR_BLOCKS)
     damage(rig)
@@ -140,8 +143,29 @@ def test_the_writer_reads_the_kings_and_the_validator_hotkey_from_the_journal(jo
     assert [(king.uid, king.hotkey) for king in kings] == [(1, "hk1")] and validator_hotkey == SIM_VALIDATOR
     view = read_view(journal_rig.state_dir)
     assert view.kings == tuple(kings) and view.params == sim_params() and view.source == "the journal file"
+    assert view.null_rounds == ()
     assert journal_rig.run().status == "set" and journal_rig.chain.weights == {1: 1.0}
 
+
+def test_the_writer_applies_null_pruning_and_reports_the_paid_set(rig):
+    rig.kings = [king(uid, uid) for uid in range(1, 11)]
+    rig.null_rounds = ["r000011", "r000012"]
+    rig.pinned = replace(Params(), null_prune_from_round="r000011")
+    report = dry_run(rig.load_kings, rig.chain, Reader(rig.chain, 120), Params())
+    assert report["paid_kings"] == list(range(10, 2, -1)) and report["pruned_by_null"] == 2
+    assert set(report["weights"]) == set(range(3, 11))
+    rig.chain.keys[10] = "deregistered"
+    assert dry_run(rig.load_kings, rig.chain, Reader(rig.chain, 120), Params())["paid_kings"] == list(range(9, 2, -1))
+    rig.chain.keys[10] = "hk10"
+    assert rig.run().status == "set" and load_state(rig.state_dir)["last_valid"]["null_rounds"] == 2
+    rig.chain.advance(HOUR_BLOCKS)
+    rig.null_rounds.append("r000013")
+    assert rig.run().status == "set" and set(rig.chain.weights) == set(range(4, 11))
+    rig.chain.advance(HOUR_BLOCKS)
+    rig.null_rounds.pop()
+    receipt = rig.run()
+    assert receipt.status == "deferred" and "null-round list went backwards" in receipt.reason
+    assert set(rig.chain.weights) == set(range(4, 11))
 
 def test_the_payout_uses_the_parameters_pinned_in_the_journal_not_the_ones_of_the_command(rig):
     rig.pinned = replace(Params(), kings_window=1)
@@ -214,7 +238,7 @@ def test_the_dry_run_prints_the_table_and_writes_nothing(journal_rig, monkeypatc
     assert report == {
         "dry_run": True, "status": "would set", "block": chain.block, "kings": 1, "weights": {"1": 1.0},
         "validator_hotkey": SIM_VALIDATOR, "validator_registered": True, "kings_from": "the journal file",
-        "last_write_block": 0, "blocks_since_last_write": chain.block,
+        "last_write_block": 0, "blocks_since_last_write": chain.block, "paid_kings": [1], "pruned_by_null": 0,
     }  # fmt: skip
     chain.down = "connection refused"
     assert main(argv) == 0 and json.loads(capsys.readouterr().out)["status"] == "would defer"
@@ -293,7 +317,9 @@ def test_a_chain_that_does_not_answer_is_a_deferred_run_and_not_a_crash(journal_
 @pytest.fixture
 def host(tmp_path, monkeypatch):
     """A weights host with no journal of its own, and a box whose journal has a copy in the store. UID 1 is the king."""
-    world = SimWorld(tmp_path / "box", sim_params())
+    # Keep this simulation's legacy behavior and make its explicit parameter identity reproducible in an override.
+    params = Params.from_dict(sim_params().to_dict() | Params.LEGACY_VALUES)
+    world = SimWorld(tmp_path / "box", params)
     world.controller.journal.mirror = Mirror(world.store)
     with open(world.root / JOURNAL_FILE, "rb") as handle:
         Mirror(world.store).catch_up(handle, backfill=True)
@@ -363,7 +389,8 @@ def test_the_parameters_come_from_the_journal_and_the_params_flag_is_only_a_chec
     calls = []
     monkeypatch.setattr(SubtensorClient, "connect", lambda *settings: calls.append(settings) or host.chain)
     same, other = tmp_path / "same.json", tmp_path / "other.json"
-    same.write_bytes(sim_params().to_json())
+    # Explicit new overrides opt into the new production values; write the legacy values of this simulation.
+    same.write_text(json.dumps(host.world.params.to_dict()))
     other.write_bytes(replace(sim_params(), kings_window=3).to_json())
     assert sim_params() != Params()  # the journal pins other parameters than the defaults of the command
     assert main(host.argv + ["--dry-run", "--params", str(other)], lambda: host.world.store) == 2 and calls == []

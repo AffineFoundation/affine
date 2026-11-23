@@ -25,7 +25,8 @@ from sn120_v2.state import ROUND_OPENED
 from sn120_v2.store import LocalStore
 from sn120_v2.types import PASS, FAIL, CAP, ERROR
 
-DEFAULT_HASH = "10a121ec5a4ba830057e5510665fee1be7aad34dae259d3427e4547c393c2cf1"
+# Exact base 0edaebe6; null_prune_from_round is omitted while empty, so this does not change.
+DEFAULT_HASH = "7eb09fa89387d1d2c5db2d8d0ffd627ad87ece8ef31bdfe93f3374f0c7bb1e50"
 PROD_SHAPED_HASH = "5359a448461c3f3a3e09bd9a2d8df9f387d916fb02b8d02eecea3582649c74a1"
 PROD_ROTATION_HASH = "4f270223ac2da4c6bc6682fad00c18d22d32d6ebc223397ddfd8951ff190d3e7"
 

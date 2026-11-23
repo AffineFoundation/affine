@@ -24,7 +24,7 @@
 <div><dt>Round</dt><dd data-f="id">—</dd></div>
 <div><dt title="IDLE: no round. RUNNING: boxes train and score. APPLY: decided; the head and the files are being published.">State</dt><dd data-f="state">—</dd></div>
 <div><dt title="Batches in this round, out of the most that one round takes">Seats filled</dt><dd data-f="seats">—</dd></div>
-<div><dt title="Public tasks in this round's draw, one sample per task">Tasks</dt><dd data-f="tasks">—</dd></div>
+<div><dt title="Public tasks in this round's draw; sampling counts are in llms.txt">Tasks</dt><dd data-f="tasks">—</dd></div>
 <div><dt title="The head M that every batch in this round is trained on and scored against">Head</dt><dd data-f="head">—</dd></div>
 <div><dt title="A LoRA wins only when z = gain / standard error is above this bar">Winner bar</dt><dd data-f="bar">—</dd></div>
 <div><dt title="Most tokens one answer may use, for scoring">Output cap, tokens</dt><dd data-f="cap">—</dd></div>
@@ -50,7 +50,7 @@
 <section id="kings" aria-labelledby="kings-t"><div class="section-heading"><h2 id="kings-t">Kings</h2><span class="reading">—</span></div><div class="scroll wait"><table><tbody></tbody></table></div><p class="note">A king is a round winner that was applied to the head. The table holds the newest win of each of the last distinct winner UIDs. Each one is paid an equal share while its hotkey is still registered on that UID. Only a winner's batch and LoRA are public.</p></section>
 <section id="queue" aria-labelledby="queue-t"><div class="section-heading"><h2 id="queue-t">Queue</h2><span class="reading">—</span></div><div class="scroll wait"><table><tbody></tbody></table></div><p class="note">Seats in the round that runs now come first, then the waiting line in its order. A seat with no valid file is skipped, is not charged, and keeps its place. Queued files stay private.</p></section>
 <section id="history" aria-labelledby="history-t"><div class="section-heading"><h2 id="history-t">History</h2><span class="reading">—</span><input id="filter" type="search" placeholder="Filter by hotkey or UID" aria-label="Filter results by hotkey or UID"></div><div class="scroll wait"><table><tbody></tbody></table></div><p class="note">One row per batch per round, newest first. A batch that did not win stays private: only its hash and its scores are shown.</p></section>
-<section id="rounds" aria-labelledby="rounds-t"><div class="section-heading"><h2 id="rounds-t">Rounds</h2><span class="reading">—</span></div><div class="scroll short wait"><table><tbody></tbody></table></div><p class="note">Scores per environment. "M pass" is the pass rate of the head M with no adapter, on the same tasks and seeds as every LoRA of that round.</p></section>
+<section id="rounds" aria-labelledby="rounds-t"><div class="section-heading"><h2 id="rounds-t">Rounds</h2><span class="reading">—</span></div><div class="scroll short wait"><table><tbody></tbody></table></div><p class="note">Scores per environment. "M pass" is the mean king pass rate on the same tasks; sample 0 shares each LoRA's seed, with sampling counts in llms.txt.</p></section>
 <section id="heads" aria-labelledby="heads-t"><div class="section-heading"><h2 id="heads-t">Heads</h2><span class="reading">—</span></div><div class="scroll short wait"><table><tbody></tbody></table></div><p class="note">The head is a base checkpoint plus an ordered list of applied LoRAs. A fold merges the LoRAs into a new base.</p></section>
 </main>
 <footer><span>Affine · Subnet 120</span><span id="status" role="status">Connecting</span></footer>

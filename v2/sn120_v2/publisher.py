@@ -35,11 +35,11 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
-from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
+from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, MIN_ROLLOUTS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
 from .canonical import digest, sha256_hex, to_jsonable
-from .envs.math_pool import ENV_ID, MANDATE, POOL_FILE, POOL_SHA256, POOL_V2_0_SHA256, Task, load_pool
+from .envs.math_pool import ENV_ID, POOL_FILE, POOL_SHA256, POOL_V2_0_SHA256, Task, load_pool
 from .errors import ConfigError, ContractError, InfraError, V2Error
-from .gpu.batch import END_OF_TURN
+from .gpu.batch import END_OF_TURN, MANDATE
 from .gpu.evaluator import ServeSettings, chat_body, server_argv
 from .gpu.trainer import LORA_FILES
 from .headchain import FIXED_ORDER, MATMUL
@@ -47,6 +47,13 @@ from .irt import DRAW_RULE, MODEL, MASS_RULES, TASK_COLUMNS, draw_from_snapshot
 from .journal import JOURNAL_FILE
 from .judging import TIE_TOLERANCE, drop_margin
 from .links import upload_entry
+from .dedup import (
+    STAGE_EXACT,
+    STAGE_KING_EXACT,
+    STAGE_KING_ROLLOUT,
+    STAGE_LORA,
+    STAGE_ROLLOUT,
+)
 from .params import (
     GENESIS_BASE_HASH,
     GENESIS_MODEL_REPO,
@@ -62,7 +69,7 @@ from .queue import SECONDS_PER_DAY
 from .sampling import SEED_BITS
 from .seams import ObjectStore
 from .state import ABANDONED, load
-from .types import CAP, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, PASS, SKIP, HeadManifest, HeadVersion
+from .types import CAP, DUPLICATE, ERROR, FAIL, NO_DECISION, NOT_RUN, NOT_SCORED, NOT_TRAINED, NULL_MODEL, NULL_UPDATE, PASS, SKIP, HeadManifest, HeadVersion
 from .worker import AT_THE_LEASE_S, LocalRunner
 
 REPO = "https://github.com/AffineFoundation/affine"
@@ -86,6 +93,12 @@ LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt
 # and the publisher runs with the standard library alone. Each is typed here; a test compares it with its source.
 OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps from recipe (default 1e-8), weight decay 0"  # gpu/train_job.py
 GRADER_VERSION = "math-verify-0.9.0+lenient-v1"  # envs/math_grader.py
+RETIRED_KING_Z_BAR = 1.5
+MERGED_EXPLANATION = (
+    "Each candidate is tested as the merged model round_bf16(fp32 king master + your LoRA update), "
+    "built with the same arithmetic as the install fold; the model that is tested is bit-for-bit the model that is installed. "
+    "Before this change the LoRA was applied at serving time on top of the rounded bf16 king, which rounded most of a small update away."
+)
 # How often the box tries a training or a chunk of the scoring that fails for a reason of its own.
 # The fixed cost of one update of a training (the Adam step, the sum of the gradients of the model copies, the copy of
 # the weights back to them), in seconds. An estimate for a LoRA of rank 64. No run has measured it.
@@ -106,6 +119,14 @@ ROUND_FIELDS = ("round_id", "head_version_id", "params_hash", "recipe_id", "roun
 ROUND_FIELDS += ("outcome", "seats", "skipped", "winner_uid", "reason", "null_pass_rate", "null_cap_rate")
 QUEUE_COLUMNS = ("position", "uid", "hotkey", "registration_block", "file_valid", "front", "demoted", "held")
 KING_COLUMNS = ("uid", "hotkey", "round_id", "head_version_id", "applied_at", "z")
+DUPLICATE_MEMBER_COLUMNS = ("queue_pos", "uid", "hotkey", "batch_sha256", "stage", "similarity", "first_seen_unix")
+DUPLICATE_STAGES = {
+    STAGE_EXACT: "same batch sha256 as the keeper in this round",
+    STAGE_ROLLOUT: "normalized rollout overlap with a keeper in this round",
+    STAGE_KING_EXACT: "same batch sha256 as a past king in the payout window",
+    STAGE_KING_ROLLOUT: "normalized rollout overlap with a past king in the payout window",
+    STAGE_LORA: "LoRA update cosine with a keeper in this round",
+}
 PARAMS_HEADING = "Every parameter"  # the section whose table states each parameter; ``stated_params`` reads it back
 
 RECIPE_NOTES = {
@@ -233,7 +254,7 @@ def object_keys() -> dict[str, str]:
 def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, Any]:
     """The fixed rules in machine-readable form. Everything is derived from ``params`` and the two public addresses."""
     recipe = params.recipe
-    return {
+    doc = {
         "params_hash": params.params_hash,
         "recipe_id": params.recipe_id,
         "miner_settable": miner_settable(recipe),
@@ -243,6 +264,32 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "forbidden_text": list(CONTROL_TOKENS),
             "private_object": layout.miner_object("HOTKEY"),
             "upload_headers": UPLOAD_HEADERS,
+        },
+        "duplicate_policy": {
+            "enabled": params.dedup_enabled,
+            "stage_a": {
+                "exact_batch_sha256": True,
+                "rollout_overlap_min": params.dedup_rollout_overlap,
+                "comparison": "intersection / min(size of each distinct normalized (prompt, output) set)",
+                "normalize": "strip and collapse whitespace; ignore rewards",
+                "past_kings": "current payout window",
+            },
+            "stage_b": {
+                "metric": "cosine of scaled LoRA delta-W, computed from A and B without materializing delta-W",
+                "shared_verified_train_seed_min": params.dedup_cos_shared_seed,
+                "own_or_mixed_train_seed_min": params.dedup_cos_own_seed,
+            },
+            "priority": ["first_seen_unix", "queue_pos"],
+            "dropped_status": DUPLICATE,
+            "null_update_status": NULL_UPDATE,
+            "min_signal_rollouts": "min_signal_rollouts; no implicit effective recipe.minibatches floor",
+            "min_step_norm": params.min_step_norm,
+            "min_step_norm_rule": (
+                "static global_norm_cap and stored step_norm must be at least min_step_norm"
+                if params.min_step_norm > 0 else "no minimum norm; only a non-finite stored step_norm is null_update"
+            ),
+            "public_cluster_member_fields": list(DUPLICATE_MEMBER_COLUMNS),
+            "stages": DUPLICATE_STAGES,
         },
         "outcome_codes": {"pass": PASS, "fail": FAIL, "token_cap": CAP, "infra_error": ERROR, "not_run": NOT_RUN},
         "null_model": NULL_MODEL,
@@ -255,6 +302,15 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
         "code": REPO + "/tree/v2/v2",
         **({"pool_rotation_doc": REPO + "/blob/v2/v2/POOL_ROTATION.md"} if params.rotation_enabled else {}),
     }
+    if params.eval_merged:
+        doc["candidate_evaluation"] = {
+            "merged": True,
+            "model": "round_bf16(fp32 king master + your LoRA update)",
+            "tested_equals_installed": True,
+            "arithmetic": "the install fold kernel named in the head chain; the final base manifest hash is checked before install",
+            "explanation": MERGED_EXPLANATION,
+        }
+    return doc
 
 
 def refuse_private(value: Any, where: str = "snapshot") -> None:
@@ -294,6 +350,14 @@ def _recipe_lines(params: Params) -> list[str]:
         if cap_bound is not None
         else "A file may not set a cap of its own now."
     )
+    if cap_bound is not None:
+        if params.min_step_norm > 0:
+            cap_yours += (
+                f" Values below {show(params.min_step_norm)} are invalid (`{NULL_UPDATE}`, section 5) even when the generic lower"
+                " bound is smaller."
+            )
+        else:
+            cap_yours += " There is no minimum norm, so every valid nonnegative cap passes this static floor check."
     fields = [f.name for f in dataclasses.fields(recipe) if f.name != "miner_bounds"]
     rows = [(f"`{name}`", getattr(recipe, name), RECIPE_NOTES.get(name, "see the training code")) for name in fields]
     settable = [(f"`train.{row['key']}`", row["default"], row["allowed"]) for row in miner_settable(recipe)]
@@ -330,7 +394,9 @@ def _recipe_lines(params: Params) -> list[str]:
         "",
         f"- Training code: `sn120_v2/gpu/` in {REPO}/tree/v2/v2 (sha256 `{show(recipe.code_digest)}`).",
         *pinned,
-        "- Each prompt is one user message, rendered with the chat template of the head and the generation prompt.",
+        "- Every prompt is a system message containing the instruction of section 6, then a user message. For a batch",
+        "  row the user text is `prompt` with a leading instruction + blank line removed. The trainer applies the chat",
+        "  template of the head with `add_generation_prompt=True` and `enable_thinking=True`.",
         "",
         "### What you may set",
         "",
@@ -385,6 +451,12 @@ def _training_lines(params: Params) -> list[str]:
     ``gpu/batch.py`` (rows, advantages, token caps). When one of them changes, change this function.
     """
     recipe = params.recipe
+    seed_input = "<round_seed>|train" if params.train_seed_scope == "round" else "<round_seed>|train|<batch_sha256>"
+    seed_repeat = (
+        "every LoRA in the round starts from the same A. The shuffle stream has the same seed, but different rows give different minibatch orders"
+        if params.train_seed_scope == "round"
+        else "the same file with the same round seed gets the same A and the same minibatch orders"
+    )
     return [
         "### The training procedure",
         "",
@@ -398,8 +470,9 @@ def _training_lines(params: Params) -> list[str]:
         "  and scores only a head with no stacked LoRA: it refuses a head whose LoRAs are not folded.",
         "- Recipe: the values of the table above, with your `train` values in their place. The trainer runs only the",
         "  method `grpo-lora`, with no dropout and with the KL term off.",
-        f'- Seed: the first {SEED_BITS} bits of sha256("<round_seed>|train|<batch_sha256>"), as a whole number. The train',
-        "  report states it.",
+        f'- Seed (`train_seed_scope` is `{params.train_seed_scope}`): the first {SEED_BITS} bits of sha256("{seed_input}"), as a whole number.',
+        "  The train report states it. With `round` scope every batch in the round shares one training seed; legacy `batch` scope adds",
+        "  `|<batch_sha256>` after `|train`, so different files have different training seeds.",
         f"- LoRA layers: each linear layer whose name is one of `target_modules` ({show(recipe.target_modules)}) gets two",
         "  matrices: A (rank x inputs) and B (outputs x rank). The layer then gives layer(x) + (alpha / rank) * B(A(x)),",
         f"  with rank {recipe.rank} and alpha {show(recipe.alpha)}. A starts with values drawn uniformly from -1/sqrt(inputs) to",
@@ -409,10 +482,10 @@ def _training_lines(params: Params) -> list[str]:
         "- Rows: one row for each rollout of the groups that the file check keeps (section 5), in file order. The",
         "  advantage of a row is its reward minus the mean reward of its group (`group_size`, above). The trainer does",
         "  nothing else to it: no division by a standard deviation and no clip.",
-        '- Tokens of a row. Prompt: `tokenizer.apply_chat_template([{"role": "user", "content": prompt}],',
-        "  add_generation_prompt=True, tokenize=False)`, then `tokenizer.encode(text, add_special_tokens=False)`. The",
-        "  template gets no other argument. Output: `tokenizer.encode(output, add_special_tokens=False)`. The tokenizer",
-        "  is the one of the base files.",
+        "- Tokens of a row. Prompt: messages = system instruction (section 6), user = `prompt` with a leading",
+        "  instruction + blank line removed. Apply the head's chat template with `add_generation_prompt=True`,",
+        "  `tokenize=False` and `enable_thinking=True`, then `tokenizer.encode(text, add_special_tokens=False)`.",
+        "  Output: `tokenizer.encode(output, add_special_tokens=False)`. The tokenizer is the one of the base files.",
         "- Room: room = min(`train_max_output_tokens`, `train_max_context_tokens` - prompt tokens). An output shorter",
         f"  than the room gets the end-of-turn token `{END_OF_TURN}` after its last token. An output as long as the room or",
         "  longer is cut to the room and gets no end token: the trainer takes it as a rollout that did not end (a capped",
@@ -459,8 +532,8 @@ def _training_lines(params: Params) -> list[str]:
         "  Python for the whole training, with the seed above. Each pass takes the rows that train, the longest row",
         "  first and rows of the same length in file order, and calls `shuffle` on a copy of that list. Row k of the",
         "  shuffled list (k from 0) goes to minibatch k modulo N. The minibatches train in the order 0 to N - 1. So each",
-        "  pass has another order, and the same file with the same round seed gets the same orders again. The",
-        "  optimizer is made one time for your file: its state goes from each update to the next, through all passes.",
+        f"  pass has another order, and {seed_repeat}. The optimizer is made one time for your file: its state goes from each",
+        "  update to the next, through all passes.",
         "  The LoRA of another file starts with a new optimizer.",
         "- GPUs: the job has the GPUs of its slot (section 3). It puts one copy of the model on each GPU, but not more",
         "  copies than rows that train. The rows that train go to the copies in turn, the longest row first. The",
@@ -478,9 +551,9 @@ def _training_lines(params: Params) -> list[str]:
         "  id of this file set (section 9).",
         f"- A failure of the box in a training (not of the batch) is tried again: at most {BOX_TRIES} tries in all, inside the",
         f"  training time. Then the entry is `{NO_DECISION}` (section 4).",
-        "- What a training of your own repeats: the seed gives the same A for the same file and round seed. The trained",
-        "  B can differ between two machines, and between two runs on one machine; no run has measured by how much.",
-        "  The tests of the code run this training on a CPU, on a very small model. The box runs it on GPUs.",
+        f"- What a training of your own repeats: with the same round seed, {seed_repeat}. The trained B can differ",
+        "  between two machines, and between two runs on one machine; no run has measured by how much. The tests of",
+        "  the code run this training on a CPU, on a very small model. The box runs it on GPUs.",
     ]
 
 
@@ -535,6 +608,99 @@ def _round_time_lines(params: Params) -> list[str]:
     ]
 
 
+def _cluster_lines(record: Any, label: str) -> list[str]:
+    clusters = record.get("duplicate_clusters") or [] if isinstance(record, Mapping) else []
+    if not clusters:
+        return []
+    lines = [f"{label} duplicate clusters (public evidence only; timestamps are UTC):", ""]
+    for cluster in clusters:
+        keeper, dropped = cluster["keeper"], cluster.get("dropped") or []
+        lines += [f"Keeper for {len(dropped)} dropped cop{'y' if len(dropped) == 1 else 'ies'}:", ""]
+        lines += rows_table([keeper, *dropped], DUPLICATE_MEMBER_COLUMNS)
+        lines += ["", "Dropped-copy links (a past-king keeper has the sentinel queue position documented in section 5):", ""]
+        lines += table(("dropped queue_pos", "keeper_queue_pos"), ((row["queue_pos"], row["keeper_queue_pos"]) for row in dropped))
+        lines.append("")
+    return lines
+
+
+def _duplicate_lines(params: Params) -> list[str]:
+    enabled = "on" if params.dedup_enabled else "off"
+    settable_keys = {row["key"] for row in miner_settable(params.recipe)}
+    signal_recipe = "`minibatches`" if "minibatches" in settable_keys else "minibatches"
+    static_cap = "`train.global_norm_cap`" if "global_norm_cap" in settable_keys else "global_norm_cap"
+    signal = [
+        f"- Minimum signal: after `{NO_SIGNAL}` rejects a file in which nothing trains, `{MIN_ROLLOUTS}` rejects a file with fewer",
+        f"  than {params.min_signal_rollouts} rollouts with a nonzero advantage and at least one usable output token inside the training caps.",
+        f"  The configured minimum signal is {params.min_signal_rollouts}; {signal_recipe} adds no admission floor. With fewer active rows than",
+        "  requested minibatches, training makes fewer nonempty minibatches rather than rejecting the file. Without tokenizer checks no rollout",
+        "  is known to be dropped by the training caps. This admission rejection is invalid and uncharged: the seat keeps its place, and no",
+        "  training GPU is used. Upload a new file with enough signal rather than equal-reward filler, whose zero-advantage rows do not count.",
+    ]
+    static_norm = [
+        f"- Static null-update admission: `{NULL_UPDATE}` rejects {static_cap} below {show(params.min_step_norm)} (`min_step_norm`)",
+        "  before any training GPU work. The file is invalid, uncharged and keeps its seat. A cap equal to the floor passes",
+        "  this static test, but does not guarantee that training reaches it.",
+    ] if params.min_step_norm > 0 else []
+    stored_norm = [
+        f"- Stored null update: after training, a stored `step_norm` below {show(params.min_step_norm)}, or one that is not finite, is terminal",
+        f"  `{NULL_UPDATE}`. It is charged, cannot win or be paid, and is not a candidate or keeper in Stage B. The floor applies to",
+        "  the stored norm after any global cap, not to the uncapped gradient or to `step_norm_before_cap`.",
+    ] if params.min_step_norm > 0 else [
+        f"- Stored null update: after training, a stored `step_norm` that is not finite is terminal `{NULL_UPDATE}`. It is charged,",
+        "  cannot win or be paid, and is not a candidate or keeper in Stage B. There is no minimum norm.",
+    ]
+    subfloor = [
+        "- Why a sub-floor update cannot beat M except by luck: the trainer's first-order step changes the head by at most",
+        "  its small stored norm. The scoring noise and a favorable task sample can then produce a positive result even",
+        "  when the update carries no reproducible improvement. Without the floor, many tiny steps could win by chance",
+        "  and turn the payout into a lottery. The floor makes a charged entry show a material model change; it is not a",
+        "  guarantee that a larger update improves M.",
+    ] if params.min_step_norm > 0 else []
+    return [
+        "### Duplicate and null batches",
+        "",
+        "This section covers both the file-check rules and the terminal outcomes `duplicate` and `null_update`. A",
+        "frozen file can also fail another admission rule first; the rule table above gives that order.",
+        "",
+        *signal,
+        *static_norm,
+        *stored_norm,
+        f"- Duplicate filtering is {enabled} (`dedup_enabled`). Stage A runs immediately after the files are frozen and before the",
+        "  entropy read, training tickets or GPU work. Exact equal `batch_sha256` is a duplicate even when rollout evidence",
+        "  is unavailable. Otherwise each rollout becomes a (prompt, output) pair: strip its ends, collapse each whitespace",
+        "  run to one space, and ignore rewards. Compare the distinct normalized sets by intersection size / the size of",
+        f"  the smaller set. Overlap >= {show(params.dedup_rollout_overlap)} (`dedup_rollout_overlap`) is a duplicate; exact equality is not required.",
+        "- Stage A compares with earlier batches in this round and with the exact hashes and available normalized sets of",
+        f"  the past winners in the current payout window (the last {params.kings_window} distinct king UIDs, section 7). A past winner always",
+        "  keeps its position against a later copy. Reusing a past winner's rollouts counts as a duplicate even from the same",
+        "  hotkey: a king resubmitting >= dedup_rollout_overlap of its own already-applied rollouts is dropped as",
+        "  `past_king_rollout`, or `past_king_exact` for the same batch bytes. Within the round, greedy priority is (first_seen,",
+        "  queue_pos): the first `first_seen_unix` recorded for valid batch bytes in UTC, then `queue_pos` to break ties. Files",
+        "  already waiting",
+        "  when this ledger starts all receive its first post-deployment check time, so queue position breaks their tie.",
+        "  Once kept, that entry remains the keeper for later comparisons; dropped entries never become comparison anchors.",
+        f"  A half-and-half mixture ({show(params.dedup_rollout_overlap)} of each) of two kept honest batches is itself the only copy;",
+        "  it cannot drop either part through a dropped mixture. Priority is not a proof of who generated rollouts first.",
+        "- Stage B runs on trained, verified LoRA artifacts after Stage A and the null-update exclusion. It compares the",
+        "  cosine of the whole scaled LoRA delta-W across target modules, computed from A and B without materializing",
+        f"  delta-W. With the same verified training seed, cosine >= {show(params.dedup_cos_shared_seed)} (`dedup_cos_shared_seed`) is a duplicate.",
+        f"  With own or mixed seeds, the threshold is {show(params.dedup_cos_own_seed)} (`dedup_cos_own_seed`). The same greedy (first_seen,",
+        "  queue_pos) priority applies. Missing or unusable evidence does not create a duplicate.",
+        f"- A dropped copy has status `{DUPLICATE}`: it is charged, cannot win and receives no payout. This applies to a copy",
+        "  found before training as well as one found by Stage B. A duplicate never displaces its keeper merely by scoring",
+        "  higher. Regenerated or rewritten rollouts are new evidence, not an exemption: judge them by the same hashes,",
+        "  normalized sets and update cosine. Changing whitespace or rewards alone does not avoid normalized overlap.",
+        *subfloor,
+        "- Public duplicate evidence never includes batch content, prompts, outputs, rewards or the normalized rollout",
+        "  hashes. `duplicate_clusters` in the open/closed round objects of mining.json and in the round file has one",
+        "  `keeper` and a `dropped` list for each cluster. Each member publishes `queue_pos`, `uid`, `hotkey`,",
+        "  `batch_sha256`, `stage`, `similarity` and `first_seen_unix`; a dropped member also names `keeper_queue_pos`.",
+        "  Past-king keepers use the past-king sentinel queue position. Stage names are " + ", ".join(f"`{name}` ({meaning})" for name, meaning in DUPLICATE_STAGES.items()) + ".",
+        "  All published times are UTC; `first_seen_unix` counts seconds from the Unix epoch.",
+        "",
+    ]
+
+
 def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     round_now, queue = doc.get("round") or {}, doc.get("queue") or {}
     entries, seats = round_now.get("entries") or [], queue.get("next") or []
@@ -548,9 +714,17 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         *(["", *table(ENTRY_COLUMNS, ([row.get(column) for column in ENTRY_COLUMNS] for row in entries)), ""] if entries else []),
         f"- A round takes at most {params.batch_cap} batches and needs at least {params.n_min_start}. It does not wait",
         "  for a full round. Registrations for the next round are always open.",
-        "- Round loop: (1) pin head M, the recipe, the task draw and the public round seed; (2) copy the next valid",
-        "  files in queue order; (3) train one LoRA per file; (4) score every LoRA and a null copy of M (no adapter)",
-        "  on the same tasks and seeds; (5) apply at most one winner; (6) publish; (7) start again.",
+        "- Round loop: (1) pin head M, the recipe and the task sampler snapshot; (2) copy the next valid files in queue",
+        "  order, freeze their bytes and run Stage-A duplicate checks, then read entropy only after those files are frozen",
+        "  to derive and pin the public round seed and task draw; (3) train one LoRA per remaining file; (4) score every",
+        "  LoRA and a null copy of M (no adapter), and run null-update and Stage-B duplicate checks;",
+        *([
+            "  null M sample 0 and every LoRA use the same tasks and seed; later king samples are king-only;",
+        ] if params.null_samples_per_task is not None else [
+            "  null M and every LoRA use the same tasks and seeds;",
+        ]),
+        "  (5) apply at most one winner; (6) publish; (7) start again. Batches cannot use advance knowledge of",
+        "  the entropy, round seed or training seeds to target a particular draw or initialization.",
         "",
         *_round_time_lines(params),
         "## 4. The queue",
@@ -606,19 +780,28 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  charged and you go to the front of the queue.",
         "- A round with no result: the box failed, not a seat. This is the case when the training failed for at least",
         "  one batch and finished for no batch, when the box stopped with an error, when its result did not arrive",
-        "  before the end of the lease, or when the operator ended the round. Such a round costs you nothing: nobody is charged, no failure is counted for a",
-        f"  seat, and each seat of the round goes to the front of the queue. The next round starts {duration(params.apply_retry_s)} after the",
-        f"  failure, or later. In the round file (section 9) you see it thus: `outcome` is `{NO_DECISION}`, no entry has a",
+        "  before the end of the lease, or when the operator ended the round. Ordinarily nobody is charged, no failure",
+        "  is counted for a seat, and each seat of the round goes to the front of the queue. The next round starts",
+        f"  {duration(params.apply_retry_s)} after the",
+        "  failure, or later. In the round file (section 9) you see it thus: `outcome` is `no_decision`, no entry has a",
         "  `status`, and `note` gives the cause. In `history` of mining.json the round has the same `outcome` and its",
-        "  entries have no `status`; the `note` is only in the round file.",
+        "  entries have no `status`; the `note` is only in the round file. If Stage A already found duplicates, those",
+        f"  copies remain charged `{DUPLICATE}` and lose their seats even when every lease fails. Their terminal entries",
+        "  are shown; every other seat stays uncharged and goes to the front, and the same retry delay applies.",
         f"- A round that has a result also gets the outcome `{NO_DECISION}` when none of its entries was charged. Each entry",
         "  then has a `status`, and the status of your entry says what applies to your seat.",
         f"- `{NOT_TRAINED}`: the training time of the round ended before your batch was trained (section 3). You are not",
         "  charged and you go to the front of the queue. It is not counted as a failure, so it never holds a seat.",
         f"- `{NOT_SCORED}`: the time limit of the round came before the first look of the scoring (section 3). You are",
         "  not charged and you go to the front of the queue. It is not counted as a failure, so it never holds a seat.",
-        f"- `{SKIP}`: the trainer could not train the copy of your file, for example because the training gave a number",
-        "  that is not finite. You are not charged and you keep your place.",
+        f"- `{SKIP}`: the trainer could not train the copy of your file, for example because a gradient or trained weight",
+        "  was not finite. This training failure is uncharged and you keep your place. A non-finite stored `step_norm`",
+        f"  that reaches judging is instead the charged `{NULL_UPDATE}` outcome described in section 5.",
+        f"- `{DUPLICATE}` and `{NULL_UPDATE}`: your frozen batch was a duplicate, or its stored update fell below the floor."
+        if params.min_step_norm > 0 else
+        f"- `{DUPLICATE}` and `{NULL_UPDATE}`: your frozen batch was a duplicate, or its stored `step_norm` was not finite.",
+        "  These are charged terminal outcomes, not `skip`: the hotkey's turn is used, the entry cannot win or be paid,",
+        "  and it does not return to the queue. The rules and evidence are in `Duplicate and null batches` (section 5).",
         f"- A round with the outcome `{ABANDONED}`: a winner was named, but its files could not be checked or applied.",
         "  The head does not change, no entry of the round is charged, and a seat that was scored goes to the front of",
         "  the queue.",
@@ -695,8 +878,8 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  both caps hold. The other groups are dropped. All rules below apply to the groups that are kept.",
         f"- Tokens: an output has at most {params.max_output_tokens} tokens. Prompt + output has at most",
         f"  {params.max_context_tokens} tokens: an output below the output cap counts 1 token more there, its end-of-sequence",
-        "  token. The prompt is counted as one user message in the chat template of the",
-        f"  head. Training reads at most {recipe.train_max_output_tokens} output tokens and",
+        "  token. The prompt is counted with the exact chat messages, template and `enable_thinking=True` of scoring",
+        f"  and training (section 2). Training reads at most {recipe.train_max_output_tokens} output tokens and",
         f"  {recipe.train_max_context_tokens} prompt + output tokens of a rollout. A longer rollout is valid: the trainer",
         "  truncates it (section 2).",
         "- Reasoning: the reasoning of an output is the text before its first `\\boxed`, or the whole output when it",
@@ -757,6 +940,7 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         *_rollout_lines(params),
         "",
+        *_duplicate_lines(params),
         "### How to upload",
         "",
         *_upload_lines(doc["contract"]),
@@ -772,7 +956,7 @@ def _rollout_lines(params: Params) -> list[str]:
     recipe = params.recipe
     pool = [
         "  For a task of the pool, `prompt` is the problem text, or the instruction of section 6, one blank line and the",
-        "  problem text. Both are the same task for the grader, and two different prompts for the model.",
+        "  problem text. Both are the same task for the grader and give exactly the same model tokens.",
     ] if params.env == ENV_ID else []
     return [
         "### How to make rollouts",
@@ -783,13 +967,13 @@ def _rollout_lines(params: Params) -> list[str]:
         "",
         "- Model: sample from head M. Get its files as section 1 says. The trainer scores your tokens under head M,",
         "  and a token outside the support of head M does not train (section 2).",
-        "- Prompt: the trainer reads `prompt` as one user message (section 2).",
+        "- Prompt: the trainer and scorer use the same chat messages and template options (section 2).",
         *pool,
-        "  For your sampler, render the prompt as the trainer does: one user message, the chat template of the head,",
-        "  the generation prompt, and no other argument to the template.",
-        "- Scoring renders a task in another way than training (section 6): the instruction is the system message, the",
-        "  problem is the user message, and the template gets `enable_thinking` true. So the model does not read the",
-        "  same tokens before its answer in training and in scoring.",
+        "  For your sampler, render your prompt the same way: system = the instruction of section 6, user = `prompt`",
+        "  with a leading instruction + blank line removed; apply the head's chat template with",
+        "  `add_generation_prompt=True` and `enable_thinking=True`. Sample on-policy with those exact tokens.",
+        "- Training and scoring render a pool task identically. Old-format batches stay valid. Rollouts sampled under",
+        "  the old one-user-message render are now slightly off-policy for the trainer.",
         f"- Sampling: use the temperature that you state in `train.sample_temperature` (default {show(recipe.sample_temperature)}), top_k {recipe.support_top_k}",
         f"  and top_p {show(recipe.support_top_p)}. These are the settings of the support (section 2). The sampler must work as the",
         "  support does: top_k first, then top_p over the tokens that are left. Then each token that you",
@@ -914,7 +1098,8 @@ def _server_command(params: Params) -> list[str]:
     The address of the server is left out: it is local to the box and changes no score.
     """
     argv = server_argv("<directory of the base files>", 0, params, params.max_num_seqs)
-    argv[argv.index("--max-loras") + 1] = LORA_TABLE  # a value of the round, not of the parameters: gpu.evaluator.lora_table
+    if not params.eval_merged:
+        argv[argv.index("--max-loras") + 1] = LORA_TABLE  # a value of the round, not of the parameters: gpu.evaluator.lora_table
     start = argv.index("-m")
     options: list[list[str]] = []
     for word in argv[start + 2 :]:
@@ -951,18 +1136,30 @@ def _scoring_lines(params: Params) -> list[str]:
     return [
         "### The scoring procedure",
         "",
+        *([
+            f"- Merged-candidate evaluation: {MERGED_EXPLANATION}",
+            "  Each candidate has its own vLLM server for its merged base; null keeps the bf16 king base. A GPU serves one model at a time",
+            "  and may switch after its in-flight work finishes. No runtime LoRA is loaded. The candidate's result records the merged base",
+            "  manifest hash and install kernel; promotion refuses a fold whose base manifest differs.",
+        ] if params.eval_merged else []),
         "This is everything that the box does to score a round, in the order in which it does it. The code is in four",
         "files: `sn120_v2/worker.py` (chunks, looks and the clock), `sn120_v2/gpu/evaluator.py` (servers, requests and",
         "outcome codes), `sn120_v2/envs/math_grader.py` (the grader) and `sn120_v2/judging.py` (the estimator and the",
         "rules). Section 10 has the command that runs this code on your machine.",
         "",
         f"- Servers: an idle GPU may prewarm its normal vLLM server for null. A GPU never starts vLLM while its training job",
-        "  is active; after training exits it starts or reuses that same default-argv server. Each server",
-        f"  holds the base of head M under the model name `{NULL_MODEL}`. The box loads each LoRA of the round into every",
-        "  server with `/v1/load_lora_adapter`, with its `lora_hash` as the model name. The servers run with the",
-        "  variable `VLLM_ALLOW_RUNTIME_LORA_UPDATING` set (vLLM needs it for that route) and with `HF_HUB_OFFLINE` set.",
-        "  The vLLM version is the one that the `gpu` extra of `v2/pyproject.toml` names. `--max-loras` is the number of",
-        "  batches of the round, trained or not: it is the same for every chunk of the round. The command of one server,",
+        *([
+            "  is active; after training exits it serves the candidate it trained, or null if it trained no candidate. Each merged",
+            f"  model is served under its candidate's `lora_hash`; null is `{NULL_MODEL}`. The servers run with `HF_HUB_OFFLINE` set.",
+            "  The vLLM version is the one that the `gpu` extra of `v2/pyproject.toml` names. The command of one merged server,",
+        ] if params.eval_merged else [
+            "  is active; after training exits it starts or reuses that same default-argv server. Each server",
+            f"  holds the base of head M under the model name `{NULL_MODEL}`. The box loads each LoRA of the round into every",
+            "  server with `/v1/load_lora_adapter`, with its `lora_hash` as the model name. The servers run with the",
+            "  variable `VLLM_ALLOW_RUNTIME_LORA_UPDATING` set (vLLM needs it for that route) and with `HF_HUB_OFFLINE` set.",
+            "  The vLLM version is the one that the `gpu` extra of `v2/pyproject.toml` names. `--max-loras` is the number of",
+            "  batches of the round, trained or not: it is the same for every chunk of the round. The command of one server,",
+        ]),
         "  without its local address:",
         "",
         "```",
@@ -978,8 +1175,15 @@ def _scoring_lines(params: Params) -> list[str]:
         "",
         f"- `model` is `{NULL_MODEL}` for null M and the `lora_hash` for a LoRA. The seed is the seed of the pairing rule above.",
         f"  Task i of the full draw (i counts from 0) goes to a free GPU according to the solo scheduler. A GPU may steal",
-        "  another candidate's remaining block. Null M and every LoRA use the same task, sample and seed; only the adapter",
-        "  and the serving GPU can differ.",
+        *([
+            "  another candidate's remaining block. Null M sample 0 and every LoRA use the same task, sample and seed.",
+            f"- Null M (the king) runs {params.null_samples} sample(s) per task; every LoRA runs {params.samples_per_task}. Sample 0 has the same seed",
+            "  for null M and every LoRA. Later king samples use their own seed and are not run for any LoRA. Only the adapter",
+            "  and the serving GPU can differ between paired rollouts.",
+        ] if params.null_samples_per_task is not None else [
+            "  another candidate's remaining block. Null M and every LoRA use the same task, sample and seed; only the adapter",
+            "  and the serving GPU can differ.",
+        ]),
         f"- The box feeds {params.max_num_seqs} concurrent requests to each server (`max_num_seqs`), subject to the local file",
         "  descriptor limit. A server runs at most `--max-num-seqs` of them at a time; the",
         f"  others wait in the server. The time limit of one try of a request is {params.eval_time_budget_s} s (`eval_time_budget_s`),",
@@ -1005,22 +1209,62 @@ def _scoring_lines(params: Params) -> list[str]:
         f"  The chunk runs again: at most {BOX_TRIES} runs in all. When each of them fails before the stop time, the box stops with an",
         "  error and the round has no result (section 4). A run that fails after the stop time ends the scoring, and",
         "  the chunk is not used.",
-        "- Outcome strings: each model has one string for each sample. A string has one character for each task, in",
+        "- Outcome strings: each model has one string for each sample" + (": null M has `null_samples_per_task` strings (or" if params.null_samples_per_task is not None else ". A string has one character for each task, in"),
+        *([
+            "  `samples_per_task` when it is null), and every LoRA has `samples_per_task`. A string has one character for each task, in",
+        ] if params.null_samples_per_task is not None else []),
         f"  the order of the draw: `{PASS}`, `{FAIL}`, `{CAP}`, `{ERROR}`, or `{NOT_RUN}` for a task that was not run.",
         "- Estimator, in full: n is the number of tasks that the LoRA answered. They are the first n tasks of the draw.",
         f"  The pass rate of a model on a task is the share of its samples with `{PASS}`. The sums of the estimator above run",
         "  over these n tasks, with the weights w_t of the draw. When se is 0, z is 0.",
+        *(["- Argmax mode has no early drops: every candidate is scored on the full draw, or the shared stop-limit prefix."]
+          if params.crown_gate == "argmax_symmetric" else [
         "- Drop rule, in full: after each look but the last, the box computes z of each open LoRA on the tasks so far.",
         "  Look k has scored the share t_k of the draw. a_k = spent(t_k) - spent(t_(k-1)), with spent(t) = `drop_alpha` *",
         "  ln(1 + (e - 1) * t), and spent = 0 before the first look. c_k is the normal quantile of 1 - a_k. The LoRA is",
         "  dropped when (z + c_k) / sqrt(t_k) <= `z_bar`. No LoRA is dropped at a look with fewer than",
         f"  {params.min_scored_tasks} tasks (`min_scored_tasks`), or when its se is 0. A dropped LoRA answers no later chunk. When no LoRA is",
         "  open, the scoring ends.",
+        ]),
+        *([
+            *([
+                "- Argmax-symmetric win rule, in full: duplicates are removed first by the existing dedup, and the round uses one",
+                "  round-wide training seed.",
+                *_no_floor_lines(params),
+                "  Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays",
+                "  if it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are",
+                "  retired. `z_bar` and `z_field_bar` are ignored. Early drops are disabled, so every candidate is scored on the full",
+                "  draw or shared stop-limit prefix. The cap-hit (`cap_hit_floor`/`cap_hit_margin`), full-draw, cover and",
+                "  `min_scored_tasks` checks are anti-gaming pre-filters, not z gates. Here mean pass rate is the HT-weighted mean of",
+                "  per-task pass rates using the draw's sampling weights; each king task rate is the mean of its null runs, and",
+                f"  `{CAP}` counts as not-pass. Threshold calibration is provisional.",
+            ] if params.crown_gate == "argmax_symmetric" else [
+            "- Field-median win rule, in full: duplicates are removed first by the existing dedup, and the round uses one",
+            "  round-wide training seed.",
+            *_no_floor_lines(params),
+            "  For each task t, m_t is the median of the per-task pass rates of the deduped scoring batches plus the king;",
+            "  an even 0/1 split gives 0.5. A batch dropped early contributes only",
+            "  on tasks it ran. For your scored tasks, d_t = your pass rate - m_t; `field_delta` is the weighted mean of d_t",
+            "  and `field_se` its standard error, with the same weights as the king estimate. `field_z` = `field_delta` / `field_se`,",
+            "  or 0 when `field_se` is 0. Crown only when `field_z` > `z_field_bar` AND paired z",
+            f"  against the king > `z_bar`. The highest delta among eligible LoRAs wins; otherwise the king stays. The old z {show(RETIRED_KING_Z_BAR)}",
+            "  king-only bar is retired. The thresholds are provisional and will be recalibrated.",
+            ]),
+        ] if params.crown_gate != "king" else []),
         "- Win rule, in full. A LoRA is eligible when all of these are true. It has an outcome for every task of the",
         "  draw, or, when the stop time ended the scoring, for every task that null M has an outcome for; a LoRA that",
-        "  was dropped at a look does not. n is at least `min_scored_tasks`. z > `z_bar`. (its count of",
-        f"  `{CAP}`) / rollouts <= max(`cap_hit_floor`, (the count of `{CAP}` of null M on the same n tasks) / rollouts +",
-        "  `cap_hit_margin`), where rollouts = n x `samples_per_task`. This last test uses exact fractions of whole counts, and each parameter as the",
+        "  was dropped at a look does not. n is at least `min_scored_tasks`.",
+        *(["  its delta above the king must be greater than the tie tolerance."] if params.crown_gate == "argmax_symmetric"
+          else ["  z > `z_bar` AND `field_z` > `z_field_bar`."] if params.crown_gate == "field_median" else ["  z > `z_bar`."]),
+        "  (its count of",
+        *([
+            f"  `{CAP}`) / (n x LoRA sample count) <= max(`cap_hit_floor`, (the count of `{CAP}` of null M on the same n tasks) / (n x king sample count) +",
+            "  `cap_hit_margin`), where the LoRA denominator is n x `samples_per_task` and the null M denominator is n x its number of",
+            "  outcome strings. Each side is divided by its own denominator. This test uses exact fractions of whole counts, and each parameter as the",
+        ] if params.null_samples_per_task is not None else [
+            f"  `{CAP}`) / rollouts <= max(`cap_hit_floor`, (the count of `{CAP}` of null M on the same n tasks) / rollouts +",
+            "  `cap_hit_margin`), where rollouts = n x `samples_per_task`. This last test uses exact fractions of whole counts, and each parameter as the",
+        ]),
         "  decimal number that is written here: a share exactly on the limit passes.",
         f"- Cover, in full: (rollouts - the count of `{ERROR}`) / rollouts >= `min_cover`, as exact fractions, for null M on the",
         "  tasks that it answered and for a LoRA on its n tasks.",
@@ -1029,8 +1273,13 @@ def _scoring_lines(params: Params) -> list[str]:
         "- The box does not pick the winner. The controller computes every score again from the outcome strings",
         "  (`sn120_v2.judging.decide`). The round file (section 9) holds the draw with its weights (`draw`), the outcome",
         "  strings of null M (`null_outcomes`) and those of the winner (`winner_outcomes`). With",
-        "  `sn120_v2.judging.score_entry` you can compute the scores of the winner again. The outcome strings of the",
-        "  other entries are not published.",
+        "  `sn120_v2.judging.score_entry` you can compute the scores of the winner again. The round file also holds",
+        "  the outcome strings of every other entry that was scored (`entry_outcomes`: queue position, UID, hotkey,",
+        "  LoRA hash, one string per sample). After the round closes, the eval rollouts (prompt, completion text,",
+        "  extracted answer and outcome for each task and sample) of null M (`public/rollouts/gate/<round_id>/head.jsonl.gz`),",
+        "  the winner (`winner.jsonl.gz`) and every scored entry (`entries/<queue_pos>.jsonl.gz`) are published,",
+        "  listed with sizes and sha256 in `public/rollouts/gate/<round_id>/meta.json`. Training batches stay private;",
+        "  only the winner's batch is published (`public/rounds/<round_id>/batch.json`).",
         "- What a scoring of your own repeats: the draw and its weights, the seed and the body of each request, the",
         "  grade of a given text (but for a time limit of the grader), and each formula above. It does not repeat the",
         "  text of a rollout: the same request with the same seed can give another text on another machine or at",
@@ -1040,17 +1289,81 @@ def _scoring_lines(params: Params) -> list[str]:
     ]
 
 
+def _no_floor_lines(params: Params) -> list[str]:
+    return [
+        f"  There are no minimum-signal or update-norm floors (`min_signal_rollouts` {params.min_signal_rollouts},",
+        f"  `min_step_norm` {show(params.min_step_norm)}); only non-finite or stored null updates and duplicates are removed.",
+    ] if params.min_signal_rollouts == 1 and params.min_step_norm == 0 else []
+
+
+def _win_rule_lines(params: Params) -> list[str]:
+    if params.crown_gate == "king":
+        return [
+            f"- Win rule: z is strictly above {show(params.z_bar)} (beat M by more than that many standard errors), on at least",
+            f"  {params.min_scored_tasks} tasks, with no correction for the number of LoRAs. The cap-hit rate of the LoRA may",
+            f"  not be above max({show(params.cap_hit_floor)}, null M cap-hit rate + {show(params.cap_hit_margin)}).",
+        ]
+    if params.crown_gate == "argmax_symmetric":
+        return [
+            "- Win rule (`crown_gate` = `argmax_symmetric`): duplicates are removed first (the existing dedup), and the round has one",
+            "  round-wide training seed.",
+            *_no_floor_lines(params),
+            "- Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays if",
+            "  it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are retired.",
+            "  `z_bar` and `z_field_bar` are ignored. Early drops are disabled: every candidate is scored on the full draw, or the",
+            "  shared stop-limit prefix. The cap-hit (`cap_hit_floor`/`cap_hit_margin`), cover, full-draw and `min_scored_tasks` checks",
+            "  are anti-gaming pre-filters, not z gates. Here mean pass rate is the HT-weighted mean of per-task pass rates using",
+            f"  the draw's sampling weights; each king task rate is the mean of its null runs, and `{CAP}` counts as not-pass.",
+            "  Between eligible candidates, the highest delta wins and a tie goes to the earlier queue position.",
+        ]
+    return [
+        "- Win rule (`crown_gate` = `field_median`): duplicates are removed first (the existing dedup), and the round has one",
+        "  round-wide training seed.",
+        *_no_floor_lines(params),
+        "- Per task t, the field median m_t is the median of the per-task pass rates of the deduped scoring batches plus the king.",
+        "  With an even number of members, the two middle values are averaged (0.5 for a 0/1 split). A batch dropped at an",
+        "  early look contributes only on the tasks it ran. On your scored tasks, d_t = your pass rate - m_t; `field_delta` is",
+        "  the weighted mean of d_t and `field_se` its standard error, using the same sampling weights as the king estimate.",
+        "  `field_z` = `field_delta` / `field_se`, or 0 when `field_se` is 0. There is no task re-weighting.",
+        f"- To crown, you need `field_z` > `z_field_bar` ({show(params.z_field_bar)}) AND paired z against the king > `z_bar`",
+        f"  ({show(params.z_bar)}), on at least {params.min_scored_tasks} tasks. The cap-hit limit is",
+        f"  max({show(params.cap_hit_floor)}, null M cap-hit rate + {show(params.cap_hit_margin)}), as before. The old z {show(RETIRED_KING_Z_BAR)}",
+        "  king-only bar is retired. These thresholds are provisional and will be recalibrated.",
+    ]
+
+
+def _payout_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
+    """The payout rule and the paid set that survives its simulation, newest first."""
+    paid = doc.get("paid_kings") or []
+    if not params.null_prune_from_round:
+        return [
+            f"- A round with no winner changes nothing in the payout: the window of the last {params.kings_window} kings keeps being",
+            "  paid.",
+            *(rows_table(paid, ("uid", "round_id")) if paid else ["There is no paid king yet."]),
+        ]
+    return [
+        f"- From `{params.null_prune_from_round}`, each round with no new king (the king held) removes the oldest king from the paid set, down to one.",
+        f"  A new king joins the paid set (and pushes out the oldest if {params.kings_window} are paid). Pruned kings return only by winning again.",
+        "  Rounds without a decision (operator stop, failure) do not prune. Paid kings split the weight equally.",
+        "- Current paid set, newest first. Registration of each winning hotkey is checked when the writer sets weights.",
+        *(rows_table(paid, ("uid", "round_id")) if paid else ["There is no paid king yet."]),
+    ]
+
+
 def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     kings, keys, url = doc.get("kings") or [], object_keys(), doc["contract"]["public_url"]
+    beneficiaries = "paid king" if params.null_prune_from_round else "king of the window"
     snapshots = {"the open round": (doc.get("round") or {}).get("irt_snapshot_id"), "the last closed round": doc.get("irt_snapshot_id")}
     where = [
         f"- Snapshot of {name}: id `{found}`, object `{layout.irt_snapshot(found)}`" + (f", {url}/{layout.irt_snapshot(found)}" if url else "")
         for name, found in snapshots.items() if found
     ]
     looks, n = params.look_sizes(), params.n_tasks
-    mass = [
+    mass = ([
+        f"- The IRT sampler gives each task a mass in proportion to sqrt(p(1 - p)), where p is the head's predicted pass rate on it, mixed with a uniform share of {show(params.irt_explore_frac)} over all tasks. Every task keeps a mass above zero; the published weights 1/pi keep the estimate unbiased.",
+    ] if params.irt_draw_rule == "sqrt_fisher" else [
         f"- The IRT sampler gives each task a mass in proportion to p(1 - p), where p is the head's predicted pass rate on it (the Fisher information of the task under the Rasch model), mixed with a uniform share of {show(params.irt_explore_frac)} over all tasks. Every task keeps a mass above zero; the published weights 1/pi keep the estimate unbiased.",
-    ] if params.irt_draw_rule == "fisher" else [
+    ]) if params.irt_draw_rule in ("fisher", "sqrt_fisher") else [
         f"- The IRT sampler favours tasks where the predicted pass rate of the head is from {show(params.irt_middle_band[0])}",
         f"  to {show(params.irt_middle_band[1])}, and keeps {show(params.irt_explore_frac)} of the draw for new tasks.",
     ]
@@ -1058,27 +1371,42 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"{params.z_bar * math.sqrt(size / n) - drop_margin(look, n, params):.3f} after {size} tasks"
         for look, size in enumerate(looks[:-1])
     ] or "no early look"
+    separate_king = params.null_samples_per_task is not None
     return [
         "## 6. Judging",
         "",
         "- All tasks are public. There is no hidden task set.",
         *_pool_lines(params),
-        f"- Draw: {params.n_tasks} tasks from the public pool of `{params.env}`, {params.samples_per_task} sample(s) per task.",
+        *([
+            f"- Draw: {params.n_tasks} tasks from the public pool of `{params.env}`. The king (null M) has {params.null_samples} sample(s)",
+            f"  per task; every LoRA has {params.samples_per_task}.",
+        ] if separate_king else [
+            f"- Draw: {params.n_tasks} tasks from the public pool of `{params.env}`, {params.samples_per_task} sample(s) per task.",
+        ]),
         "  The draw is a fixed function of the public sampler snapshot and the public round seed. Both are frozen at",
         f"  round start. Rebuild a draw with `{draw_from_snapshot.__module__}.{draw_from_snapshot.__name__}(snapshot,",
         "  round_seed, n_tasks)`.",
         *mass,
-        "- Pairing: the null copy of M and every LoRA run the same tasks with the same seeds. The seed of rollout j",
-        f"  on a task is the first {SEED_BITS} bits of sha256(\"<round_seed>|<task_id>|<j>\"), as a whole number; j counts from 0.",
+        *([
+            "- Pairing: null M sample 0 and every LoRA run the same tasks with the same seeds. Later null M samples are king-only.",
+        ] if separate_king else [
+            "- Pairing: the null copy of M and every LoRA run the same tasks with the same seeds. The seed of rollout j",
+        ]),
+        f"  The seed of rollout j on a task is the first {SEED_BITS} bits of sha256(\"<round_seed>|<task_id>|<j>\"), as a whole number; j counts from 0." if separate_king else f"  on a task is the first {SEED_BITS} bits of sha256(\"<round_seed>|<task_id>|<j>\"), as a whole number; j counts from 0.",
         f"- Decode: temperature {show(params.temperature)}, top_p {show(params.top_p)}, top_k {params.top_k}, {params.dtype},",
         f"  at most {params.max_output_tokens} output tokens and {params.max_context_tokens} prompt + output tokens.",
         f"- Outcome of a rollout: `{PASS}` pass, `{FAIL}` fail, `{CAP}` hit the token cap (not passed), `{ERROR}` our",
         "  infrastructure failed (not passed, stays in the count).",
-        "- Estimator: d_t = LoRA pass rate - null M pass rate on task t. delta = sum(w_t * d_t) / sum(w_t), with the",
-        "  published sampling weights w_t. se = sqrt(n / (n - 1) * sum((w_t * (d_t - delta))^2)) / sum(w_t). z = delta / se.",
-        f"- Win rule: z is strictly above {show(params.z_bar)} (beat M by more than that many standard errors), on at least",
-        f"  {params.min_scored_tasks} tasks, with no correction for the number of LoRAs. The cap-hit rate of the LoRA may",
-        f"  not be above max({show(params.cap_hit_floor)}, null M cap-hit rate + {show(params.cap_hit_margin)}).",
+        *([
+            "- Estimator: d_t = lora_pass_t - mean(king_samples_t), where lora_pass_t and each king sample are 1 for PASS and 0 otherwise. delta = sum(w_t * d_t) / sum(w_t), with the",
+            "  published sampling weights w_t. se = sqrt(n / (n - 1) * sum((w_t * (d_t - delta))^2)) / sum(w_t). z = delta / se.",
+            "  Conditional on task and sample-0 pairing, Var(d_t) = Var(lora_t) + Var(king_t)/k - 2Cov(lora_t, king_t),",
+            "  for k king samples. The realized-d spread retains the same design-based standard error with HT weights.",
+        ] if separate_king else [
+            "- Estimator: d_t = LoRA pass rate - null M pass rate on task t. delta = sum(w_t * d_t) / sum(w_t), with the",
+            "  published sampling weights w_t. se = sqrt(n / (n - 1) * sum((w_t * (d_t - delta))^2)) / sum(w_t). z = delta / se.",
+        ]),
+        *_win_rule_lines(params),
         "- The eligible LoRA with the highest delta wins. A tie goes to the miner that was earlier in the queue.",
         "  With no eligible LoRA, M stays and there is no king. There is no second confirmation round.",
         f"- Looks: scores are checked after {show(looks)} tasks. The win rule runs only at the last look. An early",
@@ -1104,12 +1432,13 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         f"- A king is a round winner that was applied. The window is the last {params.kings_window} distinct king UIDs. A UID that wins",
         "  again has one place in the window, with its newest win.",
-        "- Each king of the window gets an equal share of all the weight, while the hotkey that won is still registered",
+        f"- Each {beneficiaries} gets an equal share of all the weight, while the hotkey that won is still registered",
         "  on that UID: 1 / (the number of such kings).",
+        "- The share of a paid king that is no longer registered is split among the other registered paid kings."
+        if params.null_prune_from_round else
         "- The share of a king that is no longer registered is split among the other registered kings of the window.",
-        f"- A round with no winner changes nothing in the payout: the window of the last {params.kings_window} kings keeps being",
-        "  paid.",
-        f"- No burn, in any case: no weight goes to UID {params.burn_uid} or to the owner as a fallback. If no king of the window is",
+        *_payout_lines(doc, params),
+        f"- No burn, in any case: no weight goes to UID {params.burn_uid} or to the owner as a fallback. If no {beneficiaries} is",
         "  registered, the writer sets nothing and the last valid weights stay on chain.",
         f"- One writer sets the weights, with one attempt each {params.weights_cadence_s} s. If the chain read fails or is not complete, or",
         "  the state does not load, that attempt sets nothing and the last valid weights stay on chain.",
@@ -1136,7 +1465,9 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  file hash, then the id. The fp32 master has its own prefix: do not put it in the directory of the base.",
         "- `version_id` of a head is the sha256 of the canonical JSON of the head object without `version_id`.",
         "- Only a winner has a public batch, and with it public `train` values. For every other entry the round file",
-        "  shows the decision, the batch sha256 and the scores only.",
+        "  shows the decision, batch sha256 and available scores. `duplicate` and `null_update` are charged and cannot",
+        "  win or be paid. Duplicate clusters publish only the identity and comparison fields listed in section 5; they",
+        "  never publish batch content.",
         "- In a round file each entry has a `reason`. The round has a `note`, and a `reason` when it has a result. The",
         f"  `note` is empty unless the round had no result or has the outcome `{ABANDONED}` (section 4). These texts give a",
         "  cause in words, for a person to read: the class of an error and its message. Before the validator",
@@ -1279,7 +1610,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
     numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params)
-               if f.name != "recipe" and not (f.name.startswith("rotation_") and f.name in Params.LEFT_OUT_AT_DEFAULT and getattr(params, f.name) == f.default)]
+               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_")) and getattr(params, f.name) == f.default)]
     url = doc["contract"]["public_url"]
     where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
@@ -1292,7 +1623,12 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "",
         "You upload one JSON file per hotkey: prompts, rollouts and rewards. At round start the validator copies it,",
         "checks it, and trains one bounded LoRA from the current head M with the published recipe. Every LoRA of the",
-        "round and a null copy of M are scored on the same public tasks with the same seeds. At most one LoRA wins,",
+        *([
+            "round and a null copy of M are scored on the same public tasks. Sample 0 of each uses the same seed; later king",
+            "samples are king-only. At most one LoRA wins,",
+        ] if params.null_samples_per_task is not None else [
+            "round and a null copy of M are scored on the same public tasks with the same seeds. At most one LoRA wins,",
+        ]),
         f"and only if it beats M by more than {show(params.z_bar)} standard error. The winner is applied to the head and",
         "its miner becomes a king. Only kings earn.",
         "",
@@ -1324,11 +1660,14 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "",
         *_file_lines(doc, params),
         "",
+        *_cluster_lines(doc.get("round"), "Open round"),
         *_judging_lines(doc, params),
         "",
         f"## 11. {PARAMS_HEADING}",
         "",
-        "Each value is pinned into a round when the round starts.",
+        "Each value is pinned into a round when the round starts. The `train_seed_scope` formula is in section 2.",
+        "The duplicate and null-update parameters are explained in `Duplicate and null batches` (section 5), and the",
+        "machine-readable `contract.duplicate_policy` block repeats their thresholds and public evidence schema.",
         "",
         *table(("parameter", "value"), numbers),
         "",
@@ -1387,7 +1726,7 @@ def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_tex
         problems.append(f"llms.txt and mining.json are not a pair: llms.txt names snapshot {found and found.group(1)}, mining.json {doc['snapshot_digest']}")
     stated = stated_params(text)
     values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params)
-              if f.name != "recipe" and not (f.name.startswith("rotation_") and f.name in Params.LEFT_OUT_AT_DEFAULT and getattr(params, f.name) == f.default)}
+              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_")) and getattr(params, f.name) == f.default)}
     for name in sorted(values.keys() | stated.keys()):
         if stated.get(name) != values.get(name):
             problems.append(f"`{name}`: llms.txt states {stated.get(name, 'no value')}, mining.json has {values.get(name, 'no such parameter')}")

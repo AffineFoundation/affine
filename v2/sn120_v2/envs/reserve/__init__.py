@@ -5,22 +5,26 @@ listed byte and row before anything may enter an active evaluation set.
 """
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import math
 import os
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from ...canonical import canonical_json, file_sha256, sha256_hex
 from ...errors import ConfigError, VerifyError
 from ...rotation import Reserve, ReserveShard
 from ..math_pool import MathPool, POOL_V2_0_FILE, POOL_V2_0_SHA256, Task, load_pool
 
-RESERVE_ENV = "SN120_RESERVE_DIR"  # tests only; production uses the packaged directory
+RESERVE_ENV = "SN120_RESERVE_DIR"
 MANIFEST = "MANIFEST.jsonl"
 WITHDRAWN = "withdrawn.jsonl"
+INGEST_LOCK = ".ingest.lock"
+PACKAGED_RESERVE = Path(__file__).parent
 ID = re.compile(r"([a-z][a-z0-9_]*):([0-9]+)\Z")
 DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 SHARD = re.compile(r"[0-9]{4}-[a-z0-9][a-z0-9-]*\.jsonl\Z")
@@ -29,9 +33,97 @@ MIN_ANSWER_CHARS, MAX_ANSWER_CHARS = 1, 2_048
 
 
 def reserve_dir() -> Path:
-    # The environment override exists for tests. It is never read by off-mode
-    # controller/assembly paths.
-    return Path(os.environ.get(RESERVE_ENV) or Path(__file__).parent)
+    return Path(os.environ.get(RESERVE_ENV) or PACKAGED_RESERVE)
+
+
+@contextlib.contextmanager
+def ingest_lock(root: str | Path, *, exclusive: bool) -> Iterator[None]:
+    """Serialize ingestion and reload/publication on the live reserve."""
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / INGEST_LOCK).open("a+b") as stream:
+        os.set_inheritable(stream.fileno(), False)
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        try:
+            yield
+        finally:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
+def atomic_write(path: Path, raw: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("xb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def prepare_live_reserve(root: str | Path | None, seed: str | Path | None = None) -> Path:
+    """Seed the selected live directory; never change the packaged checkout.
+
+    Without SN120_RESERVE_DIR the original packaged directory is returned
+    unchanged. A live directory may extend its packaged prefix; a new packaged
+    suffix is copied forward when the live history is its strict prefix.
+    """
+    seed = PACKAGED_RESERVE if seed is None else Path(seed)
+    root = reserve_dir() if root is None else Path(root)
+    if root == seed or not os.environ.get(RESERVE_ENV) and seed == PACKAGED_RESERVE:
+        return root
+    root.mkdir(parents=True, exist_ok=True)
+    with ingest_lock(root, exclusive=True):
+        if not (root / MANIFEST).exists():
+            (root / "shards").mkdir(exist_ok=True)
+            for source in (seed / MANIFEST, seed / WITHDRAWN,
+                           *(seed / "shards").glob("*.jsonl"),
+                           *(path for name in ("retired.json", "retired_tasks.json") if (path := seed / name).exists())):
+                if source.exists():
+                    target = root / source.relative_to(seed)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with source.open("rb") as src, target.open("xb") as dst:
+                        dst.write(src.read())
+        _, _, live, live_withdrawals = read_raw(root)
+        _, _, packaged, packaged_withdrawals = read_raw(seed)
+        if live[:-1][:len(packaged) - 1] == packaged[:-1]:
+            # Live extends packaged. Future deploys cannot retract live rows.
+            if live_withdrawals[:len(packaged_withdrawals)] != packaged_withdrawals:
+                raise VerifyError("live reserve withdrawals diverge from the packaged reserve")
+            return root
+        if live[:-1] == packaged[:-1][:len(live) - 1] and len(live) < len(packaged):
+            if live_withdrawals != packaged_withdrawals[:len(live_withdrawals)]:
+                raise VerifyError("live reserve withdrawals diverge from the packaged extension")
+            for row in packaged[len(live) - 1:-1]:
+                name = row["shard"]
+                source, target = seed / "shards" / name, root / "shards" / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists() and target.read_bytes() != source.read_bytes():
+                    raise VerifyError(f"live reserve shard {name} differs from its packaged extension")
+                if not target.exists():
+                    with source.open("rb") as src, target.open("xb") as dst:
+                        dst.write(src.read())
+            atomic_write(root / MANIFEST, (seed / MANIFEST).read_bytes())
+            atomic_write(root / WITHDRAWN, (seed / WITHDRAWN).read_bytes())
+            return root
+        raise VerifyError("live reserve manifest diverges from the packaged reserve; expected an append-only extension")
+
+
+def extends_reserve(previous: Any, current: Any) -> None:
+    """New shards append in position; withdrawals only grow."""
+    if current.shards[:len(previous.shards)] != previous.shards:
+        raise VerifyError("reserve reload is not an append-only extension of the loaded manifest")
+    old = [(row["id"], row["reason"], row["added_at"]) for row in previous.withdrawn]
+    new = [(row["id"], row["reason"], row["added_at"]) for row in current.withdrawn]
+    if new[:len(old)] != old:
+        raise VerifyError("reserve reload changes or removes an earlier withdrawal")
 
 
 def normalise(problem: str) -> str:
@@ -158,6 +250,7 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False,
             if task_id not in seen_withdrawn:
                 by_id[task_id] = task
                 normalised.setdefault(normalise(task.problem), task_id)
+    retired_ids = {str(row.get("id", "")) for row in retired_rows}
     for shard in history:
         try:
             raw = (root / "shards" / shard.shard).read_bytes()
@@ -190,12 +283,19 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False,
                 if row["id"] not in high_retired or original is None or (row["problem"], row["answer"]) != (original.problem, original.answer):
                     raise VerifyError("an explicit readmit must exactly match its high-retired original")
             elif row["id"] in by_id or normalise(row["problem"]) in normalised:
-                raise VerifyError(f"reserve task {row['id']} repeats a task or problem")
+                if allow_retired and row["id"] in retired_ids:
+                    # Ranked rotation returns through the retired archive; its
+                    # original shard row is historical evidence, not a new
+                    # admission candidate. Keep the queue's complete history.
+                    pass
+                else:
+                    raise VerifyError(f"reserve task {row['id']} repeats a task or problem")
             if canonical_json(row) + b"\n" != raw.splitlines(keepends=True)[len(ordered)] or not raw.endswith(b"\n"):
                 raise VerifyError("reserve rows must be canonical JSONL, one newline-terminated row each")
             task = Task(row["id"], row["env"], row["problem"], row["answer"])
-            extra[task.task_id], normalised[task.problem and normalise(task.problem)] = task, task.task_id
-            by_id[task.task_id] = task
+            if not (allow_retired and task.task_id in retired_ids):
+                extra[task.task_id], normalised[task.problem and normalise(task.problem)] = task, task.task_id
+                by_id[task.task_id] = task
             ordered.append(task.task_id)
         ordered.sort(key=lambda task_id: sha256_hex(f"{shard.sha256}|reserve-order|{task_id}".encode()))
         queue.extend(ordered)
