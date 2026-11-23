@@ -15,8 +15,16 @@ import shlex
 import tomllib
 from pathlib import Path
 
-import sn120_v2
-from sn120_v2 import public, publisher, replicate, sim
+import pytest
+
+EXTRAS = "install the miner, envs, gpu and r2 extras: uv pip install -e '.[dev,miner,envs,gpu,r2]'"
+
+pytest.importorskip("transformers", reason=EXTRAS)
+pytest.importorskip("sn120_v2.envs.math_grader", reason=EXTRAS)
+pytest.importorskip("sn120_v2.headfold", reason=EXTRAS)
+
+import sn120_v2  # noqa: E402
+from sn120_v2 import public, publisher, replicate, sim  # noqa: E402
 
 PACKAGE = Path(sn120_v2.__file__).parent
 V2 = PACKAGE.parent
