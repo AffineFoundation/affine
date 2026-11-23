@@ -1,0 +1,33 @@
+# SN120 v2 benchmark service: one daemon. It reads v2's public files, and it rents one GPU node on Lium
+# while a row waits (the launch model, and each new king). It uses no GPU of the host that it runs on.
+# A start of this unit can spend money: read v2/bench/OPERATIONS.md first.
+#
+# Each word in capitals that starts with SN120_ is a blank for the operator. Fill all of them before the install:
+#   SN120_USER            the Linux user that holds the Lium configuration (~/.lium) and an ssh key that Lium knows
+#   SN120_ENV_FILE        a file on the host, mode 600, with a store token that can read and write objects. It holds
+#                         SN120_R2_ENDPOINT, SN120_R2_BUCKET, SN120_R2_ACCESS_KEY_ID, SN120_R2_SECRET_ACCESS_KEY
+#   SN120_BENCH_SETTINGS  a file on the host with the BENCH_ settings of OPERATIONS.md. It holds no secret
+#   SN120_PYTHON          the python of the virtual environment where sn120_v2 and affine-bench are installed, as a full path
+#
+# The token and the Lium key stay on the host. This file holds no secret. A signed read link is never written to the journal.
+
+[Unit]
+Description=SN120 v2 benchmark service (rents one GPU node on Lium while a row waits)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=SN120_USER
+EnvironmentFile=SN120_ENV_FILE
+EnvironmentFile=SN120_BENCH_SETTINGS
+ExecStart=SN120_PYTHON -m affine_bench.cli daemon
+# A stop leaves the rented node as it is, and the run on it goes on: the next start collects it.
+# To give the node back, stop the unit and run "release" (OPERATIONS.md). Do not add a release here:
+# a restart would then throw away a run in work.
+Restart=on-failure
+RestartSec=60
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

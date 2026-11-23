@@ -1,0 +1,28 @@
+# SN120 v2 weights writer: one run, at most one weight write, then exit.
+#
+# Each word in capitals that starts with SN120_ is a blank for the operator. Fill all of them before the install:
+#   SN120_USER         the Linux user that owns the wallet directory and the state directory
+#   SN120_ENV_FILE     a file on the host, mode 600, with the SN120_R2_* variables of the read-only store token
+#   SN120_PYTHON       the python of the virtual environment where sn120_v2 is installed, as a full path
+#   SN120_STATE_DIR    a directory of this host for the journal cache, the lock and weights_state.json
+#   SN120_NETWORK      the chain network name or the address of a chain node
+#   SN120_WALLET_NAME  the wallet as NAME/HOTKEY
+#   SN120_WALLETS_DIR  the directory that holds the wallet NAME
+#
+# The token and the hotkey stay on the host. This file holds no secret.
+
+[Unit]
+Description=SN120 v2 weights writer (one run)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=SN120_USER
+EnvironmentFile=SN120_ENV_FILE
+ExecStart=SN120_PYTHON -m sn120_v2.weights_writer --state-dir SN120_STATE_DIR --from-store --network SN120_NETWORK --wallet SN120_WALLET_NAME --wallet-path SN120_WALLETS_DIR
+# A run that stops is not started again: the next run is the timer's next hour. Do not add Restart= here.
+Restart=no
+TimeoutStartSec=900
+UMask=0077
+NoNewPrivileges=true

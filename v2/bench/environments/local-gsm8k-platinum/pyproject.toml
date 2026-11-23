@@ -1,0 +1,13 @@
+[project]
+name = "local-gsm8k-platinum"
+version = "0.1.0"
+description = "GSM8K-Platinum at a pinned revision, with the local-gsm8k verifier and runtime policy"
+requires-python = ">=3.11"
+dependencies = ["gsm8k", "local-gsm8k"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["local_gsm8k_platinum"]
