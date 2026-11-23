@@ -71,6 +71,14 @@ python miner/generator_search.py \
 
 With no `--model-dir`, the script fetches the published folded king and starts a localhost-only vLLM server. To use an already downloaded folded base, pass `--model-dir /path/to/base --king HEAD_VERSION`. To use an existing server, pass `--url http://127.0.0.1:8100/v1` instead of `--model-dir`.
 
+The folded head has a **VL-shaped architecture**. The reference server and official evaluator pass this exact vLLM option; include it in any standalone serving or sampling command too:
+
+```text
+--limit-mm-per-prompt '{"image":0,"video":0}'
+```
+
+To keep every raw completion before local grading, add `--save-rollouts ./generator-rollouts.jsonl`. Each completion is appended and fsynced. Re-run the same command with `--resume` to skip saved task/sample draws; the journal records raw output and finish/cap metadata, and grading failure does not discard it. A complete journal is graded without downloading the king or starting vLLM. Keep the same king, model, pool sample, seed and sampling settings: an incompatible, duplicate or truncated journal is refused rather than silently mixed. Use a new journal for a new run.
+
 Sampling is fixed at **temperature 1.0, top_p 0.95, top_k 20, max_tokens 65,536, thinking on**. The king is the folded head with no LoRA. The local report is an estimate, not an acceptance guarantee: the validator uses the king frozen at the deadline and its own committed seeds. The ids file contains only original IDs, one per line, ready for `build`.
 
 ## 5. Open your sealed link

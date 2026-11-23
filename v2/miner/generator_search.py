@@ -42,6 +42,107 @@ PUBLIC_BASE = "https://affine.io/public/read_links.json"
 PUBLIC_HEAD = "https://affine.io/public/head.json"
 PUBLIC_MINING = "https://affine.io/mining.json"
 END_OF_TURN = "<|im_end|>"
+ROLLOUT_FORMAT = "affine-generator-rollouts-v1"
+ROLLOUTS_PER_TASK = 8
+
+
+def rollout_metadata(
+    ids: Sequence[str], king: str, model: str, seed: int, max_tokens: int = SAMPLING.max_tokens,
+) -> dict[str, Any]:
+    """Everything a resumed journal must match; it never includes a local URL."""
+    return {
+        "king": king,
+        "model": model,
+        "ids": list(ids),
+        "pool_sample_seed": seed,
+        "rollout_seed_base": seed,
+        "rollouts_per_task": ROLLOUTS_PER_TASK,
+        "max_tokens": max_tokens,
+        "temperature": SAMPLING.temperature,
+        "top_p": SAMPLING.top_p,
+        "top_k": SAMPLING.top_k,
+        "thinking": SAMPLING.thinking,
+        "skip_special_tokens": False,
+    }
+
+
+def journal_header(path: Path) -> Mapping[str, Any]:
+    """The run identity of a journal, read before deciding whether a server is needed."""
+    if not path.exists():
+        return {}
+    if not path.is_file() or path.stat().st_size > 64 * 1024 * 1024 * 1024:
+        raise ConfigError("rollout journal must be a regular file no larger than 64 GiB")
+    try:
+        with path.open(encoding="utf-8") as stream:
+            row = json.loads(stream.readline(1024 * 1024 + 1))
+        metadata = row["metadata"]
+        if row.get("format") != ROLLOUT_FORMAT or not isinstance(metadata, dict) or type(metadata.get("king")) is not str:
+            raise ValueError("invalid journal header")
+        return metadata
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError) as exc:
+        raise ConfigError(f"cannot resume rollout journal {path}: {type(exc).__name__}: {exc}") from exc
+
+
+def resume_rollouts(path: Path, metadata: Mapping[str, Any]) -> dict[tuple[str, int], tuple[str, bool]]:
+    """Read a complete, compatible JSONL journal; refuse truncation or mixed runs."""
+    outputs: dict[tuple[str, int], tuple[str, bool]] = {}
+    if not path.exists():
+        return outputs
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if not lines or json.loads(lines[0]) != {"format": ROLLOUT_FORMAT, "metadata": dict(metadata)}:
+            raise ConfigError("rollout journal header does not match this king, model, pool sample, seed and sampling settings")
+        for line in lines[1:]:
+            row = json.loads(line)
+            if set(row) != {"id", "sample", "seed", "output", "capped", "finish_reason"}:
+                raise ValueError("unexpected rollout fields")
+            task_id, sample = row["id"], row["sample"]
+            index = metadata["ids"].index(task_id) if isinstance(task_id, str) and task_id in metadata["ids"] else -1
+            if index < 0 or type(sample) is not int or not 0 <= sample < ROLLOUTS_PER_TASK:
+                raise ValueError("rollout is outside the requested pool sample")
+            key = (task_id, sample)
+            expected_seed = int(metadata["rollout_seed_base"]) + index * ROLLOUTS_PER_TASK + sample
+            if key in outputs or row["seed"] != expected_seed or type(row["seed"]) is not int:
+                raise ValueError("duplicate rollout or wrong deterministic seed")
+            if type(row["output"]) is not str or type(row["capped"]) is not bool or row["finish_reason"] not in ("stop", "length"):
+                raise ValueError("rollout output or finish metadata has the wrong type")
+            if row["capped"] != (row["finish_reason"] == "length"):
+                raise ValueError("rollout cap and finish metadata disagree")
+            outputs[key] = (row["output"], row["capped"])
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError) as exc:
+        raise ConfigError(f"cannot resume rollout journal {path}: {type(exc).__name__}: {exc}") from exc
+    print(f"resumed {len(outputs)} saved rollouts from {path}", flush=True)
+    return outputs
+
+
+class RolloutJournal:
+    """Append and fsync every raw completed rollout before grading can fail."""
+
+    def __init__(self, path: Path, metadata: Mapping[str, Any], outputs: Mapping[tuple[str, int], tuple[str, bool]], resume: bool = False) -> None:
+        self.path, self._outputs = path, outputs
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existed = path.exists()
+        if existed and (not path.is_file() or path.stat().st_size > 64 * 1024 * 1024 * 1024):
+            raise ConfigError("rollout journal must be a regular file no larger than 64 GiB")
+        self._stream = path.open("a" if resume else "x", encoding="utf-8")
+        if not resume or not existed:
+            self.write({"format": ROLLOUT_FORMAT, "metadata": dict(metadata)})
+
+    def write(self, row: Mapping[str, Any]) -> None:
+        self._stream.write(canonical_json(row).decode("utf-8") + "\n")
+        self._stream.flush()
+        os.fsync(self._stream.fileno())
+
+    def save(self, key: tuple[str, int], value: tuple[str, bool], index: int, seed: int) -> None:
+        text, capped = value
+        self.write({
+            "id": key[0], "sample": key[1], "seed": seed + index * ROLLOUTS_PER_TASK + key[1],
+            "output": text, "capped": capped, "finish_reason": "length" if capped else "stop",
+        })
+        self._outputs[key] = value
+
+    def close(self) -> None:
+        self._stream.close()
 
 
 def read_json(source: str) -> Any:
@@ -269,22 +370,47 @@ def score(
     grade_timeout_s: float,
     generate: Callable[[str, Mapping[str, Any], float], tuple[str, bool]] = post_chat,
     grader_factory: Callable[..., Any] | None = None,
+    save_rollouts: Path | None = None,
+    resume: bool = False,
+    king: str = "",
 ) -> list[dict[str, Any]]:
-    """Generate eight deterministic-seed draws per task, then rank locally."""
-    outputs: dict[tuple[str, int], tuple[str, bool]] = {}
+    """Generate eight deterministic-seed draws per task, then rank locally.
 
-    def one(task_id: str, index: int, sample: int) -> tuple[tuple[str, int], tuple[str, bool]]:
-        messages = registry.messages(task_id)
-        body = request_body(model, messages, seed=seed + index * 8 + sample)
-        return (task_id, sample), generate(url, body, timeout_s)
+    A rollout journal keeps every raw completion on disk. ``resume`` loads only
+    a journal with the exact same generation metadata and skips completed draws.
+    """
+    metadata = rollout_metadata(ids, king, model, seed)
+    if resume and save_rollouts is None:
+        raise ConfigError("--resume needs --save-rollouts")
+    outputs = resume_rollouts(save_rollouts, metadata) if resume and save_rollouts is not None else {}
+    journal = RolloutJournal(save_rollouts, metadata, outputs, resume=resume) if save_rollouts is not None else None
+    try:
+        def one(task_id: str, index: int, sample: int) -> tuple[tuple[str, int], tuple[str, bool]]:
+            messages = registry.messages(task_id)
+            body = request_body(model, messages, seed=seed + index * ROLLOUTS_PER_TASK + sample)
+            return (task_id, sample), generate(url, body, timeout_s)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=http_workers) as executor:
-        futures = [executor.submit(one, task_id, index, sample) for index, task_id in enumerate(ids) for sample in range(8)]
-        for number, future in enumerate(concurrent.futures.as_completed(futures), 1):
-            key, value = future.result()
-            outputs[key] = value
-            if number % 8 == 0:
-                print(f"generated {number}/{len(futures)} rollouts", flush=True)
+        pending = [(index, task_id, sample) for index, task_id in enumerate(ids) for sample in range(ROLLOUTS_PER_TASK) if (task_id, sample) not in outputs]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=http_workers) as executor:
+            futures = {executor.submit(one, task_id, index, sample): (index, task_id) for index, task_id, sample in pending}
+            try:
+                for number, future in enumerate(concurrent.futures.as_completed(futures), 1):
+                    key, value = future.result()
+                    index, _ = futures[future]
+                    if journal is not None:
+                        journal.save(key, value, index, seed)
+                    else:
+                        outputs[key] = value
+                    if number % ROLLOUTS_PER_TASK == 0:
+                        print(f"generated {number}/{len(futures)} rollouts", flush=True)
+            except BaseException:
+                for future in futures:
+                    future.cancel()
+                executor.shutdown(wait=True, cancel_futures=True)
+                raise
+    finally:
+        if journal is not None:
+            journal.close()
 
     # Keep all grades, including grader failures and cap hits, in the denominator.
     return grade_rollouts(registry, ids, outputs, workers, grade_timeout_s, grader_factory=grader_factory)
@@ -335,6 +461,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--vllm-arg", action="append", default=[], help="extra argument passed to the local vLLM server; repeat as needed")
     p.add_argument("--report", type=Path, default=Path("generator-search.jsonl"))
     p.add_argument("--ids-file", type=Path, default=Path("generator-task-ids.txt"))
+    p.add_argument("--save-rollouts", type=Path, help="durable raw-rollout JSONL, fsynced after every completion")
+    p.add_argument("--resume", action="store_true", help="reuse completed draws from --save-rollouts and grade without regenerating")
     return p
 
 
@@ -347,14 +475,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ConfigError("--sample-size must be at least --count")
         if not 1 <= args.http_workers <= 256 or not 1 <= args.grade_workers <= 256:
             raise ConfigError("worker counts must be 1..256")
+        if args.resume and args.save_rollouts is None:
+            raise ConfigError("--resume needs --save-rollouts")
         registry = PriorPool(args.cache, build_index=False)
         ids = sample_ids(registry, args.sample_size, args.seed)
-        king = args.king
+        saved = journal_header(args.save_rollouts) if args.resume and args.save_rollouts is not None else {}
+        king = saved.get("king", "") if not args.king else args.king
+        if saved and saved.get("king", "") != king:
+            raise ConfigError("--king does not match the rollout journal")
         model_dir = args.model_dir
-        if model_dir is None:
-            king, model_dir = fetch_king(args.work, args.mining_json, args.read_links)
-        elif not king:
-            raise ConfigError("--model-dir requires --king HEAD_VERSION so the report names the measured king")
+        metadata = rollout_metadata(ids, king, args.model, args.seed)
+        outputs = resume_rollouts(args.save_rollouts, metadata) if args.resume else {}
+        fully_saved = len(outputs) == len(ids) * ROLLOUTS_PER_TASK
+        if fully_saved:
+            print("all rollouts are saved; grading without fetching or starting vLLM", flush=True)
+            rows = grade_rollouts(registry, ids, outputs, args.grade_workers, args.grade_timeout)
+        else:
+            if model_dir is None:
+                king, model_dir = fetch_king(args.work, args.mining_json, args.read_links)
+                if saved and king != saved["king"]:
+                    raise ConfigError("the published king changed; use the original --model-dir or a new rollout journal")
+            elif not king:
+                raise ConfigError("--model-dir requires --king HEAD_VERSION so the report names the measured king")
         settings = {
             "temperature": SAMPLING.temperature,
             "top_p": SAMPLING.top_p,
@@ -367,18 +509,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             "kv_cache_dtype": KING.kv_cache_dtype,
             "note": "Local estimates only. The validator samples the king frozen at the epoch deadline with commit-reveal seeds; local acceptance is not guaranteed.",
         }
-        with local_server(model_dir, args.url, args.gpu, args.max_model_len, args.startup_timeout, args.vllm_arg) as url:
-            rows = score(
-                registry,
-                ids,
-                url,
-                args.model,
-                args.seed,
-                args.grade_workers,
-                args.http_workers,
-                args.request_timeout,
-                args.grade_timeout,
-            )
+        if not fully_saved:
+            with local_server(model_dir, args.url, args.gpu, args.max_model_len, args.startup_timeout, args.vllm_arg) as url:
+                rows = score(
+                    registry,
+                    ids,
+                    url,
+                    args.model,
+                    args.seed,
+                    args.grade_workers,
+                    args.http_workers,
+                    args.request_timeout,
+                    args.grade_timeout,
+                    save_rollouts=args.save_rollouts,
+                    resume=args.resume,
+                    king=king,
+                )
         write_outputs(args.report, args.ids_file, rows, args.count, king, settings)
         return 0
     except (V2Error, OSError, ValueError, TypeError, KeyError) as exc:

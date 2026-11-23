@@ -30,7 +30,7 @@ from functools import lru_cache
 from importlib import metadata
 from multiprocessing.connection import Connection, wait
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 import sympy
 from latex2sympy2_extended import latex2sympy
@@ -353,17 +353,27 @@ def grade_answer(gold: str, problem: str, output: str, capped: bool) -> Grade:
         return _fail(ERROR, "grader-timeout", machine_cause=TIME_LIMIT)
 
 
-def grade(task: Task, output: str, capped: bool) -> Grade:
+def grade(task: Task | Mapping[str, object], output: str, capped: bool) -> Grade:
     """Grade one output for one task.
 
-    ``output`` is the text the model wrote: decoded with special tokens kept
-    (so ``<think>`` and ``</think>`` are in it), without the final
-    end-of-sequence token. ``capped`` is true when the model stopped at the
-    token cap and not at an end of sequence.
+    ``task`` is a :class:`Task`, or a mapping with the same ``task_id``,
+    ``slice``, ``problem`` and ``answer`` fields (as loaded from a task JSON
+    object). ``output`` is the text the model wrote: decoded with special
+    tokens kept (so ``<think>`` and ``</think>`` are in it), without the final
+    end-of-sequence token. ``capped`` is true only when the output reached
+    ``params.max_output_tokens`` without an end of sequence, not when a
+    smaller local serving limit stopped it.
 
     Call it in the main thread of a process (math-verify uses an alarm signal
     for its time limits), or use ``GradePool``.
     """
+    if isinstance(task, Mapping):
+        fields = ("task_id", "slice", "problem", "answer")
+        if any(type(task.get(name)) is not str for name in fields):
+            raise TypeError("task mapping must contain string fields: task_id, slice, problem, answer")
+        task = Task(**{name: task[name] for name in fields})
+    if not isinstance(task, Task):
+        raise TypeError("task must be a Task or a mapping with task_id, slice, problem and answer")
     return grade_answer(task.answer, task.problem, output, capped)
 
 

@@ -201,6 +201,21 @@ def test_the_reward_rule_runs_with_the_official_grader(build):
     assert caught.value.rule == "grader"
 
 
+def test_tokenizer_cache_parent_resolves_only_the_contract_head(tmp_path, capsys, monkeypatch):
+    cache, head_hash = tmp_path / "work" / "cache", "a" * 64
+    head = cache / head_hash
+    head.mkdir(parents=True)
+    assert tool.resolve_tokenizer(str(cache), head_hash) == str(head.resolve())
+    assert f"resolved cache parent {cache} to head {head}" in capsys.readouterr().out
+    missing = tmp_path / "other-cache"
+    missing.mkdir()
+    assert tool.resolve_tokenizer(str(missing), head_hash) == str(missing)
+    seen = []
+    monkeypatch.setitem(sys.modules, "transformers", types.SimpleNamespace(AutoTokenizer=types.SimpleNamespace(from_pretrained=lambda path: seen.append(path) or object())))
+    assert tool.load_tokens(str(cache), head_hash) is not None
+    assert seen == [str(head.resolve())]
+
+
 def test_upload_checks_first_and_sends_the_signed_header(build, tmp_path, capsys, monkeypatch):
     sent, batch, link = [], tmp_path / "batch.json", "https://signed.example/put?sig=secret"
     monkeypatch.setattr(tool.urllib.request, "urlopen", lambda request, timeout: sent.append(request) or contextlib.nullcontext())

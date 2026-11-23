@@ -178,9 +178,10 @@ def test_case_c_other_bytes_that_break_a_rule_of_the_miner_are_a_skip_at_once(bu
     adm = checked(build, moment, {HOTKEY: good})
     adm.store[layout.miner_object(HOTKEY)] = other  # the miner wrote after the check
     assert adm.freeze(build.reg(12, hotkey=HOTKEY), ROUND) is None
-    assert freeze_lines(capsys) == [
-        no_seat(12, good) + f"{start_of(other)} not valid, rule grader: groups[3].rollouts[1].reward is not the official grade. The freeze read {OTHER_BYTES}"
-    ]
+    (line,) = freeze_lines(capsys)
+    prefix = no_seat(12, good) + f"{start_of(other)} not valid, rule grader: groups[3].rollouts[1].reward is not the official grade"
+    assert line.startswith(prefix) and line.endswith(f". The freeze read {OTHER_BYTES}")
+    assert "submitted 1, official 0" in line and "below params.max_output_tokens" in line and "correct boxed answer can grade 1.0" in line
     assert moment.checks == 2, "a rule break of the miner gets no second try"
     assert layout.frozen_batch(ROUND, HOTKEY) not in adm.store
 

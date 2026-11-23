@@ -106,6 +106,18 @@ def test_the_grade_depends_on_the_task_and_the_text_only(task):
     assert (wrong.code, wrong.reward, wrong.rule) == (FAIL, 0.0, "wrong")
 
 
+def test_grade_accepts_a_task_mapping_without_weakening_task_fields(task):
+    mapping = {"task_id": task.task_id, "slice": task.slice, "problem": task.problem, "answer": task.answer}
+    right = THINK + "\\boxed{" + task.answer + "}"
+    assert math_grader.grade(mapping, right, False) == math_grader.grade(task, right, False)
+    assert math_grader.grade(mapping | {"id": "extra public field"}, right, False).reward == 1.0
+    for malformed in ({key: value for key, value in mapping.items() if key != "answer"}, mapping | {"answer": 1}, {"problem": "1+1", "answer": "2"}):
+        with pytest.raises(TypeError, match="task mapping must contain string fields"):
+            math_grader.grade(malformed, right, False)
+    with pytest.raises(TypeError, match="task must be a Task or a mapping"):
+        math_grader.grade("math:0", right, False)
+
+
 # ---- lesson: a capped reply is unresolved ----
 
 

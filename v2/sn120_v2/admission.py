@@ -621,7 +621,7 @@ def _fault(grader: Grader, row: tuple[str, str, bool], cause: Exception) -> bool
     return isinstance(cause, GraderTimeLimit) or isinstance(next(iter(_grades(grader, [row]))), Exception)
 
 
-def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set[tuple[int, int]]) -> None:
+def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set[tuple[int, int]], sizes: Sizes | None = None) -> None:
     """Every submitted reward must be the official grade. A prompt the environment does not know has no grade.
 
     A row that the grader cannot grade, in time or at all, is not allowed, whatever its reward. The check stops
@@ -640,7 +640,17 @@ def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set
         if official is None:
             unknown.add(i)
         else:
-            _need(abs(groups[i][1][j][1] - official) <= params.reward_tolerance, "grader", f"{here}.reward is not the official grade")
+            submitted = groups[i][1][j][1]
+            if abs(submitted - official) > params.reward_tolerance:
+                reason = f"{here}.reward is not the official grade (submitted {submitted:g}, official {official:g})"
+                if (i, j) in capped:
+                    reason += (f"; the output is exactly params.max_output_tokens ({params.max_output_tokens}) tokens, so it is an "
+                               "official cap-hit and grades 0 even when its boxed answer is correct; do not submit reward 1")
+                elif sizes is not None and sizes[i, j][1] < params.max_output_tokens:
+                    reason += (f"; the output has {sizes[i, j][1]} tokens, below params.max_output_tokens ({params.max_output_tokens}), "
+                               "so it is not an official cap-hit: a shorter local cap such as 8192 does not force reward 0, "
+                               "and a correct boxed answer can grade 1.0")
+                raise Invalid("grader", reason)
     known, share = len(groups) - len(unknown), params.min_pool_prompt_frac
     _need(known >= share * len(groups), "pool", f"{known} of {len(groups)} prompts are tasks of the public pool; the least share is {share:g}")
 
@@ -712,7 +722,7 @@ def _check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None, grade
     capped, sizes = _kept(kept, params, tokens)
     cost = _trains(kept, params, train, sizes)
     if grader is not None:
-        _graded(kept, params, grader, capped)
+        _graded(kept, params, grader, capped, sizes)
     checked = ("format",) + (("tokens",) if tokens is not None else ()) + (("grader",) if grader is not None else ())
     return Batch(sha256_hex(bytes(raw)), len(raw), version, tuple(kept), len(groups) - len(kept), train, checked, cost)
 

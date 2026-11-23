@@ -352,6 +352,9 @@ def test_the_example_file_trains_and_every_rule_code_is_listed(tmp_path):
     assert "Not a final verdict: " + ", ".join(f"`{code}`" for code in TRANSIENT) + "." in " ".join(text.split())
     assert "- `no_signal`: your file must train something." in text
     assert publisher.SAMPLING_GUIDANCE in " ".join(text.split())
+    assert "960 prompts produced 97 mixed-reward groups, a yield of about 10%" in " ".join(text.split())
+    assert '--limit-mm-per-prompt \'{"image":0,"video":0}\'' in text
+    assert "Only an output of exactly `params.max_output_tokens`" in " ".join(text.split())
     flat = " ".join(text.split())
     assert f"are in https://files.example/{publisher.READ_LINKS}." in flat and doc["contract"]["read_links"] == publisher.READ_LINKS
     assert "also at https://files.example/llms.txt and https://files.example/mining.json." in flat

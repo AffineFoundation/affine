@@ -71,7 +71,7 @@ python -m sn120_v2.replicate fetch --mining-json https://affine.io/mining.json -
 
 Each file is linked (or copied, when a link is not possible) and its sha256 is checked. Other files in that directory are ignored. While the head is the genesis model, llms.txt section 1 names the Hugging Face repository and revision that hold these files.
 
-The files are collected in `<work>/fetch/<base_hash>/` and moved to `<work>/cache/<base_hash>/` when the set is complete. The command prints `{"base_hash", "dir", "files", "fetched"}`.
+The files are collected in `<work>/fetch/<base_hash>/` and moved to `<work>/cache/<base_hash>/` when the set is complete. The command prints `{"base_hash", "dir", "files", "fetched"}`. Use the printed `dir` as the head tokenizer directory. For `affine_miner.py check` and `reproduce`, `--tokenizer <work>/cache` also works: when it contains the current contract's `<base_hash>/` directory, the tool resolves that inner directory and logs the selected path.
 
 **Do not add or change a file in `<work>/cache/`.** The box code verifies a directory there against its id and deletes a directory that does not match. `run` does the same. That is why `fetch` exists: a download tool that writes its own files into the model directory would make the set invalid.
 
@@ -95,13 +95,13 @@ for name in preprocessor_config.json processor_config.json video_preprocessor_co
 done
 ```
 
-Pass `$SERVING` as the model directory to your standalone vLLM evaluation command, and include the official evaluation option:
+The head has a **VL-shaped architecture**. Disable image/video inputs in standalone vLLM serving, evaluation and miner sampling with this exact option:
 
 ```
 --limit-mm-per-prompt '{"image":0,"video":0}'
 ```
 
-The official evaluator already passes that option. This serving copy is an evaluation workaround, not a new head and not a substitute for its sealed manifest. If another small processor or tokenizer file from the parent or that pinned genesis revision is needed, add it only to the separate serving copy. Future folds/published heads carry these small files automatically. `run` still reads the original verified head; the standalone serving copy does not alter its canonical training or head hashes.
+The official evaluator and `miner/generator_search.py` already pass that option; use it for standalone serving and any other miner sampling server too. This serving copy is an evaluation workaround, not a new head and not a substitute for its sealed manifest. If another small processor or tokenizer file from the parent or that pinned genesis revision is needed, add it only to the separate serving copy. Future folds/published heads carry these small files automatically. `run` still reads the original verified head; the standalone serving copy does not alter its canonical training or head hashes.
 
 ### run: check, train, score, judge
 
@@ -143,13 +143,17 @@ Where things are, below `--work`:
 
 ## 3. Building the batch file
 
-With 2 rollouts per prompt, plan on about 5–8 times as many prompts as the mixed-reward groups you need. One official-head sample of 160 prompts produced only 18 mixed-reward groups; the file needs 80 mixed groups.
+With 2 rollouts per prompt, one official-head sample of 960 prompts produced 97 mixed-reward groups, a yield of about 10%; plan on about 5–8 times as many prompts as the mixed-reward groups you need, and the file needs 80 mixed groups.
 
 A mixed-reward group has rollouts with different rewards; its nonzero advantages train. A file in which no rollout trains is invalid. Check the actual file and its token/reward rules before uploading:
 
 ```
-python miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> --tokenizer <head directory> --grade batch.json
+python miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> --tokenizer /data/affine/cache --grade batch.json
 ```
+
+Only an output with exactly `params.max_output_tokens` tokens (currently 65,536) is an official cap-hit. A shorter local limit such as 8192 must not be labeled an official cap-hit: below 65,536, a correct boxed answer can grade 1.0 rather than 0. At exactly the official cap the grade is 0 even if the answer is correct. The checker's reward-mismatch message explains both cases.
+
+For direct grading, `sn120_v2.envs.math_grader.grade(task, output, capped)` accepts a `sn120_v2.envs.math_pool.Task` or a mapping with string `task_id`, `slice`, `problem` and `answer` fields. A task JSON object therefore needs no separate conversion; malformed mappings and unrelated objects raise a clear `TypeError`. Set `capped=True` only for a stop at the official output cap, not for a shorter local serving cap.
 
 ## 4. The report of `run`
 

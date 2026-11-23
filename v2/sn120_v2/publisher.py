@@ -95,8 +95,8 @@ OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps from recipe (default 1e-
 GRADER_VERSION = "math-verify-0.9.0+lenient-v1"  # envs/math_grader.py
 RETIRED_KING_Z_BAR = 1.5
 # A measured planning example, not a guarantee of a miner's sample.
-SAMPLING_GUIDANCE = ("With 2 rollouts per prompt, plan on about 5–8 times as many prompts as the mixed-reward groups you need. "
-                     "One official-head sample of 160 prompts produced only 18 mixed-reward groups; the file needs 80 mixed groups.")
+SAMPLING_GUIDANCE = ("With 2 rollouts per prompt, one official-head sample of 960 prompts produced 97 mixed-reward groups, a yield of about 10%; "
+                     "plan on about 5–8 times as many prompts as the mixed-reward groups you need, and the file needs 80 mixed groups.")
 MERGED_EXPLANATION = (
     "Each candidate is tested as the merged model round_bf16(fp32 king master + your LoRA update), "
     "built with the same arithmetic as the install fold; the model that is tested is bit-for-bit the model that is installed. "
@@ -894,8 +894,9 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  max({params.max_answer_repeat_count}, {show(params.max_answer_repeat_frac)} x rollouts) rollouts.",
         "- `reward`: a finite number. The rewards of one prompt must be small enough to take their mean. A reward must",
         "  equal the grade that the official grader gives to (prompt, output). The",
-        f"  allowed difference is {show(params.reward_tolerance)}. One wrong reward makes the whole file invalid. An output of exactly",
-        f"  {params.max_output_tokens} tokens stopped at the cap: its official grade is 0. At least",
+        f"  allowed difference is {show(params.reward_tolerance)}. One wrong reward makes the whole file invalid. Only an output of exactly",
+        f"  `params.max_output_tokens` ({params.max_output_tokens} tokens now) is an official cap-hit: its grade is 0. A shorter local serving cap",
+        "  (for example 8192) is not an official cap-hit; a correct boxed answer below the official cap can grade 1.0. At least",
         f"  {show(params.min_pool_prompt_frac)} of the prompts must be tasks of the public pool (0 = no such rule). A prompt that",
         "  is not a task of the pool has no official grade: its rewards are not compared with anything.",
         "- A rollout that the official grader cannot grade inside its time limit is not allowed in a file, whatever its",
@@ -923,7 +924,9 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- Check a file before you upload it, with the same code as the validator:",
         "  `python v2/miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> batch.json`. Add",
         "  `--tokenizer <head directory>` for the token rules and `--grade` for the reward rule. `--grade` needs",
-        "  `--tokenizer`: only a token count can tell that an output stopped at the cap. Install, from a copy of the",
+        "  `--tokenizer`: only a token count can tell that an output stopped at the cap. `--tokenizer` also accepts the",
+        "  `<work>/cache` parent made by `replicate fetch`: the tool selects its current-head `<base_hash>` directory and",
+        "  logs the path. Install, from a copy of the",
         '  code (section 2): `pip install -e "v2[miner,envs]"`.',
         "",
         "### Rule codes",
@@ -970,7 +973,9 @@ def _rollout_lines(params: Params) -> list[str]:
         "the file does before you upload it, train and score it on your machine (section 10).",
         "",
         "- Model: sample from head M. Get its files as section 1 says. The trainer scores your tokens under head M,",
-        "  and a token outside the support of head M does not train (section 2).",
+        "  and a token outside the support of head M does not train (section 2). The head has a VL-shaped architecture:",
+        "  disable image and video inputs in vLLM serving, evaluation and miner sampling with the exact option",
+        '  `--limit-mm-per-prompt \'{"image":0,"video":0}\'`. The official evaluator and miner Generator search already pass it.',
         "- Prompt: the trainer and scorer use the same chat messages and template options (section 2).",
         *pool,
         "  For your sampler, render your prompt the same way: system = the instruction of section 6, user = `prompt`",
@@ -990,11 +995,13 @@ def _rollout_lines(params: Params) -> list[str]:
         f"  without the final `{END_OF_TURN}`. The trainer encodes this text again and adds the end-of-turn token itself",
         "  (section 2). It trains on the tokens of that encoding, which are the tokens that you sampled only if the text",
         "  encodes back to them.",
-        f"- Stop: let the model end by itself, or stop it at {params.max_output_tokens} tokens (`max_output_tokens`). An output of",
-        "  exactly that many tokens counts as stopped at the cap, and a longer output is invalid.",
+        f"- Stop: let the model end by itself, or stop it at {params.max_output_tokens} tokens (`params.max_output_tokens`). Only an output of",
+        "  exactly that many tokens is an official cap-hit; a longer output is invalid. A shorter local serving cap (for example 8192)",
+        "  is not an official cap-hit: below the official cap, a correct boxed answer can grade 1.0.",
         "- Reward of a pool task: the official grade, 1.0 for a pass and 0.0 for every other result. Take it from the",
-        "  grader itself, `sn120_v2.envs.math_grader.grade(task, output, capped).reward`, with `capped` true for an",
-        "  output that stopped at the cap. Or let the `check` command compare your rewards (`--tokenizer` and `--grade`,",
+        "  grader itself, `sn120_v2.envs.math_grader.grade(task, output, capped).reward`, with `capped` true only for an",
+        "  output that reached `params.max_output_tokens`. `task` is a `Task` or a mapping with string `task_id`, `slice`,",
+        "  `problem` and `answer` fields. Or let the `check` command compare your rewards (`--tokenizer` and `--grade`,",
         "  above). The grader reads the same `output` text.",
         "- Signal: give a prompt two rollouts or more, with different rewards. The advantage is the reward minus the",
         "  mean reward of the group, so a group in which all rewards are equal trains nothing.",
@@ -1091,7 +1098,8 @@ def _pool_lines(params: Params) -> list[str]:
         "  same as any non-pool prompt (see the `min_pool_prompt_frac` line).",
         "- A prompt of your file is a pool task when it is the problem text, with or without that instruction and one",
         "  blank line before it. The official grader is `sn120_v2.envs.math_grader.grade(task, output, capped)`. It",
-        "  grades model outputs in scoring and the rewards in your file.",
+        "  grades model outputs in scoring and the rewards in your file. `task` is a `Task` or a mapping with string",
+        "  `task_id`, `slice`, `problem` and `answer` fields.",
         *rotation,
     ]
 
