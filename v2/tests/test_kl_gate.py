@@ -33,7 +33,8 @@ from sn120_v2.types import (
 )
 
 LIVE = Path(__file__).parents[1] / "ops" / "train64k_params_t3600_prune_open.json"
-PRODUCTION = Path(__file__).parents[1] / "ops" / "train64k_params_t3600_prune_open_kl.json"
+PRODUCTION = Path(__file__).parents[1] / "ops" / "train64k_params_t3600_prune_open_kl8k.json"
+FULL_LENGTH = Path(__file__).parents[1] / "ops" / "train64k_params_t3600_prune_open_kl.json"
 OPEN_PIN = "073ef680cf338de5e085100704e60f80ba96657d6d4e19d12995e4cb971ef6f8"
 METRICS = dict(kl_seq=0.5, kl_seq_se=0.02, kl_tok=0.01, kl_k=8, kl_tokens=50)
 
@@ -143,25 +144,29 @@ def test_live_params_hash_unchanged_and_validation():
 
 def test_production_params_exact_identity_and_effective_diff():
     old, new = load_params(LIVE), load_params(PRODUCTION)
+    full = load_params(FULL_LENGTH)
     assert old.params_hash == OPEN_PIN
-    assert new.params_hash == "98d2e1eeaa4106a1e59a21a2f733242fde30a2dd90caaf7d5fa892c002259814"
+    assert new.params_hash == "dcab97d47d2f4b02ef7a14d5d8786a0f5a14885ddbf2634845435612fb9b4b1e"
     assert new.recipe_id == "b1f7cda18368657aebf33ee5097244ca41cccd6bcee6713459799680a6ef2d44"
     assert new.recipe.code_digest == "5e3aef5849ef6903c9fc1ab67f89eddbd2ea2cac9748621fc42b75224bf58419"
     assert new.recipe.image_digests == old.recipe.image_digests == (
         "9a4b16ff282b21baf44350e54c852ed59586b9efb6fe09e5cd2f1e288f4c108a",
     )
-    assert (new.min_kl_seq, new.kl_rollouts, new.kl_max_tokens, new.kl_time_limit_s) == (0.000225, 128, 0, 1200)
+    assert (new.min_kl_seq, new.kl_rollouts, new.kl_max_tokens, new.kl_time_limit_s) == (0.000225, 128, 8192, 1200)
+    assert dataclasses.replace(new, kl_max_tokens=0) == full
     # Compare effective values, including fields omitted at their defaults.
     assert dataclasses.asdict(old) | {"_legacy_fields": None} == dataclasses.asdict(new) | {
         "min_kl_seq": 0.0,
+        "kl_max_tokens": 0,
         "recipe": dataclasses.asdict(old.recipe),
         "_legacy_fields": None,
     }
-    assert json.loads(PRODUCTION.read_text()) == old.to_dict() | {
+    assert json.loads(FULL_LENGTH.read_text()) == old.to_dict() | {
         "min_kl_seq": 0.000225,
         "kl_rollouts": 128,
         "recipe": old.to_dict()["recipe"] | {"code_digest": new.recipe.code_digest},
     }
+    assert json.loads(PRODUCTION.read_text()) == json.loads(FULL_LENGTH.read_text()) | {"kl_max_tokens": 8192}
 
 
 def gated(build, kl, floor=0.25):
