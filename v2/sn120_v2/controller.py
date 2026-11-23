@@ -969,7 +969,7 @@ class Controller:
             if item.kind == ROUND_OPENED:
                 break
         opened = at[ROUND_OPENED]
-        wall = {name: max((result.phase_s.get(name, 0) for _, result in pairs), default=0) for name in ("training", "evaluation")}
+        wall = {name: max((result.phase_s.get(name, 0) for _, result in pairs), default=0) for name in ("training", "evaluation", "kl")}
         wall["total"] = now - opened
         if HEAD_APPLIED in at:
             wall["promote"] = at[HEAD_APPLIED] - at[ROUND_SETTLED]

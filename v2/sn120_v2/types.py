@@ -388,6 +388,26 @@ class RoundTicket(Record):
         return getattr(self, "_sealed", "") or super().digest()
 
 
+KL_FIELDS = ("kl_seq", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens")
+
+
+def check_kl(record: Any, what: str, prefix: str = "") -> None:
+    """The five measurement fields are present together and physically meaningful."""
+    def value(name):
+        return getattr(record, prefix + name)
+
+    present = {name for name in KL_FIELDS if value(name) is not None}
+    _need(not present or present == set(KL_FIELDS), f"{what}: KL fields must be present together")
+    for name in ("kl_seq", "kl_seq_se", "kl_tok"):
+        metric = value(name)
+        _need(metric is None or (type(metric) in (int, float) and math.isfinite(metric) and metric >= 0), f"{what}: {name} must be finite and nonnegative")
+    if present:
+        _need(type(value("kl_k")) is int and value("kl_k") >= 1, f"{what}: kl_k must be a positive integer")
+        _need(type(value("kl_tokens")) is int and value("kl_tokens") >= value("kl_k"), f"{what}: kl_tokens must cover every sampled rollout")
+    if isinstance(record, EntryResult):
+        _need(not present or record.status == SCORED, "only a scored entry carries KL measurements")
+
+
 @dataclass(frozen=True)
 class EntryResult(Record):
     """What a box reports for one entry."""
@@ -399,14 +419,20 @@ class EntryResult(Record):
     outcomes: tuple[str, ...] = ()  # one string per sample index over the round's task order
     eliminated_at_look: int | None = None
     attempts: int = 1
-    LEFT_OUT_AT_DEFAULT = ("tested_base_hash", "tested_fold_kernel")
+    LEFT_OUT_AT_DEFAULT = ("tested_base_hash", "tested_fold_kernel", "kl_seq", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens")
     tested_base_hash: str = ""
     tested_fold_kernel: str = ""
+    kl_seq: float | None = None
+    kl_seq_se: float | None = None
+    kl_tok: float | None = None
+    kl_k: int | None = None
+    kl_tokens: int | None = None
 
     def __post_init__(self) -> None:
         _need(self.status in (SCORED, NO_DECISION, SKIP, NOT_TRAINED, NOT_SCORED), f"unknown entry status {self.status!r}")
         _need((self.status == SCORED) == (self.lora is not None), "exactly the scored entries carry a LoRA")
         _need(self.status == SCORED or bool(self.reason), "a no_decision or skip entry must give a reason")
+        check_kl(self, "entry")
 
     @property
     def counted_for_seat(self) -> bool:
@@ -422,6 +448,8 @@ class EntryResult(Record):
 class BoxResult(Record):
     """The sealed result of one lease. Its digest is the seal. The box never picks the winner."""
 
+    LEFT_OUT_AT_DEFAULT = tuple(f"null_{name}" for name in KL_FIELDS)
+
     round_id: str
     lease_id: str
     box_id: str
@@ -434,6 +462,14 @@ class BoxResult(Record):
     finished_at: int
     stopped_at_limit: bool = False  # the round's time limit ended the scoring before the full draw
     phase_s: dict[str, int] = field(default_factory=dict)  # wall seconds of each phase on the box: training, evaluation
+    null_kl_seq: float | None = None
+    null_kl_seq_se: float | None = None
+    null_kl_tok: float | None = None
+    null_kl_k: int | None = None
+    null_kl_tokens: int | None = None
+
+    def __post_init__(self) -> None:
+        check_kl(self, "null", prefix="null_")
 
 
 @dataclass(frozen=True)
@@ -462,6 +498,8 @@ class Score(Record):
 class EntryDecision(Record):
     """The controller's decision for one entry."""
 
+    LEFT_OUT_AT_DEFAULT = KL_FIELDS
+
     queue_pos: int
     uid: int
     hotkey: str
@@ -472,9 +510,15 @@ class EntryDecision(Record):
     lora_hash: str = ""
     score: Score | None = None
     eliminated_at_look: int | None = None
+    kl_seq: float | None = None
+    kl_seq_se: float | None = None
+    kl_tok: float | None = None
+    kl_k: int | None = None
+    kl_tokens: int | None = None
 
     def __post_init__(self) -> None:
         _need(self.status in (WINNER, LOST, DUPLICATE, NULL_UPDATE, NO_DECISION, SKIP, NOT_TRAINED, NOT_SCORED), f"unknown decision status {self.status!r}")
+        check_kl(self, "decision")
 
     @property
     def charged(self) -> bool:
