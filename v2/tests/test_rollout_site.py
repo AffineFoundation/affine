@@ -20,11 +20,16 @@ def test_layout_accepts_exact_live_keys_and_rejects_backfill_and_lookalikes():
     assert site_pull.layout_key(layout.public_rollout_gate("r000001"))
     assert site_pull.layout_key(layout.public_rollout_gate("r000001", "winner"))
     assert site_pull.layout_key(layout.public_rollout_gate_meta("r000001"))
+    assert site_pull.layout_key(layout.public_rollout_gate_entry("r000001", 0))
+    assert site_pull.layout_key(layout.public_rollout_gate_entry("r000001", 32))
     for key in ("public/rollouts/index.json", "public/rollouts/backfill_index.json", "public/rollouts/SCHEMA.md",
                 "public/rollouts/bench/model.per_task.jsonl.gz", "public/rollouts/gate/head_outcomes.r000001-r000068.jsonl.gz",
                 "public/rollouts/gate/tasks.jsonl.gz", "public/rollouts/bench/m/math/deep.jsonl.gz",
                 "public/rollouts/bench/m/math.jsonl", "public/rollouts/gate/r000001/loser.jsonl.gz",
-                "public/rollouts/gate/other/meta.json"):
+                "public/rollouts/gate/other/meta.json", "public/rollouts/gate/r000001/entries/x.jsonl.gz",
+                "public/rollouts/gate/r000001/entries/-1.jsonl.gz", "public/rollouts/gate/r000001/entries/01.jsonl.gz",
+                "public/rollouts/gate/r000001/entries/1/deep.jsonl.gz", "public/rollouts/gate/r000001/entries/1.jsonl",
+                "public/rollouts/gate/r000001/entries/.jsonl.gz"):
         assert not site_pull.layout_key(key), key
 
 
@@ -63,6 +68,29 @@ def test_pull_streams_verifies_adopts_index_and_leaves_backfill_files_alone(tmp_
         store.put(key, b"must not copy")
     pulled = site_pull.Pull(store, site, 0)
     pulled.rollouts()
+    entry_data = gzip.compress(b'{"role":"entry","completion_text":"loser public"}\n', mtime=0)
+    entry_key = layout.public_rollout_gate_entry("r000001", 1)
+    store.put(entry_key, entry_data)
+    entry_meta = dict(role="entry", key=entry_key, queue_pos=1, uid=11, hotkey="hk11", lora_hash="a" * 64,
+                      rows=1, bytes=len(entry_data), sha256=hashlib.sha256(entry_data).hexdigest(), missing=False)
+    store.put(layout.public_rollout_gate_meta("r000001"), json.dumps(gate_meta | {
+        "schema": "sn120-v2-rollouts-gate-2", "files": [file_meta, entry_meta]}).encode())
+    gate2_site = tmp_path / "gate2-site"
+    gate2_site.mkdir()
+    pulled = site_pull.Pull(store, gate2_site, 0)
+    pulled.rollouts()
+    gate2 = json.loads((gate2_site / layout.ROLLOUT_INDEX).read_bytes())["gate"][0]
+    assert gate2["files"][1] == entry_meta and (gate2_site / entry_key).read_bytes() == entry_data
+    missing = entry_meta | {"queue_pos": 2, "key": layout.public_rollout_gate_entry("r000001", 2),
+                            "rows": 0, "bytes": 0, "missing": True}
+    del missing["sha256"]
+    store.put(layout.public_rollout_gate_meta("r000001"), json.dumps(gate_meta | {
+        "schema": "sn120-v2-rollouts-gate-2", "files": [file_meta, entry_meta, missing]}).encode())
+    pulled.rollouts()
+    gate2 = json.loads((gate2_site / layout.ROLLOUT_INDEX).read_bytes())["gate"][0]
+    assert gate2["files"][2] == missing and not (gate2_site / missing["key"]).exists()
+    # Existing gate-1 metadata remains readable and uses the original combined SHA.
+    store.put(layout.public_rollout_gate_meta("r000001"), json.dumps(gate_meta).encode())
     index = json.loads((site / layout.ROLLOUT_INDEX).read_bytes())
     assert index["schema"] == "sn120-v2-rollouts-index-2" and index["backfill"] == {"schema": "backfill", "rounds": [1]}
     assert index["bench"] == [meta] and index["gate"][0]["round_id"] == "r000001"

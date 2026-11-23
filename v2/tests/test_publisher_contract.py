@@ -88,6 +88,16 @@ def test_every_miner_bound_is_published_from_the_records(tmp_path):
     assert doc["contract"]["recipe_id"] == recipe.recipe_id and recipe.recipe_id in text
 
 
+def test_training_scoring_and_sampler_render_are_published_as_identical(tmp_path):
+    text = published(world(tmp_path).publisher.snapshots[-1])[1]
+    flat = " ".join(text.split())
+    assert "Training and scoring render a pool task identically" in flat
+    assert "user = `prompt` with a leading instruction + blank line removed" in flat
+    assert "enable_thinking=True" in flat and "add_generation_prompt=True" in flat
+    assert "Rollouts sampled under the old one-user-message render are now slightly off-policy for the trainer" in flat
+    assert "Scoring renders a task in another way than training" not in flat
+
+
 def test_the_pool_drop_list_and_non_pool_meaning_are_published(tmp_path):
     _, text, _ = published(world(tmp_path).publisher.snapshots[-1])
     flat = " ".join(text.split())
@@ -95,6 +105,46 @@ def test_the_pool_drop_list_and_non_pool_meaning_are_published(tmp_path):
     assert "1,454 tasks of the earlier pool" in flat and POOL_V2_0_SHA256[:8] in flat
     assert "https://github.com/AffineFoundation/affine/blob/v2/v2/sn120_v2/envs/math_pool_v2_1.dropped.json" in flat
     assert "removed tasks is no longer a pool task" in flat and "min_pool_prompt_frac" in flat
+
+
+def test_entry_outcomes_do_not_require_a_round_decision(tmp_path, build):
+    from sn120_v2.state import Lease, RoundRecord
+    from sn120_v2.types import RoundDecision
+    ticket = build.ticket(n_entries=2, n_tasks=2, params=build.params(n_tasks=2))
+    result = build.result(ticket, "PP", {0: "PP", 1: "FF"})
+    lease = Lease(ticket.lease_id, ticket.box_id, ticket.issued_at, ticket.expires_at, ticket.digest(), ticket.entries)
+    record = RoundRecord(ticket.round_id, ticket.head.version_id, ticket.params.params_hash, ticket.params.recipe_id,
+                         ticket.draw.round_seed, ticket.draw.snapshot_id, len(ticket.draw.task_ids), ticket.issued_at, (lease,))
+    report = public.round_report(record, [(ticket, result)])
+    assert [row["status"] for row in report["entry_outcomes"]] == [None, None]
+    for row, seat in zip(report["entry_outcomes"], ticket.entries):
+        assert (row["queue_pos"], row["uid"], row["hotkey"]) == (seat.queue_pos, seat.reg.uid, seat.reg.hotkey)
+        assert row["outcomes"] == list(next(entry.outcomes for entry in result.entries if entry.queue_pos == seat.queue_pos))
+    partial = dataclasses.replace(record, decision=RoundDecision(
+        ticket.round_id, ticket.head.version_id, None, (), len(ticket.draw.task_ids), 0.0, 0.0))
+    assert [row["status"] for row in public.round_report(partial, [(ticket, result)])["entry_outcomes"]] == [None, None]
+
+
+def test_all_scored_entry_eval_outputs_are_public(tmp_path):
+    made = world(tmp_path)
+    made.register(11, 0.4)
+    made.register(12, 0.0)
+    record = made.round()
+    report = json.loads(made.store.get(layout.round_file(record.round_id)))
+    assert [row["queue_pos"] for row in report["entry_outcomes"]] == [0, 1]
+    assert [row["status"] for row in report["entry_outcomes"]] == ["winner", "lost"]
+    assert all(len(row["outcomes"]) == made.params.samples_per_task and row["lora_hash"] and row["hotkey"] for row in report["entry_outcomes"])
+    assert report["rollouts_meta"] == layout.public_rollout_gate_meta(record.round_id)
+    flat = " ".join(published(made.publisher.snapshots[-1])[1].split())
+    assert "The outcome strings of the other entries are not published." not in flat
+    for text in (
+        "every other entry that was scored (`entry_outcomes`: queue position, UID, hotkey, LoRA hash, one string per sample)",
+        "null M (`public/rollouts/gate/<round_id>/head.jsonl.gz`)",
+        "every scored entry (`entries/<queue_pos>.jsonl.gz`)",
+        "listed with sizes and sha256 in `public/rollouts/gate/<round_id>/meta.json`",
+        "only the winner's batch is published (`public/rounds/<round_id>/batch.json`)",
+    ):
+        assert text in flat
 
 
 def test_every_number_follows_the_pinned_params(tmp_path):
@@ -105,12 +155,18 @@ def test_every_number_follows_the_pinned_params(tmp_path):
     assert doc["contract"]["params_hash"] == made.params.params_hash
     assert "Caps: 123 prompts and 4567 rollouts" in text and "strictly above 1.25" in text and "last 7 distinct king" in text
     assert "after 100, 400 tasks" in text and "after 100 tasks." in text  # looks and the early-drop bar are computed
-    assert "Training reads at most 777 output tokens" in text and "A longer rollout is valid: the trainer" in text
+    flat = " ".join(text.split())
+    assert "Training reads at most 777 output tokens" in flat and "A longer rollout is valid: the trainer" in flat
     header = doc["contract"]["batch_file"]["upload_headers"]
     assert header == r2.PUT_HEADERS and "`Content-Type: application/octet-stream`" in " ".join(text.split())  # what the presigner signs
     assert f"rule code `{TIME_LIMIT}`" in text
     for field in dataclasses.fields(made.params) + dataclasses.fields(recipe):  # the full table and the full recipe
-        assert f"`{field.name}`" in text or field.name in ("recipe", "miner_bounds") or (field.name.startswith("rotation_") and field.name in made.params.LEFT_OUT_AT_DEFAULT and getattr(made.params, field.name) == field.default)
+        # Optional king-count and default rotation fields are deliberately absent;
+        # a selected king count and every dedup/seed field are stated.
+        assert f"`{field.name}`" in text or field.name.startswith("_") or field.name in ("recipe", "miner_bounds") or (field.name in made.params.LEFT_OUT_AT_DEFAULT and (field.name == "null_samples_per_task" or field.name.startswith("rotation_")) and getattr(made.params, field.name) == field.default)
+    selected = world(tmp_path / "selected", null_samples_per_task=2)
+    selected_text = published(selected.publisher.snapshots[-1])[1]
+    assert "`null_samples_per_task`" in selected_text
     for key in doc["contract"]["objects"].values():
         assert key.startswith("public/") and key in text
 
@@ -295,6 +351,10 @@ def test_the_example_file_trains_and_every_rule_code_is_listed(tmp_path):
     assert all(meaning.strip() for meaning in RULES.values()) and set(TRANSIENT) <= set(RULES)
     assert "Not a final verdict: " + ", ".join(f"`{code}`" for code in TRANSIENT) + "." in " ".join(text.split())
     assert "- `no_signal`: your file must train something." in text
+    assert publisher.SAMPLING_GUIDANCE in " ".join(text.split())
+    assert "960 prompts produced 97 mixed-reward groups, a yield of about 10%" in " ".join(text.split())
+    assert '--limit-mm-per-prompt \'{"image":0,"video":0}\'' in text
+    assert "Only an output of exactly `params.max_output_tokens`" in " ".join(text.split())
     flat = " ".join(text.split())
     assert f"are in https://files.example/{publisher.READ_LINKS}." in flat and doc["contract"]["read_links"] == publisher.READ_LINKS
     assert "also at https://files.example/llms.txt and https://files.example/mining.json." in flat

@@ -55,7 +55,7 @@ def load_contract(source: str) -> tuple[Params, HeadVersion]:
     else:
         raw = Path(source).read_bytes()
     doc = json.loads(raw)
-    return Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
+    return Params.from_public_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
 
 
 def bounds_text(params: Params) -> str:
@@ -140,8 +140,21 @@ def upload(raw: bytes, url: str) -> None:
         raise InfraError(f"the upload failed: {type(exc).__name__} {getattr(exc, 'code', '')}".strip()) from None
 
 
-def load_tokens(path: str | None) -> Tokens | None:
+def resolve_tokenizer(path: str, base_hash: str) -> str:
+    """Resolve ``<work>/cache`` to this head's verified inner directory when given."""
+    place = Path(path).expanduser()
+    candidate = place / base_hash
+    if place.is_dir() and place.name == "cache" and candidate.is_dir():
+        resolved = candidate.resolve()
+        print(f"tokenizer: resolved cache parent {place.resolve()} to head {resolved}", flush=True)
+        return str(resolved)
+    return path
+
+
+def load_tokens(path: str | None, base_hash: str | None = None) -> Tokens | None:
     """The head's tokenizer, or None. ``transformers`` is needed only when a tokenizer is given."""
+    if path and base_hash:
+        path = resolve_tokenizer(path, base_hash)
     return HFTokens(importlib.import_module("transformers").AutoTokenizer.from_pretrained(path)) if path else None
 
 
@@ -168,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         command.add_argument("batch", help="your batch file")
         command.add_argument("--hotkey", required=True, help="the ss58 address of your hotkey")
-        command.add_argument("--tokenizer", help="tokenizer of the head (directory or model id); without it the token rules do not run")
+        command.add_argument("--tokenizer", help="head tokenizer directory, <work>/cache from fetch, or model id; without it the token rules do not run")
         command.add_argument("--grade", action="store_true", help="match your rewards with the official grader (needs --tokenizer and the envs extra)")
         if name == "reproduce":
             command.add_argument("--irt-snapshot", required=True, help="the published IRT snapshot of the round (a JSON file)")
@@ -187,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ConfigError("--grade needs --tokenizer")
         if args.command == "upload" and not os.environ.get(PUT_URL_ENV):
             raise ConfigError(f"set {PUT_URL_ENV} to the upload URL of your sealed link")
-        raw, tokens = Path(args.batch).read_bytes(), load_tokens(args.tokenizer)
+        raw, tokens = Path(args.batch).read_bytes(), load_tokens(args.tokenizer, head.base_hash)
         grader = official_grader(params) if args.grade else None
         if args.command in ("check", "upload"):
             report = check(raw, args.hotkey, params, tokens, grader)

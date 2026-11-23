@@ -68,7 +68,9 @@ def launch_params() -> Params:
 
 def moved(value):
     """Another value of the same kind. It rises with the value, so every order rule of ``Params`` still holds."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool):
+        return not value
+    if not isinstance(value, (int, float)):
         return value
     if isinstance(value, int):
         return 2 * value + 3
@@ -78,12 +80,12 @@ def moved(value):
 def all_moved(params: Params) -> Params:
     """Every number of the params and of the recipe at another value, the bounds of a miner too."""
     def shift(record, **special):
-        names = [f.name for f in dataclasses.fields(record) if f.name not in ("recipe", "miner_bounds", *special)]
+        names = [f.name for f in dataclasses.fields(record) if f.name not in ("recipe", "miner_bounds", "_legacy_fields", *special)]
         return dataclasses.replace(record, **{name: moved(getattr(record, name)) for name in names}, **special)
 
     bounds = tuple(shift(bound) for bound in params.recipe.miner_bounds)
     recipe = shift(params.recipe, miner_bounds=bounds, global_norm_cap=1.75)
-    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info")
+    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False, null_samples_per_task=2, fold_every_k=1, crown_gate="king", null_prune_from_round="r000001")
 
 
 def sentences(text: str) -> str:
@@ -95,7 +97,7 @@ def sentences(text: str) -> str:
 OTHER = {
     "looks": (0.2, 0.6, 1.0), "irt_middle_band": (0.3, 0.7), "irt_draw_rule": "fisher", "global_norm_cap": 1.75, "target_modules": ("q_proj",),
     "image_digests": (sim.SIM_IMAGE, "other-image"), "dtype": "float32", "kv_cache_dtype": "fp8", "env_pin": "pin-1", "method": "other-method", "code_digest": "c" * 64,
-    "rotation_rule": "info",
+    "rotation_rule": "info", "train_seed_scope": "batch", "null_samples_per_task": 2, "crown_gate": "king", "null_prune_from_round": "r000001",
 }  # fmt: skip
 
 
@@ -104,6 +106,8 @@ def one_changed(record, name: str):
     value = getattr(record, name)
     if name in OTHER:
         tries = [OTHER[name]]
+    elif isinstance(value, bool):
+        tries = [not value]
     elif isinstance(value, int):
         tries = [value + 1, value - 1]
     else:
@@ -123,7 +127,7 @@ def test_each_param_alone_moves_the_text(tmp_path):
     for record, only_table in ((base, ONLY_IN_THE_TABLE), (base.recipe, ONLY_IN_THE_RECIPE_TABLE)):
         for field in dataclasses.fields(record):
             name = field.name
-            if name in ("recipe", "miner_bounds", "env"):  # the recipe and its bounds: field by field below; env: one value exists
+            if name in ("recipe", "miner_bounds", "env", "_legacy_fields"):  # the recipe and its bounds: field by field below; env: one value exists
                 continue
             value, changed = one_changed(record, name)
             if name == "rotation_enabled":
@@ -160,6 +164,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         irt.MODEL,
         irt.DRAW_RULE,
         irt.FISHER_MASS_RULE,
+        irt.SQRT_FISHER_MASS_RULE if params.irt_draw_rule == "sqrt_fisher" else irt.MASS_RULES[params.irt_draw_rule],
         f"at most once each {admission.FAULT_HOLD_S // 60} minutes",
         f"after {admission.FAULT_TRIES} failed checks in a row",
         f"After {admission.FAULT_TRIES} counted checks in a row",
@@ -186,6 +191,8 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"--limit-mm-per-prompt {shlex.quote(server_argv('', 0, params)[-1])}",
         f"higher by more than {publisher.show(judging.TIE_TOLERANCE)}",
         f"| `looks` | {publisher.show(params.looks)} |",  # the last look is always 1: a rule of Params
+        f"| `fold_every_k` | {publisher.show(params.fold_every_k)} |",  # merged mode requires the default 1
+        f"After {params.fold_every_k} applied winner(s), the stack",
         # The state of this world, not a parameter.
         "Seats that wait: 0.",
         # A fact of the chain, of a key format or of HTTP. No constant of this code gives it.
@@ -212,8 +219,12 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         '"reward": 0.0',
         "Each prompt has at least 1 rollout",
         "counts 1 token more there",
-        "its official grade is 0.",
+        "its grade is 0.",
+        "a correct boxed answer below the official cap can grade 1.0",
+        "below the official cap, a correct boxed answer can grade 1.0",
+        "shorter local serving cap (for example 8192)",
         "(0 = no such rule)",
+        "when min_step_norm > 0, the miner's global_norm_cap is below it",
         "its advantage is not 0 and it has at least 1 output token",
         "counts its tokens + 1 (the end-of-turn token)",
         "A rollout with advantage 0 counts 0.",
@@ -233,6 +244,11 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "ln(1 + (e - 1) * t), and spent = 0 before the first look",
         "the normal quantile of 1 - a_k",
         "or when its se is 0.",
+        "(0.5 for a 0/1 split)",
+        "an even 0/1 split gives 0.5",
+        "or 0 when `field_se` is 0.",
+        f"The old z {publisher.RETIRED_KING_Z_BAR}",
+        publisher.SAMPLING_GUIDANCE,
     ]  # fmt: skip
 
 
@@ -259,16 +275,17 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     spans += [found.span() for pattern in (SECTION, re.compile(r"## \d+\. ")) for found in pattern.finditer(text)]
     typed = [f"...{text[max(0, at - 70) : at]}>>{text[at : at + 30]}..." for at in digits if not any(low <= at < high for low, high in spans)]
     assert not typed, "a number in llms.txt that no parameter and no named constant gives:\n" + "\n".join(typed)
-    unused = [phrase for phrase in phrases if not any(low <= at < high for found in re.finditer(re.escape(phrase), text) for low, high in [found.span()] for at in digits)]
+    unused = [phrase for phrase in phrases if phrase in flat[1] and not any(low <= at < high for found in re.finditer(re.escape(phrase), text) for low, high in [found.span()] for at in digits)]
     assert not unused, f"fixed_phrases names a phrase with no fixed number: {unused}"
 
     first, second = (publisher.stated_params(one) for one in texts)
     # Opt-in fields are absent at defaults, preserving old Params and llms
     # bytes. Non-default serving and rotation values must still be stated.
-    omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if name.startswith("rotation_") and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
-    assert set(first) == {f.name for f in dataclasses.fields(Params)} - {"recipe"} - omitted
-    assert set(second) == {f.name for f in dataclasses.fields(Params)} - {"recipe"}
-    assert {name for name in first if first[name] == second[name]} == {"env", "env_pin", "dtype", "kv_cache_dtype"}, "all_moved must move every number of the params"
+    omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if (name == "null_samples_per_task" or name.startswith("rotation_")) and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
+    public_fields = {f.name for f in dataclasses.fields(Params) if not f.name.startswith("_")} - {"recipe"}
+    assert set(first) == public_fields - omitted
+    assert set(second) == public_fields
+    assert {name for name in first if first[name] == second[name]} == {"env", "env_pin", "dtype", "kv_cache_dtype", "fold_every_k"}, "all_moved must move every number of the params; merged mode fixes fold_every_k at 1"
     headings = HEADING.findall(texts[0])
     assert headings == [str(number) for number in range(1, len(headings) + 1)] and set(SECTION.findall(text)) <= set(headings)
 
@@ -291,7 +308,7 @@ def test_the_typed_constants_of_the_text_are_those_of_the_code():
     # The stack of the box must not set others.
     stack = (PACKAGE / "assembly.py").read_text()
     assert "SoloRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)" in stack
-    assert "VllmEvaluator(store, box, evaluator_pool, LazyPool(GradePool))" in stack
+    assert "VllmEvaluator(store, box, evaluator_pool, LazyPool(GradePool), fold_input=fold_input)" in stack
 
 
 def played(tmp_path: Path) -> sim.SimWorld:

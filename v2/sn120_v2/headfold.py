@@ -53,6 +53,7 @@ from . import fold_kernel, layout
 from .afterking import Beside
 from .canonical import file_sha256, manifest_digest
 from .errors import ConfigError, ContractError, HeadLost, InfraError, V2Error, VerifyError
+from .gpu.fold_input import FoldInput, unchanged
 from .gpu.folder import fold_files, read_lora
 from .gpu.plan import BoxConfig, check_pins, log_phase
 from .gpu.resident import Resident, hash_tree
@@ -281,15 +282,15 @@ class ChainFolder:
     every folded file goes into the head manifest, as in ``full`` mode.
     """
 
-    def __init__(self, store: ObjectStore, config: BoxConfig, settings: FoldSettings | None = None, run: Runner = in_children) -> None:
-        self.store, self.config, self.settings, self.run = store, config, settings or FoldSettings(), run
+    def __init__(self, store: ObjectStore, config: BoxConfig, settings: FoldSettings | None = None, run: Runner = in_children, *, fold_input: FoldInput = unchanged) -> None:
+        self.store, self.config, self.settings, self.run, self.fold_input = store, config, settings or FoldSettings(), run, fold_input
         self.resident = Resident(store, config.work_dir)
         self._read_back: ReadBack | None = None
 
-    def fold(self, head: HeadVersion, params: Params, out_prefix: str) -> FoldArtifact:
-        return self._fold(head, params, out_prefix, {}, ahead=False)
+    def fold(self, head: HeadVersion, params: Params, out_prefix: str, tested=None) -> FoldArtifact:
+        return self._fold(head, params, out_prefix, {}, ahead=False, tested=tested)
 
-    def fold_ahead(self, head: HeadVersion, params: Params, out_prefix: str, lora_prefixes: Mapping[str, str]) -> FoldArtifact:
+    def fold_ahead(self, head: HeadVersion, params: Params, out_prefix: str, lora_prefixes: Mapping[str, str], tested=None) -> FoldArtifact:
         """The fold for the order ``overlap`` (``afterking.py``). Two differences from ``fold``.
 
         ``head`` is not in the journal yet, so a LoRA of ``lora_prefixes`` (``{lora_hash: prefix}``) is read
@@ -298,7 +299,7 @@ class ChainFolder:
         The new files go to the cache at once, and their second sha256 runs in threads (``ReadBack``).
         ``proven`` gives the result.
         """
-        return self._fold(head, params, out_prefix, lora_prefixes, ahead=True)
+        return self._fold(head, params, out_prefix, lora_prefixes, ahead=True, tested=tested)
 
     def proven(self, wait: bool) -> None:
         """``HeadPublish.proven``: raises ``HeadLost`` when the files of the last ``fold_ahead`` did not read back as written."""
@@ -325,7 +326,11 @@ class ChainFolder:
             path.rename(self.resident.root / identity)
             self.resident._verified.add(identity)  # noqa: SLF001
 
-    def _fold(self, head: HeadVersion, params: Params, out_prefix: str, lora_prefixes: Mapping[str, str], ahead: bool) -> FoldArtifact:
+    def _fold(self, head: HeadVersion, params: Params, out_prefix: str, lora_prefixes: Mapping[str, str], ahead: bool, tested=None) -> FoldArtifact:
+        from .gpu.merged import assert_tested_result
+
+        if tested is not None:
+            assert_tested_result(params, tested)
         check_pins(self.config.image_digest, params)
         started = time.monotonic()
         if not head.loras:
@@ -339,6 +344,7 @@ class ChainFolder:
         except (KeyError, VerifyError) as exc:
             raise VerifyError(f"the local files of the head are lost or changed ({exc}). Stop run and start it again: the start rebuilds the head from the chain") from None
         loras = tuple((self.resident.tree(lora_prefixes.get(ref.lora_hash) or layout.public_lora_prefix(ref.lora_hash), ref.lora_hash), ref.rank) for ref in head.loras)
+        base_dir = self.fold_input(base_dir, head)
         # A new directory for each try, and nothing of an older try: a fold process that outlived its ``run`` can then write into no file of this one.
         shutil.rmtree(Path(self.config.work_dir) / "fold", ignore_errors=True)
         out = Path(self.config.work_dir) / "fold" / f"{head.version_id}.{os.getpid()}.{time.monotonic_ns()}"
@@ -348,16 +354,23 @@ class ChainFolder:
         try:
             fetched = time.monotonic()
             label = f"fold of {head.version_id[:12]}"
-            results = fold_checked(FoldJob(master_dir, base_dir, loras, out / MASTER, out / BASE), self.settings, self.run, label)
+            kernel = tested.tested_fold_kernel if tested is not None else FIXED_ORDER
+            if params.eval_merged and (tested is None or len(head.loras) != 1):
+                raise InfraError("a merged-candidate install needs exactly one tested LoRA and its fold proof")
+            results = fold_checked(FoldJob(master_dir, base_dir, loras, out / MASTER, out / BASE, kernel=kernel), self.settings, self.run, label)
             summed = time.monotonic()
             base_files, master_files = results[0].base_files, results[0].master_files
             base_hash, master_digest = results[0].ids
+            if params.eval_merged:
+                from .gpu.merged import assert_fold_matches
+
+                assert_fold_matches(params, tested, base_hash)
             for name, sha in sorted(small_files(base_files).items()):
                 self.store.put_file(f"{out_prefix}/{BASE}/{name}", out / BASE / name)
                 if self.store.sha256(f"{out_prefix}/{BASE}/{name}") != sha:
                     raise InfraError(f"the stored copy of {out_prefix}/{BASE}/{name} differs from the local file")
             record = {"schema": FOLD_SCHEMA, "stacked_version_id": head.version_id, "base_hash": base_hash, "base_fp32_master_digest": master_digest}
-            record |= {"kernel": FIXED_ORDER, "torch": torch.__version__, "image_digest": self.config.image_digest}
+            record |= {"kernel": kernel, "torch": torch.__version__, "image_digest": self.config.image_digest}
             record |= {"folds": [{"implementation": REFERENCE if number else self.settings.implementation, "device": result.device} for number, result in enumerate(results)]}
             self.store.put(f"{out_prefix}/{FOLD_RECORD}", (json.dumps(record, indent=1, sort_keys=True) + "\n").encode("utf-8"))
             artifact = FoldArtifact(

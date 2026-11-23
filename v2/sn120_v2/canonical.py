@@ -90,6 +90,27 @@ def _hints(cls: type) -> dict[str, Any]:
     return typing.get_type_hints(cls)
 
 
+def _record_jsonable(obj: Any) -> dict[str, Any]:
+    # A field that the class names in ``LEFT_OUT_AT_DEFAULT`` is not written while it has its default. So a record
+    # type can get a new field, and each record that does not use the field keeps its JSON form and its digest.
+    left_out = getattr(type(obj), "LEFT_OUT_AT_DEFAULT", ())
+    fields = [
+        f for f in dataclasses.fields(obj)
+        if not f.name.startswith("_")
+        and not (
+            f.name in left_out
+            and getattr(obj, f.name) == (
+                f.default_factory()
+                if f.name in getattr(type(obj), "OMIT_EMPTY_FACTORY_DEFAULTS", ())
+                and f.default is dataclasses.MISSING
+                and f.default_factory is not dataclasses.MISSING
+                else f.default
+            )
+        )
+    ]
+    return {f.name: to_jsonable(getattr(obj, f.name), _hints(type(obj))[f.name]) for f in fields}
+
+
 def to_jsonable(obj: Any, tp: Any = Any) -> Any:
     """Turn records, tuples and mappings into plain JSON values.
 
@@ -98,12 +119,12 @@ def to_jsonable(obj: Any, tp: Any = Any) -> Any:
     round trip.
     """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        hints = _hints(type(obj))
-        # A field that the class names in ``LEFT_OUT_AT_DEFAULT`` is not written while it has its default. So a record
-        # type can get a new field, and each record that does not use the field keeps its JSON form and its digest.
-        left_out = getattr(type(obj), "LEFT_OUT_AT_DEFAULT", ())
-        fields = [f for f in dataclasses.fields(obj) if not (f.name in left_out and getattr(obj, f.name) == f.default)]
-        return {f.name: to_jsonable(getattr(obj, f.name), hints[f.name]) for f in fields}
+        # A record with non-finite measurements supplies a tagged JSON form (TrainReport).
+        # Do this before descending into its float fields; ordinary records remain unchanged.
+        to_dict = getattr(obj, "to_dict", None)
+        if to_dict is not None and type(obj).to_dict is not Record.to_dict:
+            return to_jsonable(to_dict(), tp)
+        return _record_jsonable(obj)
     if tp is float and type(obj) is int:
         return float(obj)
     origin, args = typing.get_origin(tp), typing.get_args(tp)
@@ -151,11 +172,16 @@ def from_jsonable(tp: Any, data: Any, where: str = "value") -> Any:
         if not isinstance(data, Mapping):
             raise ContractError(f"{where}: expected an object for {tp.__name__}")
         hints = _hints(tp)
-        unknown = sorted(set(data) - set(hints))
+        public = {key: hint for key, hint in hints.items() if not key.startswith("_")}
+        unknown = sorted(set(data) - set(public))
         if unknown:
             raise ContractError(f"{where}: unknown field(s) {unknown} for {tp.__name__}")
-        built = {key: from_jsonable(hints[key], item, f"{where}.{key}") for key, item in data.items()}
+        built = {key: from_jsonable(public[key], item, f"{where}.{key}") for key, item in data.items()}
         try:
+            if where != tp.__name__:
+                from_dict = getattr(tp, "from_dict", None)
+                if from_dict is not None and from_dict.__func__ is not Record.from_dict.__func__:
+                    return from_dict(data)
             return tp(**built)
         except TypeError as exc:
             raise ContractError(f"{where}: {exc}") from exc
@@ -182,7 +208,7 @@ class Record:
     """Base for shared dataclasses: strict JSON round trip and a stable digest."""
 
     def to_dict(self) -> dict[str, Any]:
-        return to_jsonable(self)
+        return _record_jsonable(self)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Self:

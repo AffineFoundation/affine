@@ -44,7 +44,7 @@ def lpt_train_all(entries: Sequence, prior: dict[int, float] | None = None) -> l
     return sorted(entries, key=lambda entry: (-prior.get(entry.queue_pos, float(entry.batch.n_rollouts)), entry.queue_pos))
 
 
-def choose_claim(remaining: Counter, alive: set[str], n_tasks: int, block: int, owner: str = "") -> tuple[str, int, int] | None:
+def choose_claim(remaining: Counter, alive: set[str], n_tasks: int, block: int, owner: str = "", own_first: bool = False) -> tuple[str, int, int] | None:
     """Choose null, own work, or the longest remaining live candidate.
 
     Values are the next unclaimed task indexes. Null leads when it is not
@@ -54,7 +54,9 @@ def choose_claim(remaining: Counter, alive: set[str], n_tasks: int, block: int, 
     candidates = [model for model in remaining if remaining[model] < n_tasks and (model == NULL_MODEL or model in alive)]
     if not candidates:
         return None
-    if owner not in candidates and owner != NULL_MODEL:
+    if own_first and owner in candidates:
+        model = owner
+    elif owner not in candidates and owner != NULL_MODEL:
         model = max(candidates, key=lambda name: (n_tasks - remaining[name], name == NULL_MODEL))
     elif NULL_MODEL in candidates and (owner not in remaining or remaining[NULL_MODEL] <= remaining[owner]):
         model = NULL_MODEL
@@ -73,16 +75,18 @@ class SoloScheduler:
         self.runner, self.ticket, self.deadline = runner, ticket, deadline
         self.params, self.draw = ticket.params, ticket.draw
         self.n, self.samples = len(self.draw.task_ids), ticket.params.samples_per_task
+        self.null_samples = ticket.params.null_samples
         self.lock = threading.RLock()
         self.changed = threading.Condition(self.lock)
         self.owner_by_model: dict[str, int] = {}
         self.trained: dict[int, LoRAArtifact] = {}
+        self.tested: dict[int, object] = {}
         self.alive: set[int] = set()
         self.dropped: dict[int, int] = {}
         self.remaining = Counter({NULL_MODEL: 0})
-        self.next_result = {(NULL_MODEL, sample): 0 for sample in range(self.samples)}
+        self.next_result = {(NULL_MODEL, sample): 0 for sample in range(self.null_samples)}
         self.buffered: dict[tuple[str, int, int], str] = {}
-        self.null = [""] * self.samples
+        self.null = [""] * self.null_samples
         self.scored: dict[int, list[str]] = {}
         self.judged: set[tuple[int, int]] = set()
         self.cut = False
@@ -90,10 +94,14 @@ class SoloScheduler:
         self.training_done = False
         self.seen_results: dict[tuple[str, int, int], str] = {}
 
-    def add_lora(self, pos: int, lora: LoRAArtifact, gpu: int | None = None) -> None:
+    def add_lora(self, pos: int, lora: LoRAArtifact, gpu: int | None = None, tested=None) -> None:
         with self.changed:
             if pos in self.trained:
                 return
+            if self.params.eval_merged:
+                if tested is None or not tested.path.is_dir():
+                    raise InfraError("eval_merged needs a built tested base before a candidate can be scored")
+                self.tested[pos] = tested
             self.trained[pos] = lora
             if gpu is not None:
                 self.owner_by_model[lora.lora_hash] = gpu
@@ -106,7 +114,27 @@ class SoloScheduler:
     def training_finished(self) -> None:
         with self.changed:
             self.training_done = True
+            self._cancel_null_if_unused()
             self.changed.notify_all()
+
+    def _cancel_null_if_unused(self) -> None:
+        """No future LoRA can use king work after training and the last drop."""
+        if self.training_done and not self.alive:
+            cancel = getattr(self.runner.evaluator.http, "cancel", None)
+            if cancel is not None:
+                cancel(NULL_MODEL)
+
+    def model_for_gpu(self, gpu: int) -> str:
+        with self.changed:
+            return next((model for model, owner in self.owner_by_model.items() if owner == gpu), NULL_MODEL)
+
+    def merged_dir(self, model: str):
+        if model == NULL_MODEL:
+            return None
+        pos = self._pos(model)
+        if pos not in self.tested:
+            raise InfraError(f"no tested merged base is recorded for {model}")
+        return self.tested[pos].path
 
     def steal(self, gpu: int, owner: str) -> tuple[str, int, int] | None:
         with self.changed:
@@ -114,7 +142,7 @@ class SoloScheduler:
                 if self.failure is not None or self.cut or (self.training_done and not self.alive):
                     return None
                 names = {lora.lora_hash for lora in self.trained.values()}
-                claim = choose_claim(self.remaining, names & {self.trained[pos].lora_hash for pos in self.alive}, self.n, self.runner.settings.steal_block_tasks, owner)
+                claim = choose_claim(self.remaining, names & {self.trained[pos].lora_hash for pos in self.alive}, self.n, self.runner.settings.steal_block_tasks, owner, own_first=self.params.eval_merged)
                 if claim is not None:
                     model, start, stop = claim
                     self.remaining[model] = stop
@@ -171,6 +199,7 @@ class SoloScheduler:
                 self.scored[pos][:] = [text[:stop] for text in self.scored[pos]]
                 if hasattr(self.runner.evaluator.http, "cancel"):
                     self.runner.evaluator.http.cancel(self.trained[pos].lora_hash)  # type: ignore[attr-defined]
+                self._cancel_null_if_unused()
                 self.changed.notify_all()
 
     def deadline_cut(self) -> None:
@@ -242,10 +271,22 @@ class SoloWorker:
             self.trained_source = self.scheduler.trained
             self.owner = next((model for model, gpu_id in self.scheduler.owner_by_model.items() if gpu_id == self.gpu), NULL_MODEL)
         request = EvalRequest(self.ticket.round_id, self.ticket.head, tuple(self.trained_source.values()), self.ticket.draw.task_ids, self.ticket.draw.round_seed, 0, self.params, deadline, len(self.ticket.entries))
-        url = self.evaluator._serve_one(self.ticket.head, self.params, len(self.ticket.entries), self.gpu)
+        bound = self.owner if self.params.eval_merged else NULL_MODEL
+        url = (self.evaluator._serve_one(self.ticket.head, self.params, len(self.ticket.entries), self.gpu, model=bound, base_dir=self.scheduler.merged_dir(bound))
+               if self.params.eval_merged else self.evaluator._serve_one(self.ticket.head, self.params, len(self.ticket.entries), self.gpu))
         written = []
         pending: set[Future] = set()
         stopped = False
+        held_claim = None
+
+        def switch(model):
+            nonlocal bound, url
+            if model == bound:
+                return
+            if pending:
+                raise InfraError("a merged server cannot switch models with rollouts in flight")
+            url = self.evaluator._serve_one(self.ticket.head, self.params, len(self.ticket.entries), self.gpu, model=model, base_dir=self.scheduler.merged_dir(model))
+            bound = model
 
         def submit(executor, model, sample, index):
             job = (model, sample, index)
@@ -256,18 +297,35 @@ class SoloWorker:
         with ThreadPoolExecutor(self.clients) as clients:
             try:
                 while pending or not stopped:
-                    while not stopped and len(pending) < self._client_cap():
+                    while not stopped and len(pending) < self._client_cap() and held_claim is None:
                         claim = steal(self.gpu, self.owner)
                         if claim is None:
                             stopped = True
                             break
                         model, start, stop = claim
-                        if model != NULL_MODEL:
+                        if self.params.eval_merged and model != bound:
+                            if pending:
+                                held_claim = claim
+                                break
+                            switch(model)
+                        elif not self.params.eval_merged and model != NULL_MODEL:
                             lora = next(lora for lora in self.trained_source.values() if lora.lora_hash == model)
                             self.evaluator._load_one(self.gpu, lora)
                         for index in range(start, stop):
-                            for sample in range(self.params.samples_per_task):
+                            for sample in range(self.params.null_samples if model == NULL_MODEL else self.params.samples_per_task):
                                 pending.add(submit(clients, model, sample, index))
+                    if not pending:
+                        if held_claim is not None:
+                            if stopped:
+                                break
+                            claim, held_claim = held_claim, None
+                            switch(claim[0])
+                            model, start, stop = claim
+                            for index in range(start, stop):
+                                for sample in range(self.params.null_samples if model == NULL_MODEL else self.params.samples_per_task):
+                                    pending.add(submit(clients, model, sample, index))
+                            continue
+                        break
                     if not pending:
                         break
                     done, pending = wait(pending, timeout=self.runner_poll_s(), return_when=FIRST_COMPLETED)
@@ -296,7 +354,8 @@ class SoloWorker:
                     if not all(self.evaluator._solo_servers[self.gpu].alive() for _ in [0]):
                         raise InfraError(f"the vLLM server on GPU {self.gpu} died during solo scoring")
             finally:
-                if stopped and self.deadline and time.time() >= self.deadline:
+                if stopped and ((self.deadline and time.time() >= self.deadline)
+                                or (self.scheduler is not None and self.scheduler.training_done and not self.scheduler.alive)):
                     cancel = getattr(self.evaluator.http, "cancel", None)
                     if cancel is not None:
                         cancel(NULL_MODEL)
@@ -334,7 +393,12 @@ class SoloRunner(LocalRunner):
             try:
                 return self._solo_run_round(ticket)
             finally:
-                self._close_resources()
+                try:
+                    self._close_resources()
+                finally:
+                    cleanup = getattr(self.evaluator, "cleanup_merged", None)
+                    if cleanup is not None:
+                        cleanup(ticket.round_id)
         return super().run(ticket)
 
     def _solo_run_round(self, ticket: RoundTicket):
@@ -361,17 +425,31 @@ class SoloRunner(LocalRunner):
         warm_pool = ThreadPoolExecutor(params.n_gpus)
 
         def start_idle_server(gpu: int) -> None:
-            """Start the normal server only on a GPU with no active trainer."""
+            """Start the normal null server, or this GPU's trained merged model."""
             if not self.settings.prewarm:
                 return
             with train_lock:
                 if gpu in training_gpus:
                     return
                 previous = warm_futures.get(gpu)
+                if not params.eval_merged:
+                    if previous is not None and previous.done():
+                        try:
+                            previous.result()
+                        except Exception:  # the worker's ordinary startup retries a failed warm start
+                            pass
+                        else:
+                            return
+                    try:
+                        self.evaluator._serve_one(ticket.head, params, len(ticket.entries), gpu)
+                    except Exception:  # the worker below performs the normal startup retry
+                        pass
+                    return
                 if previous is not None and not previous.done():
                     return
+                model = scheduler.model_for_gpu(gpu)
                 # A failed early start is retried here, not fatal to the round.
-                warm_futures[gpu] = warm_pool.submit(self.evaluator._serve_one, ticket.head, params, len(ticket.entries), gpu)
+                warm_futures[gpu] = warm_pool.submit(self.evaluator._serve_one, ticket.head, params, len(ticket.entries), gpu, model=model, base_dir=scheduler.merged_dir(model) if model != NULL_MODEL else None)
 
         def finish_warm(gpu: int) -> None:
             future = warm_futures.get(gpu)
@@ -404,7 +482,8 @@ class SoloRunner(LocalRunner):
                     report = self._train(ticket, entry, (gpu,), train_end, whole_time=started - ticket.issued_at <= AT_THE_LEASE_S and index < params.n_gpus)
                     reports[entry.queue_pos] = report
                     if isinstance(report, LoRAArtifact):
-                        scheduler.add_lora(entry.queue_pos, report, gpu)
+                        tested = self.evaluator.build_merged(ticket.round_id, ticket.head, report, params, gpu) if params.eval_merged else None
+                        scheduler.add_lora(entry.queue_pos, report, gpu, tested)
                     with train_lock:
                         remaining_training[0] -= 1
                         train_done[0] = max(train_done[0], self.clock())
@@ -463,7 +542,11 @@ class SoloRunner(LocalRunner):
             if isinstance(report, LoRAArtifact) and stopped and n_scored < first_look:
                 report = EntryResult(entry.queue_pos, NOT_SCORED, reason=f"the round's time limit ended the scoring after {n_scored} tasks, before the first look of {first_look}")
             elif isinstance(report, LoRAArtifact):
-                report = EntryResult(entry.queue_pos, SCORED, lora=report, outcomes=scored[entry.queue_pos], eliminated_at_look=dropped.get(entry.queue_pos))
+                proof = getattr(self.evaluator, "_solo_scheduler", None).tested.get(entry.queue_pos) if params.eval_merged else None
+                report = EntryResult(
+                    entry.queue_pos, SCORED, lora=report, outcomes=scored[entry.queue_pos], eliminated_at_look=dropped.get(entry.queue_pos),
+                    tested_base_hash=proof.base_hash if proof else "", tested_fold_kernel=proof.kernel if proof else "",
+                )
             entries.append(report)
         finished = self.clock()
         return BoxResult(

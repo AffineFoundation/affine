@@ -55,6 +55,7 @@ from .envs.math_grader import GradePool
 from .envs.math_pool import load_pool
 from .errors import ConfigError, InfraError, VerifyError
 from .gpu.evaluator import VllmEvaluator
+from .gpu.fold_input import FoldInputs
 from .gpu.folder import LoraFolder
 from .gpu.plan import BoxConfig, check_pins, code_digest
 from .gpu.trainer import LoraTrainer
@@ -170,7 +171,7 @@ def stack(context: StackContext) -> Stack:
     grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
     # One chunk is one row for each worker: a file whose rows all hang costs one time limit, not several.
     streams = check_streams()
-    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool_runtime.catalog if pool_runtime else pool, grades, chunk=ADMISSION_GRADE_WORKERS), streams=streams)
+    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool_runtime if pool_runtime else pool, grades, chunk=ADMISSION_GRADE_WORKERS), streams=streams)
     order = after_king()
     if order == OVERLAP and mode() != CHAIN:
         raise ConfigError(f"{ORDER_ENV}={OVERLAP} needs {MODE_ENV}={CHAIN}: in the mode {mode()!r} the upload of the folded head is the wait, and this order does not move it")
@@ -191,15 +192,16 @@ def stack(context: StackContext) -> Stack:
     runner = folder = pins = rollout_publisher = None
     if context.command == "run":
         box = BoxConfig.from_env()
-        evaluator_pool = pool_runtime.catalog if pool_runtime else pool
-        trainer = LoraTrainer(store, box, _read_groups)
-        evaluator = VllmEvaluator(store, box, evaluator_pool, LazyPool(GradePool))
+        evaluator_pool = pool_runtime if pool_runtime else pool
+        fold_input = FoldInputs(box.work_dir, state.genesis)
+        trainer = LoraTrainer(store, box, _read_groups, fold_input=fold_input)
+        evaluator = VllmEvaluator(store, box, evaluator_pool, LazyPool(GradePool), fold_input=fold_input)
         from .gpu.solo import SoloRunner
         from .rollouts import GateRolloutPublisher
 
         runner = SoloRunner(trainer, evaluator, lambda: int(time.time()), box.image_digest)
         rollout_publisher = GateRolloutPublisher(store, box.work_dir)
-        folder = LoraFolder(store, box)
+        folder = LoraFolder(store, box, fold_input=fold_input)
         pins = functools.partial(box_pins, box.image_digest)  # the check of the trainer, made before any work starts
     head = HeadPublish()
     if mode() == CHAIN:
@@ -208,7 +210,7 @@ def stack(context: StackContext) -> Stack:
         if context.command in BOX_COMMANDS:
             box, settings = BoxConfig.from_env(), FoldSettings.from_env()
             if folder is not None:
-                folder = ChainFolder(store, box, settings)
+                folder = ChainFolder(store, box, settings, fold_input=fold_input)
                 head = dataclasses.replace(head, proven=folder.proven)
             keeper = HeadKeeper(store, box.work_dir, writer, checkpoint_every(), settings, proven=head.proven)
             head = dataclasses.replace(head, prepare=keeper.prepare, after_round=keeper.after_round, checkpoint=keeper.checkpoint)

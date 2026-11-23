@@ -2,9 +2,9 @@
 
 No GPU, no network, no chain. A simulated batch is a tiny JSON file that
 states its own ``quality``: how much the LoRA trained from it changes the
-pass rate. The simulated evaluator gives null M and every LoRA the same
-random number for the same task and sample, as the real seeds do, so the
-comparison is paired.
+pass rate. The simulated evaluator pairs null M sample 0 with every LoRA on
+the same task and sample. Later null-M samples are king-only and use their
+own random numbers, as the real independent seeds do.
 
 Use ``SimWorld`` in tests of your own part, and ``python -m sn120_v2 sim``
 for a full run.
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -53,8 +53,14 @@ STORE_DIR = "store"
 
 def sim_params(**changes: Any) -> Params:
     """Small parameters for fast CPU rounds."""
-    base = dict(n_tasks=64, min_scored_tasks=16, batch_cap=4, looks=(0.5, 1.0), recipe=Recipe(image_digests=(SIM_IMAGE,)))
-    return Params(**(base | changes))
+    # Simulation files are not affine batches and its fake updates are deliberately tiny: test new rules explicitly.
+    base = dict(n_tasks=64, min_scored_tasks=16, batch_cap=4, looks=(0.5, 1.0), recipe=Recipe(image_digests=(SIM_IMAGE,)),
+                train_seed_scope="batch", min_signal_rollouts=1, min_step_norm=0.0, dedup_enabled=False, crown_gate="king")
+    params = Params(**(base | changes))
+    # Historical simulations omit these fields. Dataclass replacement opts into a changed new rule explicitly.
+    legacy = frozenset(name for name in Params.LEGACY_FIELDS
+                       if getattr(params, name) == Params.LEGACY_VALUES[name])
+    return replace(params, _legacy_fields=legacy)
 
 
 def _unit(*parts: object) -> float:
@@ -130,7 +136,7 @@ class SimTrainer:
             rank=recipe.rank,
             alpha=recipe.alpha,
             target_modules=recipe.target_modules,
-            report=TrainReport(request.seed, recipe.steps, 0.5, 0.01, 1000, 0.1, "cpu", SIM_IMAGE),
+            report=TrainReport(request.seed, recipe.steps, 0.5, 0.1, 1000, 0.1, "cpu", SIM_IMAGE),
         )
 
     def close(self) -> None:
@@ -138,7 +144,7 @@ class SimTrainer:
 
 
 class SimEvaluator:
-    """Scores null M and LoRAs with shared random numbers per task and sample."""
+    """Pair king sample 0 with each LoRA; later king samples are independent."""
 
     def __init__(self, store: LocalStore) -> None:
         self.store = store
@@ -154,7 +160,7 @@ class SimEvaluator:
         outcomes = {}
         for model, effect in models.items():
             strings = []
-            for sample in range(request.params.samples_per_task):
+            for sample in range(request.params.null_samples if model == NULL_MODEL else request.params.samples_per_task):
                 codes = []
                 for task_id in request.task_ids:
                     luck = rollout_seed(request.round_seed, task_id, sample) / 2**63

@@ -25,6 +25,7 @@ from sn120_v2 import layout  # noqa: E402
 from sn120_v2.canonical import file_sha256, manifest_digest  # noqa: E402
 from sn120_v2.errors import ConfigError, ContractError, InfraError, VerifyError  # noqa: E402
 from sn120_v2.fold_kernel import upcast_master  # noqa: E402
+from sn120_v2.gpu.fold_input import FoldInputs  # noqa: E402
 from sn120_v2.gpu.resident import hash_tree  # noqa: E402
 from sn120_v2.headchain import CHAIN, FIXED_ORDER, FOLD_SCHEMA, FULL, MATMUL, chain_links, checkpoints, heads_of, small_files, tail  # noqa: E402
 from sn120_v2.headfold import (  # noqa: E402
@@ -47,6 +48,7 @@ from sn120_v2.headfold import (  # noqa: E402
     rebuild,
     run_fold,
 )
+from sn120_v2.params import GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION  # noqa: E402
 from sn120_v2.sim import sim_params  # noqa: E402
 from sn120_v2.types import HeadManifest  # noqa: E402
 
@@ -211,6 +213,67 @@ def test_a_fold_in_chain_mode_keeps_the_weight_files_on_the_box_and_publishes_th
     later = world.king()  # a fold from local files alone: the store has no master of the head before it
     assert later.head.parent_version_id != head.version_id and world.state.manifests[later.head.parent_version_id].head.parent_version_id == head.version_id
     assert is_head(world, later) and set(world.store.weights()) == before
+
+
+@pytest.mark.parametrize("mode", [CHAIN, FULL])
+def test_a_future_fold_carries_parent_and_genesis_processor_files_without_unsealing_the_parent(tmp_path, mode):
+    calls = []
+    metadata = {
+        "preprocessor_config.json": b'{"processor":"vision"}',
+        "processor_config.json": b'{"processor":"chat"}',
+        "video_preprocessor_config.json": b'{"processor":"video"}',
+        "tokenizer_config.json": b'{"tokenizer_class":"Tiny"}',
+        "tokenizer.json": b'{"model":{}}',
+        "config.json": b'{"model":"genesis must not replace the parent"}',
+        "special_tokens_map.json": b'{"eos_token":"<eos>"}',
+        "generation_config.json": b'{"eos_token_id":2}',
+        "chat_template.jinja": b'{{ messages }}',
+    }
+
+    def fake_download(repo, revision, out):
+        calls.append((repo, revision))
+        out.mkdir(parents=True, exist_ok=True)
+        for name, blob in metadata.items():
+            (out / name).write_bytes(blob)
+
+    from sn120_v2.params import GenesisSpec
+    lineage = GenesisSpec(GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, "f" * 64, "f" * 64, "5Validator")
+    prepared = FoldInputs(tmp_path / "work", lineage, download=fake_download)
+    world = ChainWorld(tmp_path / "world", sim_params(), fold_input=prepared,
+                       model_repo=GENESIS_MODEL_REPO, model_revision=GENESIS_MODEL_REVISION)
+    old = world.head
+    sealed, old_json = hash_tree(world.root / "genesis" / "base"), old.to_json()
+    manifest = world.king()
+    expected = set(old.base_files) | set(metadata)
+    assert set(manifest.base_files) == expected
+    assert {name: manifest.base_files[name] for name in old.base_files if not name.endswith(".safetensors")} == {
+        name: sha for name, sha in old.base_files.items() if not name.endswith(".safetensors")}
+    for name, blob in metadata.items():
+        if name not in old.base_files:
+            assert world.store.get(layout.public_base_file(manifest.head.base_hash, name)) == blob
+    assert hash_tree(world.root / "genesis" / "base") == sealed and old.to_json() == old_json
+    assert hash_tree(world.local(old.head.base_hash)) == old.base_files
+    assert calls == [(GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION)]
+    # Parent-first precedence, and a complete hash check every time a prepared
+    # directory is reused: a local edit must not enter a future fold silently.
+    parent_processor = tmp_path / "work" / "fold-inputs" / old.head.base_hash / "preprocessor_config.json"
+    assert parent_processor.read_bytes() == metadata["preprocessor_config.json"]
+    assert hash_tree(world.local(old.head.base_hash)) == old.base_files
+    assert prepared(world.local(old.head.base_hash), old.head) == parent_processor.parent
+    parent_processor.write_bytes(b'{"processor":"changed"}')
+    with pytest.raises(VerifyError, match="changed or extra files"):
+        prepared(world.local(old.head.base_hash), old.head)
+    parent_processor.write_bytes(metadata["preprocessor_config.json"])
+    (parent_processor.parent / "extra.json").write_text("{}")
+    with pytest.raises(VerifyError, match="changed or extra files"):
+        prepared(world.local(old.head.base_hash), old.head)
+    (parent_processor.parent / "extra.json").unlink()
+    # The newly published head carries its own metadata. No genesis fetch and
+    # no parent override occur on the next fold, and both bytes are inherited.
+    later = world.king()
+    assert calls == [(GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION)]
+    assert {name: later.base_files[name] for name in expected if not name.endswith(".safetensors")} == {
+        name: sha for name, sha in manifest.base_files.items() if not name.endswith(".safetensors")}
 
 
 def test_two_folds_that_differ_keep_nothing_and_the_head_does_not_move(world):

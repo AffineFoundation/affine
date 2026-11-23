@@ -4,18 +4,24 @@ The box never picks the winner. The controller recomputes everything here
 from the outcome strings, so the decision is a fixed function of the score
 file and the pinned parameters.
 
-Estimator. For each scored task t, d_t = (LoRA pass rate) - (null M pass
-rate), on the same seeds. With sampling weights w_t:
+Estimator. For each scored task t, d_t = (LoRA pass rate) - (mean null M
+pass rate over its ``null_samples`` outcomes). Sample 0 uses the same seed
+for null M and the LoRA; later null-M samples are king-only. With sampling
+weights w_t:
 
     delta = sum(w_t * d_t) / sum(w_t)
     var   = n / (n - 1) * sum((w_t * (d_t - delta))^2) / sum(w_t)^2
     se    = sqrt(var),  z = delta / se
 
-The variance uses the spread of the realised d_t. One rollout per task has
-no per-task noise estimate, and the spread of d_t already holds both the
-task-sampling noise and the rollout noise. It has no finite-population
-term, so it is slightly on the safe side. With equal weights it is the
-paired standard error: sd(d) / sqrt(n).
+The variance uses the spread of the realised d_t, not a per-task variance
+estimate. The tasks are independent draws, so their design-based spread
+holds both task-sampling and rollout noise. Averaging k independent king
+outcomes reduces the king part of that noise: conditional on the task and
+sample-0 pairing, Var(d_t) = Var(lora_t) + Var(king_t)/k - 2Cov(lora_t,
+king_t). The design-based se of the realised d_t / sqrt(n), with HT weights,
+therefore remains correct with the averaged king. It has no
+finite-population term, so it is slightly on the safe side. With equal
+weights it is the paired standard error: sd(d) / sqrt(n).
 
 Win rule. A LoRA is eligible when it was scored on every task, z is strictly
 above ``z_bar``, and its cap-hit rate is not above
@@ -44,17 +50,21 @@ Dropping cannot create a winner, so the final test needs no correction.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from fractions import Fraction
-from statistics import NormalDist
+from statistics import NormalDist, median
 from typing import Sequence
 
 from .errors import ContractError, HeadMismatchError
 from .params import Params
+from .sampling import train_seed
 from .types import (
     CAP,
+    DUPLICATE,
     ERROR,
     LOST,
+    NULL_UPDATE,
     NO_DECISION,
     NOT_RUN,
     NOT_SCORED,
@@ -108,14 +118,16 @@ def _as_written(value: float) -> Fraction:
     return Fraction(repr(value))
 
 
-def cap_hit_ok(lora_caps: int, null_caps: int, rollouts: int, params: Params) -> bool:
+def cap_hit_ok(lora_caps: int, null_caps: int, rollouts: int, params: Params, null_rollouts: int | None = None) -> bool:
     """Exact test of: cap rate <= max(cap_hit_floor, null cap rate + cap_hit_margin).
 
-    A LoRA is rejected only when its cap-hit share is strictly greater than
-    the limit. A share exactly on the limit passes. The test uses
-    whole-number counts, so no rounding error can move the limit.
+    ``rollouts`` is the LoRA denominator. ``null_rollouts`` is the king's
+    separate denominator when it has extra samples; None retains the old
+    equal-sample-count call. Each side is divided by its own whole-number
+    count, so doubling the king samples never doubles its cap rate.
     """
-    limit = max(_as_written(params.cap_hit_floor), Fraction(null_caps, rollouts) + _as_written(params.cap_hit_margin))
+    null_rollouts = rollouts if null_rollouts is None else null_rollouts
+    limit = max(_as_written(params.cap_hit_floor), Fraction(null_caps, null_rollouts) + _as_written(params.cap_hit_margin))
     return Fraction(lora_caps, rollouts) <= limit
 
 
@@ -145,6 +157,34 @@ def cap_limit(null_cap_rate: float, params: Params) -> float:
     return max(params.cap_hit_floor, null_cap_rate + params.cap_hit_margin)
 
 
+def field_differences(own: Sequence[float], members: Sequence[Sequence[float]], n: int) -> list[float]:
+    """Own pass rate minus the field median on each of its scored tasks.
+
+    A member contributes only on tasks it ran. ``statistics.median`` averages
+    the two middle values on an even count, including a 0/1 split (0.5).
+    """
+    return [own[t] - median([rates[t] for rates in members if t < len(rates)]) for t in range(n)]
+
+
+def _with_field_gate(
+    score: Score,
+    weights: Sequence[float],
+    members: Sequence[Sequence[float]],
+    own_index: int,
+    params: Params,
+) -> Score:
+    diffs = field_differences(members[own_index], members, score.n_tasks)
+    delta, se = estimate(weights[:score.n_tasks], diffs)
+    z = delta / se if se > 0 else 0.0
+    reasons = list(score.reasons)
+    if not z > params.z_field_bar:
+        reasons.append(f"field z {z:.3f} is not above {params.z_field_bar:g}")
+    return dataclasses.replace(
+        score, field_delta=delta, field_se=se, field_z=z,
+        eligible=score.eligible and z > params.z_field_bar, reasons=tuple(reasons),
+    )
+
+
 def score_entry(
     weights: Sequence[float],
     null_outcomes: Sequence[str],
@@ -169,10 +209,13 @@ def score_entry(
         reasons.append(f"scored on {n} tasks, not on the full draw")
     if n < params.min_scored_tasks:
         reasons.append(f"scored on {n} tasks; the rule needs {params.min_scored_tasks}")
-    if not z > params.z_bar:
+    if params.crown_gate == "argmax_symmetric":
+        if not delta > TIE_TOLERANCE:
+            reasons.append(f"delta {delta:.6g} does not beat the king by more than {TIE_TOLERANCE:g}")
+    elif not z > params.z_bar:
         reasons.append(f"z {z:.3f} is not above {params.z_bar:g}")
     rollouts = n * len(lora_outcomes)
-    if not cap_hit_ok(code_count(lora_outcomes, CAP, n), code_count(null_outcomes, CAP, n), rollouts, params):
+    if not cap_hit_ok(code_count(lora_outcomes, CAP, n), code_count(null_outcomes, CAP, n), rollouts, params, null_rollouts=n * len(null_outcomes)):
         reasons.append(f"cap-hit rate {cap_rate:.4f} is above {cap_limit(null_cap_rate, params):.4f}")
     return Score(
         n_tasks=n,
@@ -208,7 +251,9 @@ def upper_final_z(score: Score, look: int, n_total: int, params: Params) -> floa
 
 
 def drop_at_look(score: Score, look: int, n_total: int, params: Params) -> bool:
-    """True when a LoRA can no longer reach the win bar. Only an early look can drop, and it never names a winner."""
+    """True when a LoRA can no longer reach the win bar. Argmax always scores the full shared prefix."""
+    if params.crown_gate == "argmax_symmetric":
+        return False
     sizes = params.look_sizes(n_total)
     if not 0 <= look < len(sizes) - 1 or score.n_tasks != sizes[look]:
         return False
@@ -244,12 +289,15 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
     )
     null_scored = 0
     if any(e.status == SCORED for e in result.entries):
-        _need(len(result.null_outcomes) == samples, "null M needs one outcome string per sample")
+        _need(len(result.null_outcomes) == params.null_samples, "null M needs null_samples_per_task outcome strings; one outcome string per sample when null")
         check_outcomes(result.null_outcomes, n, "null M")
         null_scored = scored_prefix(result.null_outcomes)
     look_sizes = params.look_sizes(n)
     for seat, entry in zip(ticket.entries, result.entries):
         what = f"entry {entry.queue_pos}"
+        from .gpu.merged import assert_tested_result
+
+        assert_tested_result(params, entry)
         if entry.status != SCORED:
             _need(not entry.outcomes and entry.eliminated_at_look is None, f"{what}: an unscored entry has no outcomes")
             continue
@@ -263,7 +311,9 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
             f"{what}: LoRA rank, alpha or target modules differ from the recipe with the miner's values",
         )
         _need(lora.report.image_digest in params.recipe.image_digests, f"{what}: trainer image is not pinned")
-        _need(math.isfinite(lora.report.loss) and math.isfinite(lora.report.step_norm), f"{what}: non-finite train report")
+        _need(math.isfinite(lora.report.loss), f"{what}: non-finite train loss")
+        _need(lora.report.seed == train_seed(ticket.draw.round_seed, seat.batch.batch_sha256, params.train_seed_scope),
+              f"{what}: training seed does not match the round's seed scope")
         _need(len(entry.outcomes) == samples, f"{what}: needs one outcome string per sample")
         check_outcomes(entry.outcomes, n, what)
         scored = scored_prefix(entry.outcomes)
@@ -275,7 +325,9 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
         if look is None:
             _need(scored == n, f"{what}: not dropped, so it must be scored on every task")
             continue
-        _need(0 <= look < len(look_sizes) - 1, f"{what}: can only be dropped at an early look")
+        _need(params.crown_gate != "argmax_symmetric" and 0 <= look < len(look_sizes) - 1,
+              f"{what}: argmax_symmetric has no early drops" if params.crown_gate == "argmax_symmetric"
+              else f"{what}: can only be dropped at an early look")
         _need(scored == look_sizes[look], f"{what}: dropped at look {look} but scored on {scored} tasks")
         partial = score_entry(draw.weights, result.null_outcomes, entry.outcomes, params)
         _need(drop_at_look(partial, look, n, params), f"{what}: the drop rule does not hold at look {look}")
@@ -296,13 +348,15 @@ def _entry_decision(seat, entry: EntryResult, status: str, reason: str, score: S
     )
 
 
-def decide(leases: Sequence[tuple[RoundTicket, BoxResult]]) -> RoundDecision:
-    """Settle a round from every lease's ticket and sealed result.
+def decide(
+    leases: Sequence[tuple[RoundTicket, BoxResult]],
+    duplicate_evidence: Sequence[EntryDecision] = (),
+    duplicate_clusters: Sequence[dict] = (),
+) -> RoundDecision:
+    """Settle a round from sealed results and replayable duplicate evidence.
 
-    Each LoRA is compared with the null M that its own box scored. With more
-    than one box, the boxes' null-M rates must agree within
-    ``calibration_tol``; if not, no score is used and every scored entry is
-    ``no_decision``.
+    Null updates are terminal before duplicate keepers or scoring candidates are selected. Stage-B
+    ``duplicate_evidence`` is an input, not a post-hoc rewrite, so a duplicate can never win.
     """
     _need(len(leases) >= 1, "a round needs at least one lease")
     first = leases[0][0]
@@ -329,11 +383,32 @@ def decide(leases: Sequence[tuple[RoundTicket, BoxResult]]) -> RoundDecision:
         problems.append("null-M pass rates differ between boxes by more than calibration_tol")
 
     rows: list[tuple[object, EntryResult, str, str, Score | None]] = []
-    candidates: list[tuple[int, Score]] = []
+    field_scores: list[tuple[int, Score, Sequence[str]]] = []
+    seats = {seat.queue_pos: seat for ticket, _ in leases for seat in ticket.entries}
+    _need(len(seats) == sum(len(ticket.entries) for ticket, _ in leases), "a queue position occurs twice")
+    copies = {}
+    for row in duplicate_evidence:
+        seat = seats.get(row.queue_pos)
+        _need(row.status == DUPLICATE, "duplicate evidence must use the duplicate terminal status")
+        _need(row.queue_pos not in copies, "duplicate evidence names a queue position twice")
+        _need(seat is not None and (row.uid, row.hotkey, row.registration_block, row.batch_sha256) ==
+              (seat.reg.uid, seat.reg.hotkey, seat.reg.registration_block, seat.batch.batch_sha256),
+              "duplicate evidence does not match its frozen seat")
+        copies[row.queue_pos] = row
     for ticket, result in leases:
         for seat, entry in zip(ticket.entries, result.entries):
             if entry.status != SCORED:
                 rows.append((seat, entry, entry.status, entry.reason, None))
+                continue
+            norm = entry.lora.report.step_norm
+            if not math.isfinite(norm) or norm < params.min_step_norm:
+                shown = "non-finite" if not math.isfinite(norm) else f"{norm:.6g}"
+                rows.append((seat, entry, NULL_UPDATE,
+                             f"stored update norm {shown} does not meet min_step_norm {params.min_step_norm:g}", None))
+                continue
+            if seat.queue_pos in copies:
+                copy = copies[seat.queue_pos]
+                rows.append((seat, entry, DUPLICATE, copy.reason, None))
                 continue
             # At the round's time limit the box stops early. What it scored is then the whole test, by the same final rule.
             full = scored_prefix(result.null_outcomes) if result.stopped_at_limit else n
@@ -347,7 +422,28 @@ def decide(leases: Sequence[tuple[RoundTicket, BoxResult]]) -> RoundDecision:
                 rows.append((seat, entry, NO_DECISION, f"only {score.cover:.3f} of this LoRA's rollouts resolved", score))
             else:
                 rows.append((seat, entry, LOST, "", score))
-                candidates.append((seat.queue_pos, score))
+                # A dropped entry helps set the field only on its scored tasks;
+                # its final eligibility keeps the unchanged king/full-draw test.
+                field_scores.append((seat.queue_pos, score, entry.outcomes))
+
+    candidates = [(position, score) for position, score, _ in field_scores]
+    if params.crown_gate == "field_median" and field_scores:
+        king_rates = [
+            pass_rates(result.null_outcomes, scored_prefix(result.null_outcomes))
+            for ticket, result in leases
+            if any(e.status == SCORED for e in result.entries)
+        ]
+        king_n = max(len(rates) for rates in king_rates)
+        king = [math.fsum(rates[t] for rates in king_rates if t < len(rates)) /
+                sum(t < len(rates) for rates in king_rates) for t in range(king_n)]
+        members = [pass_rates(outcomes, score.n_tasks) for _, score, outcomes in field_scores] + [king]
+        candidates = [
+            (position, _with_field_gate(score, first.draw.weights, members, index, params))
+            for index, (position, score, _) in enumerate(field_scores)
+        ]
+        gated = {position: score for position, score in candidates}
+        rows = [(seat, entry, status, reason, gated[seat.queue_pos] if status == LOST else score)
+                for seat, entry, status, reason, score in rows]
 
     winner = pick_winner(candidates)
     entries = []
@@ -357,14 +453,23 @@ def decide(leases: Sequence[tuple[RoundTicket, BoxResult]]) -> RoundDecision:
             reason = "" if status == WINNER else "; ".join(score.reasons) or "another LoRA had a higher delta"
         entries.append(_entry_decision(seat, entry, status, reason, score))
 
-    if winner is not None:
+    if winner is not None and params.crown_gate == "argmax_symmetric":
+        why = f"entry {winner} had the highest mean pass rate, above the king"
+    elif winner is not None and params.crown_gate == "field_median":
+        why = (f"entry {winner} beat M by more than {params.z_bar:g} SE and the field's "
+               f"per-task median by more than {params.z_field_bar:g} SE")
+    elif winner is not None:
         why = f"entry {winner} beat M by more than {params.z_bar:g} standard error"
     elif problems:
         why = "no decision: " + "; ".join(problems)
     elif not candidates:
         why = "no entry was scored"
+    elif params.crown_gate == "argmax_symmetric":
+        why = "king had the highest mean pass rate"
     else:
         why = f"null round: no LoRA beat M by more than {params.z_bar:g} standard error"
+        if params.crown_gate == "field_median":
+            why += f" and the field's per-task median by more than {params.z_field_bar:g} SE"
     return RoundDecision(
         round_id=first.round_id,
         head_version_id=first.head.version_id,
@@ -374,4 +479,11 @@ def decide(leases: Sequence[tuple[RoundTicket, BoxResult]]) -> RoundDecision:
         null_pass_rate=math.fsum(null_rates) / len(null_rates) if null_rates else 0.0,
         null_cap_rate=math.fsum(null_caps) / len(null_caps) if null_caps else 0.0,
         reason=why,
+        duplicate_clusters=tuple(duplicate_clusters),
     )
+
+
+def duplicate_decision(head_version_id: str, round_id: str, entries: tuple[EntryDecision, ...], clusters=()) -> RoundDecision:
+    """A duplicate-only close: copies are charged; any undersized survivors are uncharged ``no_decision`` rows."""
+    return RoundDecision(round_id, head_version_id, None, entries, 0, 0.0, 0.0,
+                         "no trainable entry remained after duplicate removal", tuple(clusters))

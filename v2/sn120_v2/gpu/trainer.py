@@ -22,6 +22,7 @@ from ..params import Params, Recipe
 from ..seams import ObjectStore
 from ..types import LoRAArtifact, TrainReport, TrainRequest
 from .batch import Groups, training_rows
+from .fold_input import FoldInput, unchanged
 from .plan import BoxConfig, check_pins, log_phase
 from .procs import Child, Process, Spawn, gpu_env, stop_all
 from .resident import Resident, resident_head, upload_tree
@@ -48,8 +49,9 @@ def job_env(gpu_ids: Sequence[int], work_dir: Path) -> dict[str, str]:
 
 
 class LoraTrainer:
-    def __init__(self, store: ObjectStore, config: BoxConfig, read_groups: ReadGroups, spawn: Spawn = Child):
+    def __init__(self, store: ObjectStore, config: BoxConfig, read_groups: ReadGroups, spawn: Spawn = Child, *, fold_input: FoldInput = unchanged):
         self.store, self.config, self.read_groups, self.spawn = store, config, read_groups, spawn
+        self.fold_input = fold_input
         self.resident = Resident(store, config.work_dir)
         self.jobs = Path(config.work_dir) / "train"
         self._procs: list[Process] = []
@@ -64,7 +66,7 @@ class LoraTrainer:
         if recipe.method != "grpo-lora" or recipe.dropout or recipe.kl:
             raise InfraError("this trainer runs grpo-lora with dropout 0 and KL off only")
         self.resident.prune({head.base_hash, head.base_fp32_master_digest})
-        base_dir = resident_head(self.resident, head)
+        base_dir = self.fold_input(resident_head(self.resident, head), head)
         rows = self._rows(request, recipe.group_size)
         job_dir = self.jobs / f"{request.round_id}-{entry.queue_pos:03d}"
         shutil.rmtree(job_dir, ignore_errors=True)
@@ -172,9 +174,12 @@ class LoraTrainer:
         numbers = [report.get(key) for key in ("loss", "step_norm")]
         if report.get("status") != "ok" or not all(type(n) in (int, float) for n in numbers):
             raise InfraError("the training job wrote a report that cannot be read")
-        if not all(math.isfinite(n) for n in numbers):
-            raise BatchRejected("training gave a loss or an update that is not finite")
-        cap = recipe.global_norm_cap
-        if cap is not None and report["step_norm"] > cap * (1 + 1e-6):
-            raise InfraError("the adapter update is larger than recipe.global_norm_cap")
+        if not math.isfinite(report["loss"]):
+            raise BatchRejected("training gave a loss that is not finite")
+        # A non-finite stored update reaches pure judging, which charges it as null_update.
+        # TrainReport's tagged JSON form keeps the sealed result strictly canonical.
+        if math.isfinite(report["step_norm"]):
+            cap = recipe.global_norm_cap
+            if cap is not None and report["step_norm"] > cap * (1 + 1e-6):
+                raise InfraError("the adapter update is larger than recipe.global_norm_cap")
         return report

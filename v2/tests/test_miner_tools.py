@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import contextlib
 import importlib.util
 import io
@@ -17,9 +19,9 @@ from sn120_v2 import layout, public, publisher, sampling, sim
 from sn120_v2.admission import Invalid, StoreAdmission
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.envs.math_pool import load_pool
-from sn120_v2.errors import BatchRejected, InfraError
+from sn120_v2.errors import BatchRejected, ContractError, InfraError
 from sn120_v2.irt import IRTSampler, draw_from_snapshot
-from sn120_v2.params import MinerBound, Recipe
+from sn120_v2.params import MinerBound, Params, Recipe
 from sn120_v2.types import NULL_MODEL, Draw, EvalChunk
 from sn120_v2.worker import LocalRunner
 
@@ -52,7 +54,9 @@ class Box(dict):
         self.requests.append(request)
         if self.fail:
             raise InfraError("out of memory")
-        return self.build.artifact(request.head, request.entry, request.params)
+        artifact = self.build.artifact(request.head, request.entry, request.params)
+        report = dataclasses.replace(artifact.report, seed=request.seed)
+        return dataclasses.replace(artifact, report=report)
 
     def evaluate(self, request):
         self.events.append("evaluate")
@@ -181,7 +185,7 @@ def test_cli_reproduce_rebuilds_the_draw_from_the_public_irt_snapshot(build, tmp
     irt_file.write_text(json.dumps(snapshot))
     argv = ["reproduce", "--mining-json", mining_json(build, tmp_path), "--hotkey", HOTKEY, "--irt-snapshot", str(irt_file)]
     code, out = cli(capsys, *argv, "--round-seed", "seed-9", "--backend", "fake_backend:make", "--train", '{"rank": 8}', str(batch))
-    assert code == 0 and json.loads(out)["status"] == "winner" and json.loads(out)["train_applied"]["rank"] == 8
+    assert code == 0 and json.loads(out)["status"] == "winner" and json.loads(out)["train_applied"]["rank"] == 8 and json.loads(out)["train_report"]["seed"] == box.requests[0].seed
     expected = draw_from_snapshot(snapshot, "seed-9", build.params().n_tasks)  # n_tasks comes from the contract
     assert (box.requests[1].task_ids, box.requests[1].round_seed) == (expected.task_ids, "seed-9")
 
@@ -197,6 +201,21 @@ def test_the_reward_rule_runs_with_the_official_grader(build):
     assert caught.value.rule == "grader"
 
 
+def test_tokenizer_cache_parent_resolves_only_the_contract_head(tmp_path, capsys, monkeypatch):
+    cache, head_hash = tmp_path / "work" / "cache", "a" * 64
+    head = cache / head_hash
+    head.mkdir(parents=True)
+    assert tool.resolve_tokenizer(str(cache), head_hash) == str(head.resolve())
+    assert f"resolved cache parent {cache} to head {head}" in capsys.readouterr().out
+    missing = tmp_path / "other-cache"
+    missing.mkdir()
+    assert tool.resolve_tokenizer(str(missing), head_hash) == str(missing)
+    seen = []
+    monkeypatch.setitem(sys.modules, "transformers", types.SimpleNamespace(AutoTokenizer=types.SimpleNamespace(from_pretrained=lambda path: seen.append(path) or object())))
+    assert tool.load_tokens(str(cache), head_hash) is not None
+    assert seen == [str(head.resolve())]
+
+
 def test_upload_checks_first_and_sends_the_signed_header(build, tmp_path, capsys, monkeypatch):
     sent, batch, link = [], tmp_path / "batch.json", "https://signed.example/put?sig=secret"
     monkeypatch.setattr(tool.urllib.request, "urlopen", lambda request, timeout: sent.append(request) or contextlib.nullcontext())
@@ -210,6 +229,36 @@ def test_upload_checks_first_and_sends_the_signed_header(build, tmp_path, capsys
     assert code == 0 and json.loads(out)["uploaded"] and "secret" not in out
     assert (sent[0].full_url, sent[0].get_method(), sent[0].data) == (link, "PUT", batch_bytes())
     assert dict(sent[0].header_items()) == {"Content-type": "application/octet-stream", "User-agent": tool.CLIENT["User-Agent"]}
+
+
+def test_the_live_public_params_and_future_fields_are_readable_only_by_the_public_loader(build, tmp_path):
+    """Frozen 2026-11-23 public params: a miner must not need a same-day code upgrade."""
+    from sn120_v2.replicate import Contract
+
+    frozen = json.loads((Path(__file__).parent / "data" / "params_live_073ef680.json").read_text())
+    raw = frozen["params"]
+    assert frozen["params_hash"] == frozen["contract_params_hash"] == "073ef680cf338de5e085100704e60f80ba96657d6d4e19d12995e4cb971ef6f8"
+    params = Params.from_dict(raw)
+    assert params.params_hash == frozen["params_hash"]
+    assert (params.crown_gate, params.z_bar, params.z_field_bar) == ("argmax_symmetric", 0.0, 0.0)
+    future = copy.deepcopy(raw)
+    future.update(min_kl_seq=0.0, confirm_next_round=True)
+    future["recipe"]["future_recipe"] = {"anything": [1, 2]}
+    future["recipe"]["miner_bounds"][0]["future_bound"] = "new"
+    with pytest.raises(ContractError, match="unknown field"):
+        Params.from_dict(future)
+    assert Params.from_public_dict(future) == params
+    with pytest.raises(ContractError, match="expected an integer"):
+        Params.from_public_dict(raw | {"n_tasks": "2000"})
+
+    world = sim.SimWorld(tmp_path / "world", build.params())
+    mining = tmp_path / "mining.json"
+    mining.write_bytes(publisher.render(world.publisher.snapshots[-1])[0])
+    document = json.loads(mining.read_text())
+    document["params"] = future
+    mining.write_text(json.dumps(document))
+    assert tool.load_contract(str(mining))[0] == params
+    assert Contract.load(str(mining)).params == params
 
 
 def test_every_read_of_an_address_names_its_client(build, tmp_path, monkeypatch):
@@ -245,6 +294,8 @@ def test_a_miner_needs_only_the_two_public_files(build, tmp_path, monkeypatch):
     assert doc["queue"]["next"][0]["hotkey"] == "hk11" and not doc["queue"]["next"][0]["file_valid"]
     miner_params, _ = tool.load_contract(str(tmp_path / "mining.json"))
     train = {row["key"]: row["choices"][:1] or (int(row["high"]) if row["integer"] else row["high"]) for row in doc["contract"]["miner_settable"]}
+    # A small two-rollout example cannot exercise the maximum recipe's active-rollout floor.
+    train["minibatches"] = 1
     raw = batch_bytes(train, "hk11")
     assert tool.check(raw, "hk11", miner_params, WordTokens())["rules_not_run"] == ["grader"]
     key = doc["contract"]["batch_file"]["private_object"].replace("HOTKEY", "hk11")

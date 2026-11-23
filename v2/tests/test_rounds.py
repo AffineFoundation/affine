@@ -666,15 +666,19 @@ def test_the_command_line_bootstraps_runs_a_round_and_reports_status(tmp_path, c
     assert text.startswith("SN120 v2 round r000001: APPLIED\nwinner: UID 1 (hk1)") and "wall time: train " in text
     assert main(["publish", *stack]) == 0
     assert len(store.list(layout.JOURNAL)) == len(read_journal(state_dir / JOURNAL_FILE)), "status, round and publish never write to the journal"
+    # New override files opt into production values absent from the historical simulation serialization.
+    new_defaults = {name: getattr(Params(), name) for name in Params.LEGACY_FIELDS}
+    initial = Params.from_dict(sim_params().to_dict() | new_defaults)
     other = sim_params(n_tasks=32)
+    expected_other = Params.from_dict(other.to_dict() | new_defaults)
     write("other.json", other.to_json())
     assert main(["run", "--state-dir", str(state_dir), "--params", str(tmp_path / "other.json"), "--stack", "sn120_v2.sim:stack", "--max-idle", "1"]) == 2
     set_params = lambda name: ["set-params", "--state-dir", str(state_dir), "--params", str(tmp_path / name), "--stack", "sn120_v2.sim:stack"]
     capsys.readouterr()
     assert main(set_params("other.json")) == 0
-    assert load(state_dir / JOURNAL_FILE).params == other, "new parameters are pinned by a journal record, not by a file on one machine"
+    assert load(state_dir / JOURNAL_FILE).params == expected_other, "new parameters are pinned by a journal record, not by a file on one machine"
     shown = json.loads(capsys.readouterr().out)
-    assert shown == {"params_hash_before": sim_params().params_hash, "params_hash": other.params_hash, "changed": {"n_tasks": {"before": 64, "after": 32}}}
+    assert shown == {"params_hash_before": initial.params_hash, "params_hash": expected_other.params_hash, "changed": {"n_tasks": {"before": 64, "after": 32}}}
     write("short.json", json.dumps({"recipe": {"image_digests": [SIM_IMAGE], "steps": 2}}))
     assert main(set_params("short.json")) == 0
     assert json.loads(capsys.readouterr().out)["changed"] == {
@@ -686,5 +690,47 @@ def test_the_command_line_bootstraps_runs_a_round_and_reports_status(tmp_path, c
     }, "a key that the file lacks is back at its default, and the output shows it"
     assert main(set_params("other.json")) == 0
     again = json.loads(capsys.readouterr().out)
-    assert again["params_hash"] == other.params_hash and len(again["changed"]) == 5 and load(state_dir / JOURNAL_FILE).params == other
+    assert again["params_hash"] == expected_other.params_hash and len(again["changed"]) == 5 and load(state_dir / JOURNAL_FILE).params == expected_other
     assert main(set_params("other.json")) == 0 and json.loads(capsys.readouterr().out)["changed"] == {}
+
+
+def test_a_deployed_old_journal_needs_set_params_before_a_new_rule_round(tmp_path, capsys):
+    state_dir = tmp_path / "state"
+    world = SimWorld(state_dir, sim_params())
+    world.register(1, 0.3)
+    assert all(name not in world.controller.params.to_dict() for name in Params.LEGACY_FIELDS)
+    override = tmp_path / "params.json"
+    override.write_text(json.dumps({"recipe": {"image_digests": [SIM_IMAGE]}}))
+    run = ["run", "--state-dir", str(state_dir), "--stack", "sn120_v2.sim:stack", "--rounds", "1"]
+
+    # Restart with new code: open_stack/load_stack replays the pinned record; --params is only a hash check here.
+    world.reopen()
+    assert world.controller.params.train_seed_scope == "batch"
+    assert world.controller.params.dedup_enabled is False
+    assert main([*run, "--params", str(override)]) == 2
+    assert "params differs from the parameters pinned in the journal" in capsys.readouterr().err
+    ticket = world.controller.open_round(world.clock(), "entropy")[0]
+    assert ticket.params.train_seed_scope == "batch" and ticket.params.dedup_enabled is False
+    world.controller.fail_lease(ticket.lease_id, "test close", world.clock())
+
+    # The reviewed between-rounds operator action writes the new Params record into the journal.
+    assert main([
+        "set-params", "--state-dir", str(state_dir), "--params", str(override),
+        "--stack", "sn120_v2.sim:stack",
+    ]) == 0
+    changed = json.loads(capsys.readouterr().out)["changed"]
+    assert {name: changed[name]["after"] for name in (
+        "train_seed_scope", "dedup_enabled", "min_signal_rollouts", "min_step_norm",
+    )} == {
+        "train_seed_scope": "round", "dedup_enabled": True,
+        "min_signal_rollouts": 64, "min_step_norm": 0.02,
+    }
+    # Restart once more and use the production open path: the ticket carries the pinned new values, not CLI defaults.
+    world.reopen()
+    world.now += world.controller.params.apply_retry_s
+    ticket = world.controller.open_round(world.clock(), "entropy")[0]
+    assert ticket.params.params_hash == load(state_dir / JOURNAL_FILE).params.params_hash
+    assert (
+        ticket.params.train_seed_scope, ticket.params.dedup_enabled,
+        ticket.params.min_signal_rollouts, ticket.params.min_step_norm,
+    ) == ("round", True, 64, 0.02)

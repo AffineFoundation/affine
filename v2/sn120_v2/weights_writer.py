@@ -73,6 +73,7 @@ class View:
     validator_hotkey: str  # the one hotkey that may set weights
     params: Params | None  # the parameters pinned in the journal
     source: str  # which journal was read, for the log
+    null_rounds: tuple[str, ...] = ()  # judged nulls, oldest first; never trimmed by public history
 
 
 ViewSource = Callable[[], View]
@@ -110,7 +111,7 @@ def read_view(state_dir: Path, open_store: Callable[[], ObjectStore] | None = No
                 source = f"the cache of the journal copy, because the store holds fewer records ({stored}) than the cache ({held})"
     if state.genesis is None:
         raise ContractError("the journal holds no genesis: the state is not bootstrapped")
-    return View(tuple(state.kings), state.genesis.validator_hotkey, state.params, source)
+    return View(tuple(state.kings), state.genesis.validator_hotkey, state.params, source, tuple(state.null_rounds))
 
 
 def load_kings(state_dir: Path) -> tuple[list[King], str]:
@@ -210,8 +211,11 @@ def build_table(view_source: ViewSource, reader: ChainReader, params: Params, la
     last = last_valid or {}
     if len(view.kings) < last.get("kings", 0) or newest < last.get("newest_king_at", 0):
         raise Keep(snapshot.block, "the kings list went backwards, so the state did not load correctly")
+    # Judged-null history is append-only too, even when the paid set shrinks.
+    if len(view.null_rounds) < last.get("null_rounds", 0):
+        raise Keep(snapshot.block, "the null-round list went backwards, so the state did not load correctly")
     try:
-        table = payout.weights(view.kings, snapshot.hotkeys(), params)
+        table = payout.weights(view.kings, snapshot.hotkeys(), params, view.null_rounds)
     except V2Error as exc:
         raise Keep(snapshot.block, f"the payout refused the table: {exc}") from exc
     if not table or params.burn_uid in table:
@@ -278,6 +282,7 @@ def _attempt(
         "block": snapshot.block,
         "computed_at": now,
         "kings": len(view.kings),
+        "null_rounds": len(view.null_rounds),
         "newest_king_at": max(king.applied_at for king in view.kings),
         "kings_from": view.source,
     }
@@ -298,6 +303,11 @@ def dry_run(view_source: ViewSource, client: Any, reader: ChainReader, params: P
         return {"status": "would defer", "block": keep.block, "reason": keep.reason}
     validator_hotkey = view.validator_hotkey
     report: dict[str, Any] = {"status": "would set", "block": snapshot.block, "kings": len(view.kings), "weights": table}
+    payout_params = view.params or params
+    report["paid_kings"] = [
+        king.uid for king in payout.paid_set(view.kings, view.null_rounds, payout_params) if king.uid in table
+    ]
+    report["pruned_by_null"] = payout.pruned_by_null(view.kings, view.null_rounds, payout_params)
     report |= {"validator_hotkey": validator_hotkey, "kings_from": view.source}
     uids = [uid for uid, hotkey in snapshot.hotkeys().items() if hotkey == validator_hotkey]
     report["validator_registered"] = bool(uids)
@@ -325,7 +335,7 @@ def open_r2_store() -> ObjectStore:
 
 def main(argv: Sequence[str] | None = None, open_store: Callable[[], ObjectStore] = open_r2_store) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m sn120_v2.weights_writer", description="Set the SN120 chain weights once: the last 10 kings, 1/N each."
+        prog="python -m sn120_v2.weights_writer", description="Set SN120 weights once: last 10 kings, with optional judged-null pruning, 1/N each."
     )
     # No setting has a default path, network or wallet. A missing one is an error.
     parser.add_argument("--state-dir", type=Path, required=True, help="directory of the journal (journal.jsonl); the writer's lock and memory go here too")

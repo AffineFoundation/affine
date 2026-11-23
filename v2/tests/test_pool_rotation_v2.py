@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -42,7 +43,7 @@ def rows(decision: Rotation, state: str | None = None):
 
 def test_live_v1_decisions_and_default_hashes_are_unchanged():
     p = Params.from_json((Path(__file__).parent / "data" / "params_prod_shaped.json").read_bytes())
-    assert Params().params_hash == "10a121ec5a4ba830057e5510665fee1be7aad34dae259d3427e4547c393c2cf1"
+    assert Params().params_hash == "7eb09fa89387d1d2c5db2d8d0ffd627ad87ece8ef31bdfe93f3374f0c7bb1e50"
     assert p.params_hash == "5359a448461c3f3a3e09bd9a2d8df9f387d916fb02b8d02eecea3582649c74a1"
     enabled = dataclasses.replace(p, rotation_enabled=True)
     assert enabled.params_hash == "4f270223ac2da4c6bc6682fad00c18d22d32d6ebc223397ddfd8951ff190d3e7"
@@ -215,3 +216,144 @@ def test_info_controller_lifecycle_restores_table_and_replays(tmp_path):
     assert set(restored.previous.ledger).isdisjoint(restored.previous.retired_ledger), (
         "a returned task keeps its ledger only in the active pool until it retires again"
     )
+
+
+def test_info_rotation_no_decision_advances_live_boundary_like_replay(tmp_path):
+    from test_rotation_controller import rotated_world
+    from sn120_v2.journal import read_journal
+    from sn120_v2.controller import stored_irt_snapshot
+    from sn120_v2.pool_runtime import PoolRuntime
+    from sn120_v2.state import load
+
+    world, pool = rotated_world(tmp_path, 20, rotation_rule="info", rotation_active_size=4, rotation_churn_frac=0.25)
+    first = world.round()
+    assert first is not None and first.outcome == "null"
+    first_archive = Rotation.from_json(world.store.get(layout.pool_rotation(first.round_id))).retired_archive
+    world.register(2, 0.0)
+    assert world.controller.open_round(world.clock(), "no-decision-entropy")
+    opened = world.controller._rotation
+    while world.controller.state.round is not None:
+        lease = next(lease for lease in world.controller.state.round.leases if lease.status == "open")
+        world.controller.fail_lease(lease.lease_id, "offline reproduction", world.clock())
+
+    closed = world.controller.state.rounds[-1]
+    assert closed.outcome == "no_decision" and closed.rotation is not None
+    assert opened.retired_archive
+    assert opened.retired_archive != first_archive
+    assert json.loads(world.store.get(layout.RETIRED_POOL)) == list(opened.retired_archive)
+    close = read_journal(world.root / "journal.jsonl")[-1]
+    assert close.kind == "round_closed" and "rotation_state_sha" not in close.data
+    assert world.controller.state.rotation_state_sha == opened.digest()
+    replayed_closed = load(world.root / "journal.jsonl")
+    source = stored_irt_snapshot(world.store, world.controller.state)
+    fresh = PoolRuntime(world.store, world.params, replayed_closed, root=tmp_path / "reserve", initial_ids=world.pool)
+    next_round = f"r{world.controller.state.round_seq + 1:06d}"
+    expected, _ = fresh.open(next_round, source, world.controller.state)
+
+    # This is a second open by the same long-lived controller, not the restart
+    world.now += world.params.apply_retry_s
+    assert world.controller.open_round(world.clock(), "after-no-decision-entropy")
+    third = world.controller._rotation
+    assert pool.admitted_counts == fresh.admitted_counts
+    assert third == expected
+    assert third.prev_state_sha == opened.digest()
+    assert third.retired_archive[:len(opened.retired_archive)] == opened.retired_archive
+    stored_archive = json.loads(world.store.get(layout.RETIRED_POOL))
+    assert stored_archive == list(third.retired_archive)
+    assert len(stored_archive) > len(opened.retired_archive)
+
+    while world.controller.state.round is not None:
+        lease = next(lease for lease in world.controller.state.round.leases if lease.status == "open")
+        world.controller.fail_lease(lease.lease_id, "offline reproduction", world.clock())
+    replayed_closed = load(world.root / "journal.jsonl")
+    assert pool.admitted_counts == PoolRuntime(
+        world.store, world.params, replayed_closed, root=tmp_path / "reserve", initial_ids=world.pool
+    ).admitted_counts
+
+
+def test_info_rotation_abandoned_advances_live_boundary(tmp_path):
+    from test_rotation_controller import incident_world
+    from sn120_v2.journal import read_journal
+    from sn120_v2.pool_runtime import PoolRuntime
+
+    world = incident_world(tmp_path, "info")
+    pool = world.controller.pool
+    world.controller.set_params(dataclasses.replace(world.params, rotation_active_size=8, min_scored_tasks=2), world.clock())
+    world.register(2, 0.5)
+    world.register(3, 0.0)
+    world.register(4, -0.25)
+    ticket, = world.controller.open_round(world.clock(), "abandoned-entropy")
+    opened = world.controller._rotation
+    result = world.runner.run(ticket)
+    artifact = next(entry.lora for entry in result.entries if entry.lora is not None)
+    world.store.put(f"{artifact.prefix}/adapter_model.bin", b"corrupted")
+    world.controller.submit_result(result, world.clock())
+    assert world.controller.state.rounds[-1].outcome == "abandoned", [
+        (entry.uid, entry.status, entry.reason) for entry in world.controller.state.rounds[-1].decision.entries
+    ]
+    assert world.controller._rotation == opened and pool.previous == opened
+    assert "rotation_state_sha" not in read_journal(world.root / "journal.jsonl")[-1].data
+
+    world.register(5, 0.0)
+    assert world.controller.open_round(world.clock(), "after-abandoned-entropy")
+    third = world.controller._rotation
+    assert third.prev_state_sha == opened.digest()
+    assert third.retired_archive[:len(opened.retired_archive)] == opened.retired_archive
+    assert pool.admitted_counts == PoolRuntime(
+        world.store, world.params, world.controller.state, root=tmp_path / "reserve", initial_ids=world.pool
+    ).admitted_counts
+
+
+def test_info_rotation_open_no_decision_then_next_open_restarts(tmp_path):
+    from test_rotation_controller import rotated_world
+    from sn120_v2.controller import Controller, stored_irt_snapshot
+    from sn120_v2.journal import Journal
+    from sn120_v2.pool_runtime import PoolRuntime
+
+    world, pool = rotated_world(tmp_path, 20, rotation_rule="info", rotation_active_size=4, rotation_churn_frac=0.25)
+    # Explicit priors make one reserve row strictly outrank one active task.
+    from test_rotation_controller import make_reserve
+    import shutil
+    shutil.rmtree(tmp_path / "reserve")
+    make_reserve(tmp_path / "reserve", 20)
+    pool.candidate_meta = {task: dict(meta, prior_p=1.0) for task, meta in pool.candidate_meta.items()}
+    first = world.round()
+    assert first is not None and first.outcome == "null"
+    source = json.loads(world.store.get(layout.irt_snapshot(world.controller.state.snapshot_id)))
+    world.register(2, 0.0)
+    tickets = world.controller.open_round(world.clock(), "no-decision-entropy")
+    while world.controller.state.round is not None:
+        lease = next(lease for lease in world.controller.state.round.leases if lease.status == "open")
+        world.controller.fail_lease(lease.lease_id, "offline reproduction", world.clock())
+    previous = world.controller.state.rounds[-1]
+    assert previous.outcome == "no_decision" and previous.rotation is not None
+    assert previous.rotation["active_sha"] != first.rotation["active_sha"]
+    assert set(source["tasks"]) != set(world.controller._rotation.active_ids)
+
+    # A fresh journal, runtime and sampler are the production restart path.
+    journal = Journal(world.root / "journal.jsonl", "no-decision-restart", world.clock())
+    pool = PoolRuntime(world.store, world.params, world.controller.state,
+                       root=tmp_path / "reserve", initial_ids=world.pool)
+    sampler = IRTSampler(pool.active_ids, world.params, snapshot=source)
+    controller = Controller(journal, world.store, world.admission, sampler, world.params, pool=pool)
+    world.now += world.params.apply_retry_s
+    tickets = controller.open_round(world.clock(), "after-no-decision-entropy")
+    assert len(controller._rotation.active_ids) == 4
+    assert len(tickets) == 1 and len(tickets[0].draw.task_ids) == min(world.params.n_tasks, 4)
+    active = controller._rotation.active_sha
+    draw = tickets[0].draw
+    for task, row in source["tasks"].items():
+        if task in controller._rotation.active_ids:
+            assert controller.sampler.public_snapshot()["tasks"][task][:3] == row[:3]
+    for task in controller._rotation.admitted:
+        if task not in source["tasks"]:
+            assert controller.sampler.public_snapshot()["tasks"][task][2] == 0
+
+    pool = PoolRuntime(world.store, world.params, controller.state,
+                       root=tmp_path / "reserve", initial_ids=world.pool)
+    sampler = IRTSampler(pool.active_ids, world.params, snapshot=stored_irt_snapshot(world.store, controller.state))
+    controller = Controller(Journal(world.root / "journal.jsonl", "open-restart", world.clock()),
+                            world.store, world.admission, sampler, world.params, pool=pool)
+    restarted = controller.tickets()
+    assert len(restarted) == 1
+    assert restarted[0].draw == draw and pool.active_rotation.active_sha == active

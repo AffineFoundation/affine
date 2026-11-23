@@ -80,6 +80,8 @@ def test_train_accepts_each_bound_end_and_keeps_the_values_as_given(build):
     assert len(params.recipe.miner_bounds) >= 5
     for bound in params.recipe.miner_bounds:
         for value in edges(bound)[0]:
+            if bound.key == "minibatches" and value > 2:
+                continue  # a separate focused fixture exercises the new active >= minibatches rule at the high bound
             batch = check_batch(file(train={bound.key: value}), HOTKEY, params)
             assert batch.train == {bound.key: value}
             assert getattr(params.recipe.for_miner(batch.train), bound.key) in (value, tuple(value) if bound.choices else value)
@@ -129,6 +131,20 @@ def test_output_at_the_token_cap_is_graded_as_capped(build):
     assert rule(flat([solved(n) for n in range(20)]), params, grader=grade) == "grader"  # a capped row earns 0, the file says 1
     assert rule(flat([solved(n) | {"reward": 0} for n in range(20)]), params, grader=grade) == ""
     assert rule(flat([solved(n) for n in range(20)]), build.params(max_output_tokens=43, max_context_tokens=60), grader=grade) == ""
+
+
+def test_cap_mismatch_explains_official_cap_and_shorter_local_cap(build):
+    params = build.params(max_output_tokens=42, max_context_tokens=60)
+    with pytest.raises(Invalid) as at_cap:
+        check_batch(flat([solved(n) for n in range(20)]), HOTKEY, params, tokens=WordTokens(), grader=grade)
+    assert "exactly params.max_output_tokens (42) tokens" in str(at_cap.value)
+    assert "official cap-hit and grades 0 even when its boxed answer is correct" in str(at_cap.value)
+    below = flat([solved(n) | {"reward": 0} for n in range(20)])
+    with pytest.raises(Invalid) as local_cap:
+        check_batch(below, HOTKEY, build.params(max_output_tokens=65536), tokens=WordTokens(), grader=grade)
+    assert "42 tokens, below params.max_output_tokens (65536)" in str(local_cap.value)
+    assert "shorter local cap such as 8192 does not force reward 0" in str(local_cap.value)
+    assert "correct boxed answer can grade 1.0" in str(local_cap.value)
 
 
 def test_row_the_grader_cannot_grade_in_time_is_not_allowed_and_not_remembered(build):

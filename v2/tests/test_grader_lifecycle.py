@@ -196,6 +196,7 @@ def test_evaluator_replaces_a_failed_lazy_pool_and_round_close_releases_it(monke
     seam._head = None
     seam._solo_servers, seam._solo_urls, seam._solo_loaded = {}, {}, {}
     seam._solo_scheduler = None
+    seam.capture = None
     seam.close()
     assert count_fds() < before
 

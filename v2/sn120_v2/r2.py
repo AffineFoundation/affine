@@ -386,6 +386,9 @@ def _fixed_prefix(make_key: Callable[..., str]) -> str:
         # The role is a closed set, not a free path component. Enumerate it so
         # the generic prefix prober never passes an invalid role to layout.
         one, two = (make_key(str(n), "head").split("/") for n in (1, 2))
+    elif make_key is layout.public_rollout_gate_entry:
+        # Postponed annotations are strings: this queue position must stay an int.
+        one, two = (make_key(str(n), n).split("/") for n in (1, 2))
     else:
         one, two = (make_key(*[n if name.annotation == "int" else str(n) for name in names]).split("/") for n in (1, 2))
     same = 0

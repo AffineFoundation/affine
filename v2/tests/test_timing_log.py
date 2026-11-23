@@ -88,6 +88,7 @@ def test_a_round_with_a_king_logs_the_time_of_each_step_and_no_record_or_public_
     head = world.controller.state.heads[-2].version_id[:12]  # the head with the king's LoRA, before the fold
     wanted = [
         "open: the check of the waiting files",
+        f"dedup stage A of {record.round_id}",
         f"open: round {record.round_id} is open, 2 seats. From the file check to here",
         f"open: the public files of round {record.round_id}",
         f"king of {record.round_id}: the winner's LoRA to public/",
@@ -103,6 +104,6 @@ def test_a_round_with_a_king_logs_the_time_of_each_step_and_no_record_or_public_
     assert [step for step in steps if not step.startswith("public/")] == wanted
     promoted = [step for step in steps if step.startswith("public/")]
     assert [step.split("/")[1] for step in promoted if step.endswith("copied files")] == ["loras", "bases", "masters"]
-    assert steps.index(wanted[6]) - steps.index(wanted[5]) == 9, "the base and the master: four lines each, inside the fold's promotion"
+    assert steps.index(wanted[7]) - steps.index(wanted[6]) == 9, "the base and the master: four lines each, inside the fold's promotion"
     stored = [world.store.get(key) for key in world.store.list("public/")] + [(world.root / JOURNAL_FILE).read_bytes()]
     assert stored and not any(b"timing" in data for data in stored)

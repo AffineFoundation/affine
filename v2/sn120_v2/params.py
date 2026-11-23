@@ -13,12 +13,17 @@ import dataclasses
 import json
 import math
 import os
+import re
+import types
+import typing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from .canonical import Record, is_sha256
+from .canonical import Record, _hints, from_jsonable, is_sha256, to_jsonable
 from .errors import BatchRejected, ConfigError
+
+SEED_SCOPES = ("round", "batch")
 
 # Identity of the launch model. The base hash is the manifest digest of the
 # published checkpoint files (see canonical.manifest_digest).
@@ -193,10 +198,11 @@ class Params(Record):
     # A stored Params without this field loads with the Fisher default. Keep its JSON and params_hash unchanged;
     # selecting the old band rule writes the field and changes the hash, just like any other nondefault setting.
     LEFT_OUT_AT_DEFAULT = (
-        "irt_draw_rule", "kv_cache_dtype", "max_num_seqs",
+        "null_samples_per_task", "irt_draw_rule", "kv_cache_dtype", "max_num_seqs",
         "rotation_enabled", "rotation_k", "rotation_retire_p", "rotation_n_min",
         "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
+        "eval_merged", "null_prune_from_round",
     )
 
     netuid: int = 120
@@ -209,10 +215,12 @@ class Params(Record):
     n_min_start: int = 1  # a short queue runs right away; a round never starts with 0 batches
     n_gpus: int = 8
 
-    # Evaluation. Null M and every LoRA use the same tasks, seeds and caps.
+    # Evaluation. Sample 0 of null M and every LoRA uses the same tasks, seed
+    # and caps. Null M may add independent, king-only samples after sample 0.
     n_tasks: int = 2000  # placeholder: pinned so EVAL fits eval_time_budget_s on the reference box
     eval_time_budget_s: int = 3600  # placeholder
     samples_per_task: int = 1
+    null_samples_per_task: int | None = None  # None = samples_per_task; omitted from JSON for old rounds
     looks: tuple[float, ...] = (0.25, 0.5, 1.0)  # shares of n_tasks; the win test runs at the last look only
     drop_alpha: float = 0.05  # PLACEHOLDER: total chance, over all early looks, to drop a LoRA that is truly on the win bar
     max_output_tokens: int = 65536
@@ -224,10 +232,14 @@ class Params(Record):
     kv_cache_dtype: str = "auto"
     max_num_seqs: int = 256
 
+    # Serve a candidate's merged base, made by the install fold, instead of a runtime LoRA.
+    # Omitted while false so the parameter sets of every earlier round keep their hash.
+    eval_merged: bool = False
+
     # Task draw.
     irt_draw_rule: str = "fisher"
     irt_middle_band: tuple[float, float] = (0.2, 0.8)  # placeholder: favoured band of the head's pass rate under "band"
-    # Under "fisher", share of the draw spread uniformly over every task; under "band", share for barely seen tasks.
+    # Under "fisher"/"sqrt_fisher", share of the draw spread uniformly over every task; under "band", share for barely seen tasks.
     irt_explore_frac: float = 0.1
 
     # Public reserve -> active pool. Disabled by default; no reserve read or
@@ -245,8 +257,11 @@ class Params(Record):
     rotation_queue_publish: int = 2000  # ranked upcoming candidates in the public rotation decision
     rotation_churn_max: int = 0  # optional operational cap on swaps; 0 = no cap beyond churn_frac and better candidates
 
-    # Judging.
-    z_bar: float = 1.0  # a winner needs z strictly above this
+    # Judging. The field-median gate adds a second, final-look z test against
+    # the per-task median of the post-dedup candidates plus the king.
+    z_bar: float = 1.0  # the paired king bar; a winner needs z strictly above this
+    crown_gate: str = "field_median"
+    z_field_bar: float = 1.0  # finite; calibrated values may be negative
     cap_hit_floor: float = 0.33  # reject only when cap rate > max(cap_hit_floor, null cap rate + cap_hit_margin)
     cap_hit_margin: float = 0.02
     min_scored_tasks: int = 100  # fewer scored tasks than this can never produce a winner
@@ -254,6 +269,18 @@ class Params(Record):
     calibration_tol: float = 0.003  # multi-box guard on the null-M rate
 
     recipe: Recipe = field(default_factory=Recipe)
+
+    # One training seed for every LoRA in a new round. Legacy records without this field decode as ``batch``.
+    # Legacy JSON omits these fields. ``None`` inherits their historical values; assigning a new value
+    # through dataclasses.replace writes it into params_hash and cannot silently preserve the old hash.
+    train_seed_scope: str = "round"
+    dedup_enabled: bool = True
+    dedup_rollout_overlap: float = 0.5
+    dedup_cos_shared_seed: float = 0.135
+    dedup_cos_own_seed: float = 0.002
+    min_signal_rollouts: int = 64
+    min_step_norm: float = 0.02
+    _legacy_fields: frozenset[str] | None = field(default=None, compare=False, repr=False)
 
     # Head.
     fold_every_k: int = 1  # fold stacked LoRAs into a new base after this many applies; 1 = every green
@@ -296,9 +323,67 @@ class Params(Record):
 
     # Payout.
     kings_window: int = 10
+    # Empty: the original last-window rule. Otherwise judged nulls from this round prune the oldest paid king.
+    # Omitted while empty so every earlier params record keeps its canonical form and hash.
+    null_prune_from_round: str = ""
     burn_uid: int = 0  # the owner's UID: it has no queue seat. No burn: the weights writer refuses a table with weight on it and sets nothing
     weights_cadence_s: int = 3600
     weights_rate_limit_blocks: int = 100
+
+    # Records from before these fields use these values; new Params use the production defaults above.
+    LEGACY_FIELDS = ("train_seed_scope", "dedup_enabled", "dedup_rollout_overlap", "dedup_cos_shared_seed",
+                     "dedup_cos_own_seed", "min_signal_rollouts", "min_step_norm", "crown_gate", "z_field_bar")
+    LEGACY_VALUES = dict(train_seed_scope="batch", dedup_enabled=False, dedup_rollout_overlap=0.5,
+                         dedup_cos_shared_seed=0.135, dedup_cos_own_seed=0.002, min_signal_rollouts=1, min_step_norm=0.0,
+                         crown_gate="king", z_field_bar=1.0)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Params:
+        legacy = set(cls.LEGACY_FIELDS) - set(data)
+        params = from_jsonable(cls, data, cls.__name__)
+        if legacy:
+            for name in legacy:
+                object.__setattr__(params, name, cls.LEGACY_VALUES[name])
+            object.__setattr__(params, "_legacy_fields", frozenset(legacy))
+        return params
+
+    @classmethod
+    def from_public_dict(cls, data: Mapping[str, Any]) -> Params:
+        """Read a public mining.json, ignoring fields a newer validator adds.
+
+        Journal and ticket decoding must use ``from_dict``: it stays strict.
+        Unknown record fields are removed recursively for this read-only path;
+        every known field is still checked by the strict constructor.
+        """
+        if not isinstance(data, Mapping):
+            return cls.from_dict(data)
+
+        def known(tp: Any, value: Any) -> Any:
+            if typing.get_origin(tp) in (typing.Union, types.UnionType):
+                args = [arg for arg in typing.get_args(tp) if arg is not type(None)]
+                tp = args[0] if len(args) == 1 else Any
+            if dataclasses.is_dataclass(tp) and isinstance(value, Mapping):
+                return {key: known(hint, value[key]) for key, hint in _hints(tp).items()
+                        if not key.startswith("_") and key in value}
+            origin, args = typing.get_origin(tp), typing.get_args(tp)
+            if origin in (dict, list, tuple) and isinstance(value, (list, tuple, Mapping)):
+                if origin is dict:
+                    return {key: known(args[1] if len(args) == 2 else Any, item) for key, item in value.items()}
+                if origin is list or (len(args) == 2 and args[1] is Ellipsis):
+                    return [known(args[0] if args else Any, item) for item in value]
+                return [known(hint, item) for hint, item in zip(args, value)]
+            return value
+
+        return cls.from_dict(known(cls, data))
+
+    def to_dict(self) -> dict[str, Any]:
+        legacy = self._legacy_fields or ()
+        # Omission is valid only while the field retains the exact effective legacy value.
+        data = {f.name: to_jsonable(getattr(self, f.name), _hints(Params)[f.name])
+                for f in dataclasses.fields(self)
+                if not f.name.startswith("_") and (f.name not in legacy or getattr(self, f.name) != self.LEGACY_VALUES.get(f.name))
+                and not (f.name in self.LEFT_OUT_AT_DEFAULT and getattr(self, f.name) == f.default)}
+        return data
 
     budget_usd_per_hour: float = 200.0
 
@@ -306,15 +391,24 @@ class Params(Record):
         _need(1 <= self.batch_cap <= self.max_loras_per_box, "batch_cap must be between 1 and max_loras_per_box")
         _need(1 <= self.n_min_start <= self.batch_cap, "n_min_start must be between 1 and batch_cap")
         _need(self.n_gpus >= 1 and self.n_tasks >= 1 and self.samples_per_task >= 1, "n_gpus, n_tasks, samples_per_task >= 1")
+        _need(self.null_samples_per_task is None or (type(self.null_samples_per_task) is int and self.null_samples_per_task >= 1), "null_samples_per_task must be null or an integer of at least 1")
         _need(self.max_num_seqs >= 1, "max_num_seqs must be positive")
         _need(bool(self.looks) and self.looks[-1] == 1.0, "looks must end at 1.0")
         _need(all(0 < a < b for a, b in zip(self.looks, self.looks[1:])) and self.looks[0] > 0, "looks must rise from above 0")
         _need(math.isfinite(self.z_bar) and self.z_bar >= 0, "z_bar must be zero or more")
+        _need(self.crown_gate in ("king", "field_median", "argmax_symmetric"), "crown_gate must be 'king', 'field_median' or 'argmax_symmetric'")
+        _need(math.isfinite(self.z_field_bar), "z_field_bar must be finite")
+        _need(self.train_seed_scope in SEED_SCOPES, "train_seed_scope must be 'round' or 'batch'")
+        _need(_unit(self.dedup_rollout_overlap) and self.dedup_rollout_overlap > 0, "dedup_rollout_overlap must be in (0, 1]")
+        _need(_unit(self.dedup_cos_shared_seed) and self.dedup_cos_shared_seed > 0, "dedup_cos_shared_seed must be in (0, 1]")
+        _need(_unit(self.dedup_cos_own_seed) and self.dedup_cos_own_seed > 0, "dedup_cos_own_seed must be in (0, 1]")
+        _need(self.min_signal_rollouts >= 1, "min_signal_rollouts must be at least 1")
+        _need(math.isfinite(self.min_step_norm) and self.min_step_norm >= 0, "min_step_norm must be finite and nonnegative")
         _need(0.0 < self.drop_alpha < 1.0, "drop_alpha must be between 0 and 1")
         _need(_unit(self.cap_hit_floor) and _unit(self.cap_hit_margin), "cap-hit settings must be in [0, 1]")
         _need(_unit(self.min_cover) and self.min_cover > 0, "min_cover must be in (0, 1]")
         _need(self.min_scored_tasks >= 2, "min_scored_tasks must be at least 2: one task has no standard error")
-        _need(self.irt_draw_rule in ("band", "fisher"), "irt_draw_rule must be 'band' or 'fisher'")
+        _need(self.irt_draw_rule in ("band", "fisher", "sqrt_fisher"), "irt_draw_rule must be 'band', 'fisher' or 'sqrt_fisher'")
         low, high = self.irt_middle_band
         _need(_unit(low) and _unit(high) and low < high, "irt_middle_band must be two rising shares")
         _need(_unit(self.irt_explore_frac), "irt_explore_frac must be in [0, 1]")
@@ -325,6 +419,8 @@ class Params(Record):
         _need(self.rotation_queue_publish >= 0 and self.rotation_churn_max >= 0, "rotation queue and churn cap must be >= 0")
         _need(_unit(self.rotation_retire_p) and _unit(self.rotation_retire_low_p), "rotation pass rates must be in [0, 1]")
         _need(self.fold_every_k >= 1, "fold_every_k must be at least 1")
+        _need(type(self.eval_merged) is bool, "eval_merged must be true or false")
+        _need(not self.eval_merged or self.fold_every_k == 1, "merged-candidate evaluation needs fold_every_k = 1")
         _need(self.max_output_tokens < self.max_context_tokens, "max_output_tokens must be below max_context_tokens")
         _need(self.lease_timeout_s > 0 and self.max_infra_attempts >= 1, "lease settings must be positive")
         _need(0 <= self.promote_reserve_s < self.round_time_limit_s, "promote_reserve_s must be below round_time_limit_s")
@@ -336,8 +432,13 @@ class Params(Record):
         _need(self.eval_chunk_tasks >= 1, "eval_chunk_tasks must be at least 1")
         _need(self.apply_retry_s > 0 and self.apply_max_attempts >= 1, "apply retry settings must be positive")
         _need(self.kings_window >= 1 and self.burn_uid >= 0, "kings_window >= 1 and burn_uid >= 0")
+        _need(isinstance(self.null_prune_from_round, str) and (not self.null_prune_from_round or re.fullmatch(r"r\d{6}", self.null_prune_from_round)), "null_prune_from_round must be empty or rNNNNNN")
         _need(self.weights_cadence_s > 0, "weights_cadence_s must be positive")
         _need(math.isfinite(self.budget_usd_per_hour) and self.budget_usd_per_hour > 0, "budget must be positive")
+
+    @property
+    def null_samples(self) -> int:
+        return self.samples_per_task if self.null_samples_per_task is None else self.null_samples_per_task
 
     @property
     def params_hash(self) -> str:
@@ -381,12 +482,18 @@ class GenesisSpec(Record):
 
 
 def load_params(path: str | Path) -> Params:
-    """Read a JSON file of overrides. Unknown keys and wrong types fail closed."""
+    """Read a file of *new overrides*, not a historical serialized Params record.
+
+    Missing new fields mean the current production defaults here. Only journal/store decoding via
+    ``Params.from_dict`` gives old records their legacy behavior and preserves their digest.
+    """
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise ConfigError(f"cannot read params file {path}: {exc}") from exc
-    return Params.from_dict(data)
+    if not isinstance(data, Mapping):
+        raise ConfigError("a params override file must hold a JSON object")
+    return from_jsonable(Params, data, "Params")
 
 
 def require_env(name: str, environ: Mapping[str, str] | None = None) -> str:

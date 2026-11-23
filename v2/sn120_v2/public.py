@@ -1,9 +1,9 @@
 """The public view. One plain dict feeds llms.txt, mining.json, the website and the benchmark service.
 
-Privacy rule: an entry that did not win shows only its seat, its batch
-sha256, its status, and delta, se, z and cap rate. Its file, its location,
-its train values and its per-task outcomes are never published. Only a
-winner's LoRA and outcomes are public.
+Privacy rule: an entry that did not win shows its seat, its batch sha256,
+its status, delta, se, z and cap rate, and its sealed eval outcome strings.
+Its file, its location and its train values are never published. Only a
+winner's LoRA and training batch are public.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from collections import Counter
 from typing import Any, Mapping, Sequence
 
 from .params import Params
-from .payout import payees
+from .payout import paid_set, payees
 from .queue import waiting
 from .state import RoundRecord, State
 from .types import NOT_SCORED, NOT_TRAINED, WINNER, BoxResult, EntryDecision, QueueEntry, RoundTicket, Verdict
@@ -120,18 +120,22 @@ def round_view(record: RoundRecord) -> dict[str, Any]:
         "opened_at": record.opened_at,
         "closed_at": record.closed_at,
         "outcome": record.outcome,
-        "seats": len(seats),
+        "seats": len(seats) + len(record.duplicate_decisions),
         "skipped": len(record.skipped),
+        "duplicate_clusters": list(record.duplicate_clusters),
+        "duplicates": [entry_view(entry) | {"reason": public_text(entry.reason)} for entry in record.duplicate_decisions],
     }
     if record.decision is None:
-        view["entries"] = [
+        view["entries"] = sorted([
             {"queue_pos": e.queue_pos, "uid": e.reg.uid, "hotkey": e.reg.hotkey, "registration_block": e.reg.registration_block, "batch_sha256": e.batch.batch_sha256}
             for e in seats
-        ]
+        ] + [entry_view(entry) for entry in record.duplicate_decisions], key=lambda row: row["queue_pos"])
     else:
         decision = record.decision
         view["entries"] = [entry_view(entry) for entry in decision.entries]
         view |= {"winner_uid": decision.winner.uid if decision.winner else None, "reason": public_text(decision.reason), "null_pass_rate": decision.null_pass_rate, "null_cap_rate": decision.null_cap_rate}
+        view["duplicate_clusters"] = [*record.duplicate_clusters, *decision.duplicate_clusters]
+        view["duplicates"] = [entry_view(entry) | {"reason": public_text(entry.reason)} for entry in decision.entries if entry.status == "duplicate"]
     if record.rotation is not None:
         from . import layout
 
@@ -235,11 +239,17 @@ def snapshot(
             "files": files_view(line, verdicts, files_checked_at),
         },
         "kings": [king.to_dict() for king in payees(state.kings, params.kings_window)],
+        "paid_kings": [{"uid": king.uid, "round_id": king.round_id} for king in paid_set(state.kings, state.null_rounds, params)],
+        "null_prune_from_round": params.null_prune_from_round,
     }
 
 
 def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxResult]]) -> dict[str, Any]:
-    """The public file of a settled round: the draw, null M's outcomes, and the winner's outcomes only."""
+    """The public file of a settled round: the draw and all scored eval outcomes.
+
+    ``entry_outcomes`` is in queue order and omits entries without outcome
+    strings. Null M and the winner keep their original, separate fields.
+    """
     report = round_view(record)
     winner = record.decision.winner if record.decision else None
     if leases:
@@ -250,6 +260,23 @@ def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxRes
         (list(entry.outcomes) for _, result in leases for entry in result.entries if winner and entry.queue_pos == winner.queue_pos),
         None,
     )
+    from . import layout
+
+    scored = {entry.queue_pos: entry for _, result in leases for entry in result.entries if entry.outcomes}
+    seats = {seat.queue_pos: seat for ticket, _ in leases for seat in ticket.entries}
+    decisions = {entry.queue_pos: entry for entry in record.decision.entries} if record.decision else {}
+    report["entry_outcomes"] = [
+        {
+            "queue_pos": pos,
+            "uid": seats[pos].reg.uid,
+            "hotkey": seats[pos].reg.hotkey,
+            "lora_hash": scored[pos].lora.lora_hash,
+            "status": decisions[pos].status if pos in decisions else None,
+            "outcomes": list(scored[pos].outcomes),
+        }
+        for pos in sorted(scored)
+    ]
+    report["rollouts_meta"] = layout.public_rollout_gate_meta(record.round_id)
     report["stopped_at_limit"] = any(result.stopped_at_limit for _, result in leases)
     # The summary a person relays: per LoRA the verdict, its reason and the size of the trained update.
     trained = {entry.queue_pos: entry.lora.report for _, result in leases for entry in result.entries if entry.lora is not None}
@@ -258,7 +285,12 @@ def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxRes
         view["reason"] = public_text(reasons.get(view["queue_pos"], ""))
         if view["queue_pos"] in trained:
             train = trained[view["queue_pos"]]
-            view |= {"step_norm": train.step_norm, "norm_before_cap": train.norm_before_cap, "train_wall_s": train.wall_s}
+            train_data = train.to_dict()
+            view |= {"step_norm": train_data["step_norm"], "norm_before_cap": train_data["norm_before_cap"],
+                     "train_wall_s": train.wall_s}
+            for tag in ("step_norm_nonfinite", "norm_before_cap_nonfinite"):
+                if train_data.get(tag):
+                    view[tag] = train_data[tag]
     return report
 
 
@@ -294,8 +326,10 @@ def round_text(report: Mapping[str, Any]) -> str:
         numbers = f"{e['delta']:>+8.4f} {e['z']:>6.2f} {e['cap_rate']:>7.2%} {e['n_tasks']:>5}" if "z" in e else f"{'-':>8} {'-':>6} {'-':>7} {'-':>5}"
         before = e.get("norm_before_cap") or e.get("step_norm")  # the norm that training gave: the number that recipe.global_norm_cap is set from
         norm = f"{before:>9.4g}" if before is not None else f"{'-':>9}"
+        if e.get("norm_before_cap_nonfinite") or e.get("step_norm_nonfinite"):
+            norm = f"{'nonfinite':>9}"
         note = e.get("reason", "")
-        if before and e.get("step_norm", before) < before * (1 - 1e-9):
+        if before and not e.get("norm_before_cap_nonfinite") and not e.get("step_norm_nonfinite") and e.get("step_norm", before) < before * (1 - 1e-9):
             note = f"update capped to norm {e['step_norm']:.4g}" + (f"; {note}" if note else "")
         if e.get("eliminated_at_look") is not None:
             note = f"dropped at look {e['eliminated_at_look']}" + (f"; {note}" if note else "")

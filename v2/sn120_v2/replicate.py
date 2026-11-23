@@ -69,7 +69,7 @@ class Contract:
     def load(cls, source: str) -> Contract:
         doc = read_json(source, "mining.json")
         try:
-            return cls(doc, Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]))
+            return cls(doc, Params.from_public_dict(doc["params"]), HeadManifest.from_dict(doc["head"]))
         except (KeyError, TypeError, AttributeError):
             raise ConfigError("this mining.json has no params or no head") from None
 

@@ -35,6 +35,8 @@ uv venv .venv --python 3.12 && source .venv/bin/activate
 uv pip install -e ".[gpu,envs,miner]"
 ```
 
+This installs `boto3` with the `miner` extra as well as the tokenizer, chat-template and grading dependencies.
+
 Run every command below from `v2/`, inside the virtual environment.
 
 Every command takes `--mining-json`: the address `https://affine.io/mining.json`, or a file you saved from it.
@@ -51,7 +53,7 @@ It starts nothing and needs no GPU. It prints one JSON object:
 
 - `box`: `params_hash`, `recipe_id`, the pinned `image_digests`, the pinned `code_digest`, `n_gpus`.
 - `here`: your `image_digest` (the install digest), your `code_digest`, `gpus_found` (the GPUs that `nvidia-smi` lists; `null` when it does not answer), `n_gpus` (the value of `--gpus`).
-- `differences`: a list of `{"what", "text"}`. Section 4 explains each `what`.
+- `differences`: a list of `{"what", "text"}`. Section 5 explains each `what`.
 
 ### fetch: the base files of the head
 
@@ -69,11 +71,37 @@ python -m sn120_v2.replicate fetch --mining-json https://affine.io/mining.json -
 
 Each file is linked (or copied, when a link is not possible) and its sha256 is checked. Other files in that directory are ignored. While the head is the genesis model, llms.txt section 1 names the Hugging Face repository and revision that hold these files.
 
-The files are collected in `<work>/fetch/<base_hash>/` and moved to `<work>/cache/<base_hash>/` when the set is complete. The command prints `{"base_hash", "dir", "files", "fetched"}`.
+The files are collected in `<work>/fetch/<base_hash>/` and moved to `<work>/cache/<base_hash>/` when the set is complete. The command prints `{"base_hash", "dir", "files", "fetched"}`. Use the printed `dir` as the head tokenizer directory. For `affine_miner.py check` and `reproduce`, `--tokenizer <work>/cache` also works: when it contains the current contract's `<base_hash>/` directory, the tool resolves that inner directory and logs the selected path.
 
 **Do not add or change a file in `<work>/cache/`.** The box code verifies a directory there against its id and deletes a directory that does not match. `run` does the same. That is why `fetch` exists: a download tool that writes its own files into the model directory would make the set invalid.
 
 When the head changes (a winner is folded), `base_hash` changes. Run `fetch` again. The run removes the directory of the old base from `<work>/cache/`.
+
+### The current head's missing processor files
+
+Some already-sealed heads omit `preprocessor_config.json`, `processor_config.json` and `video_preprocessor_config.json`. Their `base_files` and `base_hash` must not change. Do **not** put the missing files into `<work>/cache/` or edit mining.json.
+
+For local **evaluation only**, make a separate serving directory, leaving the verified cache untouched:
+
+```bash
+export HEAD=/data/affine/cache/<base_hash>
+export SERVING=/data/affine/serving/<base_hash>
+mkdir -p "$SERVING"
+cp -al "$HEAD"/. "$SERVING"/
+for name in preprocessor_config.json processor_config.json video_preprocessor_config.json; do
+  if [ ! -f "$HEAD/$name" ]; then
+    curl -fL "https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B/resolve/2367e865d009c13ac81713a2878291d33ab28177/$name" -o "$SERVING/$name"
+  fi
+done
+```
+
+The head has a **VL-shaped architecture**. Disable image/video inputs in standalone vLLM serving, evaluation and miner sampling with this exact option:
+
+```
+--limit-mm-per-prompt '{"image":0,"video":0}'
+```
+
+The official evaluator and `miner/generator_search.py` already pass that option; use it for standalone serving and any other miner sampling server too. This serving copy is an evaluation workaround, not a new head and not a substitute for its sealed manifest. If another small processor or tokenizer file from the parent or that pinned genesis revision is needed, add it only to the separate serving copy. Future folds/published heads carry these small files automatically. `run` still reads the original verified head; the standalone serving copy does not alter its canonical training or head hashes.
 
 ### run: check, train, score, judge
 
@@ -89,7 +117,7 @@ Which round is repeated:
 |---|---|
 | none | The round that mining.json shows as open. If none is open, the last closed round in `history`. |
 | `--round ROUND_ID` | That round of mining.json (`round` or `history`). |
-| `--round-file FILE_OR_URL` | The public file of a closed round, `public/rounds/ROUND_ID/round.json`. Its seed and snapshot are used, and the report gets `box_round` (section 3). |
+| `--round-file FILE_OR_URL` | The public file of a closed round, `public/rounds/ROUND_ID/round.json`. Its seed and snapshot are used, and the report gets `box_round` (section 4). |
 | `--round-seed SEED --irt-snapshot FILE_OR_URL` | A seed of your choice with a snapshot you name. No real round. |
 
 The IRT snapshot comes from the public address `public/irt/SNAPSHOT_ID.json`, or from `--irt-snapshot`. The tool checks that the id of the snapshot is the hash of its content, and that it is the snapshot the round names.
@@ -99,7 +127,7 @@ Other arguments:
 - `--gpus N`: use GPUs 0 to N-1. The default is `n_gpus` of the params, the count of the box. The command stops at once if `nvidia-smi` lists fewer.
 - `--pool auto|current|v2.0`: `auto` (the default) uses the archived v2.0 pool when the recorded draw names a task that is not in the current pool. `current` refuses such a draw; `v2.0` forces the archive. The archived pool is `sn120_v2/envs/archive/math_pool_v2.jsonl`, byte-for-byte the original pool. See [POOL_CHANGES.md](POOL_CHANGES.md).
 - `--first-tasks N`: score only the first N tasks of the draw. These are the tasks the box scores first, in the same order with the same weights. It is not a new draw of N tasks. The looks are shares of N. With fewer than `min_scored_tasks` tasks no LoRA can win.
-- `--round-clock`: keep the time limits of a round (section 4, `round-clock`).
+- `--round-clock`: keep the time limits of a round (section 5, `round-clock`).
 - `--strict`: stop unless your machine has the pinned install, the pinned code and the GPU count of the box.
 - `--out FILE`: also write the report to this file.
 
@@ -113,7 +141,22 @@ Where things are, below `--work`:
 - `store/pending/rounds/local/local-l0/loras/000/`: the LoRA of the last run (`adapter_config.json`, `adapter_model.safetensors`, `train_report.json`). The next run overwrites it.
 - `logs/vllm-<gpu>.log`: the output of each vLLM server. `logs/train-<job>.log`: the output of a training job that failed. `logs/phases.jsonl`: times and sizes of each phase.
 
-## 3. The report of `run`
+## 3. Building the batch file
+
+With 2 rollouts per prompt, one official-head sample of 960 prompts produced 97 mixed-reward groups, a yield of about 10%; plan on about 5–8 times as many prompts as the mixed-reward groups you need, and the file needs 80 mixed groups.
+
+A mixed-reward group has rollouts with different rewards; its nonzero advantages train. A file in which no rollout trains is invalid. Check the actual file and its token/reward rules before uploading:
+
+```
+python miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> --tokenizer /data/affine/cache --grade batch.json
+```
+
+Only an output with exactly `params.max_output_tokens` tokens (currently 65,536) is an official cap-hit. A shorter local limit such as 8192 must not be labeled an official cap-hit: below 65,536, a correct boxed answer can grade 1.0 rather than 0. At exactly the official cap the grade is 0 even if the answer is correct. The checker's reward-mismatch message explains both cases.
+
+For direct grading, `sn120_v2.envs.math_grader.grade(task, output, capped)` accepts a `sn120_v2.envs.math_pool.Task` or a mapping with string `task_id`, `slice`, `problem` and `answer` fields. A task JSON object therefore needs no separate conversion; malformed mappings and unrelated objects raise a clear `TypeError`. Set `capped=True` only for a stop at the official output cap, not for a shorter local serving cap.
+
+## 4. The report of `run`
+
 
 | Field | Meaning |
 |---|---|
@@ -124,11 +167,11 @@ Where things are, below `--work`:
 | `round` | `round_id` (`null` for a seed of your choice), `round_seed`, `irt_snapshot_id`, `n_tasks` (the size of the draw), `scored_tasks` (smaller with `--first-tasks`). |
 | `box` | `params_hash`, `recipe_id` and `n_gpus` of mining.json. |
 | `here` | `image_digest`, `code_digest` and `n_gpus` of this run. |
-| `differences` | Every difference between this run and a round on the box (section 4). |
+| `differences` | Every difference between this run and a round on the box (section 5). |
 | `status`, `reason` | `winner`, `lost`, `no_decision`, `skip`, `not_trained` or `not_scored`, with the same meaning as in a real round, and the reason in words. |
 | `eliminated_at_look` | The look at which the LoRA was dropped, or `null`. |
 | `score` | `n_tasks`, `delta`, `se`, `z`, `pass_rate`, `null_pass_rate`, `cap_rate`, `null_cap_rate`, `cover`, `eligible`, `reasons`. `null` when nothing was scored. |
-| `null_outcomes`, `outcomes` | One string per sample index: one outcome code per task, in the order of the draw. Null M, then your LoRA. |
+| `null_outcomes`, `outcomes` | One string per sample index: one outcome code per task, in the order of the draw. Null M has `null_samples_per_task` strings (defaulting to `samples_per_task`); your LoRA has `samples_per_task` strings. Scoring compares each LoRA pass with the mean of the king's samples on that task. |
 | `lora` | `lora_hash`, `dir` (the LoRA files on your disk), `train_report`. Absent when the training failed. |
 | `phase_s` | Wall seconds: `training` and `evaluation`. |
 | `stopped_at_limit` | `true` only with `--round-clock`, when the time limit of the round ended the scoring. |
@@ -136,7 +179,7 @@ Where things are, below `--work`:
 
 `box_round.null_m` is present when the head and the draw are the same and one box scored the round. It compares null M here with null M on the box, task by task: `rollouts_compared`, `same_outcome`, `passed_here`, `passed_on_box`. This is the measurement of how close your machine is to the box. It is the only one: the box publishes the outcomes of null M and of the winner, not of a LoRA that lost.
 
-## 4. What is the same as on the box, and what differs
+## 5. What is the same as on the box, and what differs
 
 ### The same
 
@@ -186,12 +229,12 @@ Two more facts that are not in the list, because they are about the machine and 
 - The type of the GPU. Another GPU type computes with another rounding.
 - The box runs rounds all day; its vLLM compile caches are warm. Times here say nothing about times there.
 
-## 5. What you can repeat exactly, and what is equal only in distribution
+## 6. What you can repeat exactly, and what is equal only in distribution
 
 **Exactly the same, on any machine:**
 
 - The draw of a round: the task ids, their order and their weights. It is a pure function of the public IRT snapshot and the public round seed. `--round-file` checks this against the draw that the box published (`same_draw`).
-- The seed of each rollout: `sha256("<round_seed>|<task_id>|<sample>")` as a 63-bit integer. Null M and every LoRA use the same seed for the same task.
+- The seed of each rollout: `sha256("<round_seed>|<task_id>|<sample>")` as a 63-bit integer. Null M and every LoRA share the same seed for sample 0 on the same task. When the king has more samples, its later samples are king-only and use their own sample indices.
 - The seed of the training job: `sha256("<round_seed>|train|<batch_sha256>")` as a 63-bit integer. The A matrices of the LoRA start from this seed, so they start the same.
 - The prompt of each task and every request setting (`temperature`, `top_p`, `top_k`, `max_output_tokens`, thinking on).
 - The rows that train, their advantages, and the tokens of each row.
@@ -211,7 +254,7 @@ Two more facts that are not in the list, because they are about the machine and 
 
 **Not measured:** how often the same seed gives the same text on the box, and how far the pass rate of null M on another GPU type is from the box. `--round-file` gives you the second number for your machine.
 
-## 6. With `affine_miner.py reproduce`
+## 7. With `affine_miner.py reproduce`
 
 The miner tool takes a backend function. This module has one:
 
@@ -221,7 +264,7 @@ python v2/miner/affine_miner.py reproduce --mining-json mining.json --hotkey <ss
 
 That command runs with the params of mining.json as they are. So the box code refuses the run unless your machine has the pinned install, the pinned code and `n_gpus` GPUs. In practice that is the box only. Use `python -m sn120_v2.replicate run` on every other machine. The backend needs the base files in the cache of the work directory. So pass `--work DIR` to the miner tool, and run the `fetch` command above with the same `--work DIR` first. Without `--work` the miner tool uses a new temporary directory, which has no base files.
 
-## 7. What has been verified
+## 8. What has been verified
 
 On real GPUs:
 
@@ -231,7 +274,7 @@ On real GPUs:
 On CPU, by the tests in `tests/test_replicate.py` (the real trainer, evaluator, runner and judging of the box, with a fake training process, fake vLLM servers and a fake grader):
 
 - `run` trains with the seed, the rows and the recipe of the box, and scores every task of the draw in its order with the seeds of the round, for null M and the LoRA.
-- The copy of the params changes only the values listed in section 4.
+- The copy of the params changes only the values listed in section 5.
 - `fetch` checks every file, moves only a complete set into the cache, and shows no part of a signed link in an error.
 - `--first-tasks` scores a prefix of the draw. `--round-file` compares with the file of the box.
 
@@ -242,9 +285,9 @@ Against the live public files, on a machine without a GPU, on 2026-11-14 (params
 - The draw of round `r000001` was rebuilt from the public snapshot and seed: 2000 tasks, all in the public pool. It could not be compared with the draw of the box, because the file of that round is public only after the round closes.
 - The file check ran with the real tokenizer of the head and the real grader on a small valid file.
 
-## 8. For the operator
+## 9. For the operator
 
-This change needs no host. Not the box (Dublin), not AffineValidator, no third machine. It adds one module, one test file and this document. It changes no file under `sn120_v2/gpu/` and not `pyproject.toml`, so the code digest stays the same, and a box that restarts on this commit loads its stored state as before. There is nothing to run and nothing to undo.
+This change was prepared and tested without a production host. It changes files under `sn120_v2/gpu/` and `pyproject.toml`; because the code digest covers `sn120_v2/gpu/*.py`, a box adopting this commit will have a new code digest and must qualify it under its normal rollout procedure. The public-contract loader does not alter strict journal decoding or replay. Processor/tokenizer supplementation happens in a separate prepared fold-input directory; it never changes a sealed parent cache or manifest. This PR does not deploy the change, restart a box, or modify an existing checkpoint or optimizer lineage.
 
 One finding for the public site, with no action in this change: `https://affine.io/public/...` answers 403 to the default client name of Python's `urllib`, while `mining.json` and `llms.txt` answer 200. This tool sends its own client name (`sn120-v2-replicate/1`) and is not affected. A miner script that reads `public/irt/...` or `public/read_links.json` with plain `urllib` is.
 

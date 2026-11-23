@@ -38,6 +38,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from build import ASSETS, DATA, V1_DATA, write
 from sn120_v2 import layout
 from sn120_v2.errors import V2Error

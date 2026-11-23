@@ -46,7 +46,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequenc
 from . import layout
 from .canonical import sha256_hex
 from .errors import BatchRejected, ConfigError, InfraError, VerifyError
-from .gpu.batch import advantages
+from .gpu.batch import advantages, render_prompt_ids
 from .params import Params, Recipe
 from .seams import ObjectStore
 from .types import FrozenBatch, Registration, Verdict
@@ -72,6 +72,8 @@ Grader = Callable[[str, str, bool], float | None]
 TIME_LIMIT = "grader_time_limit"  # the rule code of a row that the official grader cannot grade in time
 FAULT = "grader_fault"  # the rule code of a row that makes the official grader fail, while the grader itself works
 NO_SIGNAL = "no_signal"  # the rule code of a file in which no rollout can change the model
+MIN_ROLLOUTS = "min_rollouts"  # too few rollouts have a nonzero advantage
+NULL_UPDATE = "null_update"  # when enabled, the configured cap cannot reach the minimum stored update norm
 TRAIN_COST = "train_cost"  # the rule code of a file that costs more training than one seat may use
 TOKENIZER_FAULT = "tokenizer_fault"  # the rule code of a text that makes the tokenizer fail, while the tokenizer itself works
 CHECK_FAULT = "check_fault"  # the rule code of a file that makes the checker itself fail, while the checker still passes a known-good file
@@ -150,6 +152,8 @@ RULES: dict[str, str] = {
     "reasoning_share": "too small a share of the output tokens is reasoning",
     "answer_repeat": "one final answer is in too many rollouts",
     NO_SIGNAL: "no rollout has a reward that differs from the mean reward of its training group, so nothing trains",
+    MIN_ROLLOUTS: "too few rollouts have a nonzero advantage; the floor is min_signal_rollouts",
+    NULL_UPDATE: "when min_step_norm > 0, the miner's global_norm_cap is below it, so the stored update cannot be large enough to judge",
     TRAIN_COST: "steps times the tokens that the trainer runs through the model is above the training cost cap",
     TIME_LIMIT: f"the official grader cannot grade a rollout inside its time limit; {_AGAIN}",
     FAULT: f"a rollout makes the official grader fail; {_AGAIN}",
@@ -283,7 +287,7 @@ class Tokens(Protocol):
     """Token counts from the head's tokenizer."""
 
     def prompt_tokens(self, prompt: str) -> int:
-        """Tokens of the prompt as one user message in the chat template, with the generation prompt."""
+        """Tokens of the prompt rendered exactly as in scoring and training."""
         ...
 
     def output_tokens(self, text: str) -> int:
@@ -298,9 +302,7 @@ class HFTokens:
         self._tokenizer = tokenizer
 
     def prompt_tokens(self, prompt: str) -> int:
-        message = [{"role": "user", "content": prompt}]
-        ids = self._tokenizer.apply_chat_template(message, tokenize=True, add_generation_prompt=True)
-        return len(ids["input_ids"] if hasattr(ids, "keys") else ids)
+        return len(render_prompt_ids(self._tokenizer, prompt))
 
     def output_tokens(self, text: str) -> int:
         return len(self._tokenizer.encode(text, add_special_tokens=False))
@@ -421,6 +423,11 @@ def _groups(value: dict[str, Any], hotkey: str) -> list[Group]:
     return out
 
 
+def parse_groups(value: dict[str, Any], hotkey: str, max_prompts: int, max_rollouts: int) -> list[Group]:
+    """Kept shape-checked groups for read-only diagnostics. ``check_batch`` remains the admission decision."""
+    return _cap(_groups(value, hotkey), max_prompts, max_rollouts)
+
+
 def _cap(groups: list[Group], max_prompts: int, max_rollouts: int) -> list[Group]:
     """Keep whole groups, in file order, while both caps hold."""
     kept, n_rollouts = 0, 0
@@ -536,17 +543,8 @@ def trained_tokens(n_prompt: int, n_output: int, recipe: Recipe) -> int:
     return n_prompt + (room if n_output >= room else n_output + 1)
 
 
-def _trains(groups: Sequence[Group], params: Params, train: Mapping[str, Any], sizes: Sizes | None) -> int:
-    """The file must train something, and must not cost more training than one seat may use. Return the cost.
-
-    Both rules use the trainer's own arithmetic. A rollout trains when its advantage is not zero and the
-    trainer does not drop it. The advantage is the reward minus the mean reward of the training group
-    (``gpu.batch.advantages``). A file in which no rollout trains gives no gradient: the trainer rejects it, so
-    it must not take a slot. The cost is ``steps`` times the tokens of the rollouts that train
-    (``trained_tokens``): the trainer runs exactly these tokens through the model in each step. Without a
-    tokenizer the checker cannot know the tokens: no rollout counts as dropped and the cost rule does not run.
-    """
-    recipe = params.recipe.for_miner(train)
+def signal_counts(groups: Sequence[Group], recipe: Recipe, sizes: Sizes | None = None) -> tuple[int, int]:
+    """Active rollouts and token cost, exactly as the admission/trainer arithmetic defines them."""
     active = tokens = 0
     for i, (_, rollouts) in enumerate(groups):
         try:
@@ -558,7 +556,29 @@ def _trains(groups: Sequence[Group], params: Params, train: Mapping[str, Any], s
                 continue
             row = trained_tokens(*sizes[i, j], recipe) if sizes is not None else 1
             active, tokens = active + (row > 0), tokens + row
+    return active, tokens
+
+
+def _trains(groups: Sequence[Group], params: Params, train: Mapping[str, Any], sizes: Sizes | None) -> int:
+    """The file must train something, and must not cost more training than one seat may use. Return the cost.
+
+    Both rules use the trainer's own arithmetic. A rollout trains when its advantage is not zero and the
+    trainer does not drop it. The advantage is the reward minus the mean reward of the training group
+    (``gpu.batch.advantages``). A file in which no rollout trains gives no gradient: the trainer rejects it, so
+    it must not take a slot. The cost is ``steps`` times the tokens of the rollouts that train
+    (``trained_tokens``): the trainer runs exactly these tokens through the model in each step. Without a
+    tokenizer the checker cannot know the tokens: no rollout counts as dropped and the cost rule does not run.
+    """
+    recipe = params.recipe.for_miner(train)
+    _need(recipe.global_norm_cap is None or recipe.global_norm_cap >= params.min_step_norm, NULL_UPDATE,
+          f"global_norm_cap {recipe.global_norm_cap if recipe.global_norm_cap is not None else float('inf'):g} is below min_step_norm {params.min_step_norm:g}; the stored update can never reach the floor")
+    active, tokens = signal_counts(groups, recipe, sizes)
     _need(active > 0, NO_SIGNAL, "no rollout has a reward that differs from the mean reward of its training group, so the file trains nothing")
+    # The configured floor is explicit. Old code admitted any positive number
+    # of active rows; its trainer uses fewer minibatches when there are fewer
+    # rows, so minibatches must not add a hidden admission floor here.
+    _need(active >= params.min_signal_rollouts, MIN_ROLLOUTS,
+          f"only {active} rollouts have a nonzero advantage; the floor is {params.min_signal_rollouts} (min_signal_rollouts)")
     if sizes is None:
         return 0
     cost, cap = recipe.steps * tokens, params.max_train_token_steps
@@ -601,7 +621,7 @@ def _fault(grader: Grader, row: tuple[str, str, bool], cause: Exception) -> bool
     return isinstance(cause, GraderTimeLimit) or isinstance(next(iter(_grades(grader, [row]))), Exception)
 
 
-def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set[tuple[int, int]]) -> None:
+def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set[tuple[int, int]], sizes: Sizes | None = None) -> None:
     """Every submitted reward must be the official grade. A prompt the environment does not know has no grade.
 
     A row that the grader cannot grade, in time or at all, is not allowed, whatever its reward. The check stops
@@ -620,7 +640,17 @@ def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set
         if official is None:
             unknown.add(i)
         else:
-            _need(abs(groups[i][1][j][1] - official) <= params.reward_tolerance, "grader", f"{here}.reward is not the official grade")
+            submitted = groups[i][1][j][1]
+            if abs(submitted - official) > params.reward_tolerance:
+                reason = f"{here}.reward is not the official grade (submitted {submitted:g}, official {official:g})"
+                if (i, j) in capped:
+                    reason += (f"; the output is exactly params.max_output_tokens ({params.max_output_tokens}) tokens, so it is an "
+                               "official cap-hit and grades 0 even when its boxed answer is correct; do not submit reward 1")
+                elif sizes is not None and sizes[i, j][1] < params.max_output_tokens:
+                    reason += (f"; the output has {sizes[i, j][1]} tokens, below params.max_output_tokens ({params.max_output_tokens}), "
+                               "so it is not an official cap-hit: a shorter local cap such as 8192 does not force reward 0, "
+                               "and a correct boxed answer can grade 1.0")
+                raise Invalid("grader", reason)
     known, share = len(groups) - len(unknown), params.min_pool_prompt_frac
     _need(known >= share * len(groups), "pool", f"{known} of {len(groups)} prompts are tasks of the public pool; the least share is {share:g}")
 
@@ -692,7 +722,7 @@ def _check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None, grade
     capped, sizes = _kept(kept, params, tokens)
     cost = _trains(kept, params, train, sizes)
     if grader is not None:
-        _graded(kept, params, grader, capped)
+        _graded(kept, params, grader, capped, sizes)
     checked = ("format",) + (("tokens",) if tokens is not None else ()) + (("grader",) if grader is not None else ())
     return Batch(sha256_hex(bytes(raw)), len(raw), version, tuple(kept), len(groups) - len(kept), train, checked, cost)
 
