@@ -66,7 +66,7 @@
   "reasoning_token_share": 0.5,
   "recipe": {
     "alpha": 32.0,
-    "code_digest": "e1a7b6af03451847c349d7b4db459d15d6efec1e7316eacc234c9a384d7ce7fd",
+    "code_digest": "ab2922c88558afd37e95938773a7e148e88c1a6ec543f96c1ce05483fd1b7941",
     "derail_tail": 64,
     "derail_threshold": -3.0,
     "derail_window": 32,
