@@ -73,6 +73,7 @@ from .types import (
     SKIP,
     WINNER,
     BoxResult,
+    KL_FIELDS,
     EntryDecision,
     EntryResult,
     RoundDecision,
@@ -298,6 +299,7 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
         from .gpu.merged import assert_tested_result
 
         assert_tested_result(params, entry)
+        _need(entry.kl_seq is None or params.min_kl_seq > 0, f"{what}: KL present while min_kl_seq is off")
         if entry.status != SCORED:
             _need(not entry.outcomes and entry.eliminated_at_look is None, f"{what}: an unscored entry has no outcomes")
             continue
@@ -317,6 +319,8 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
         _need(len(entry.outcomes) == samples, f"{what}: needs one outcome string per sample")
         check_outcomes(entry.outcomes, n, what)
         scored = scored_prefix(entry.outcomes)
+        if entry.kl_seq is not None:
+            _need(entry.kl_k <= min(params.kl_rollouts, scored), f"{what}: KL samples exceed the permitted scored rollouts")
         _need(scored <= null_scored, f"{what}: scored on more tasks than null M")
         look = entry.eliminated_at_look
         if look is None and result.stopped_at_limit:
@@ -345,6 +349,7 @@ def _entry_decision(seat, entry: EntryResult, status: str, reason: str, score: S
         lora_hash=entry.lora.lora_hash if entry.lora else "",
         score=score,
         eliminated_at_look=entry.eliminated_at_look,
+        **{name: getattr(entry, name) for name in KL_FIELDS},
     )
 
 
@@ -406,6 +411,15 @@ def decide(
                 rows.append((seat, entry, NULL_UPDATE,
                              f"stored update norm {shown} does not meet min_step_norm {params.min_step_norm:g}", None))
                 continue
+            if params.min_kl_seq > 0:
+                if entry.kl_seq is None:
+                    rows.append((seat, entry, NO_DECISION,
+                                 "KL measurement is missing while min_kl_seq is enabled", None))
+                    continue
+                if entry.kl_seq < params.min_kl_seq:
+                    rows.append((seat, entry, NULL_UPDATE,
+                                 f"measured KL {entry.kl_seq:.3g} nats/seq is below min_kl_seq {params.min_kl_seq:g}", None))
+                    continue
             if seat.queue_pos in copies:
                 copy = copies[seat.queue_pos]
                 rows.append((seat, entry, DUPLICATE, copy.reason, None))

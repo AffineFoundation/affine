@@ -254,6 +254,13 @@ def object_keys() -> dict[str, str]:
     }
 
 
+def kl_rule(params: Params) -> str:
+    return (
+        f"Your LoRA must change the model: the mean KL(new||head) over {params.kl_rollouts} of its own eval rollouts must be at least {show(params.min_kl_seq)} nats per sequence, else the entry is a charged null_update."
+        if params.min_kl_seq > 0 else "measured KL gate off"
+    )
+
+
 def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, Any]:
     """The fixed rules in machine-readable form. Everything is derived from ``params`` and the two public addresses."""
     recipe = params.recipe
@@ -287,6 +294,11 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "null_update_status": NULL_UPDATE,
             "min_signal_rollouts": "min_signal_rollouts; no implicit effective recipe.minibatches floor",
             "min_step_norm": params.min_step_norm,
+            "min_kl_seq": params.min_kl_seq,
+            "kl_rollouts": params.kl_rollouts,
+            "kl_max_tokens": params.kl_max_tokens,
+            "kl_time_limit_s": params.kl_time_limit_s,
+            "min_kl_seq_rule": kl_rule(params),
             "min_step_norm_rule": (
                 "static global_norm_cap and stored step_norm must be at least min_step_norm"
                 if params.min_step_norm > 0 else "no minimum norm; only a non-finite stored step_norm is null_update"
@@ -652,7 +664,8 @@ def _duplicate_lines(params: Params) -> list[str]:
         f"- Stored null update: after training, a stored `step_norm` that is not finite is terminal `{NULL_UPDATE}`. It is charged,",
         "  cannot win or be paid, and is not a candidate or keeper in Stage B. There is no minimum norm.",
     ]
-    subfloor = [
+    subfloor = [f"- {kl_rule(params)}"] if params.min_kl_seq > 0 else []
+    subfloor += [
         "- Why a sub-floor update cannot beat M except by luck: the trainer's first-order step changes the head by at most",
         "  its small stored norm. The scoring noise and a favorable task sample can then produce a positive result even",
         "  when the update carries no reproducible improvement. Without the floor, many tiny steps could win by chance",

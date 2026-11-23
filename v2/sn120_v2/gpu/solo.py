@@ -22,7 +22,7 @@ from typing import Sequence
 
 from ..errors import InfraError
 from ..judging import drop_at_look, score_entry
-from ..types import NOT_RUN, NOT_SCORED, NULL_MODEL, SCORED, BoxResult, EntryResult, EvalRequest, LoRAArtifact, RoundTicket
+from ..types import KL_FIELDS, NOT_RUN, NOT_SCORED, NULL_MODEL, SCORED, BoxResult, EntryResult, EvalRequest, LoRAArtifact, RoundTicket
 from ..worker import AT_THE_LEASE_S, LocalRunner
 from .evaluator import _Cancelled, _Deadline
 from .plan import log_phase
@@ -412,6 +412,7 @@ class SoloRunner(LocalRunner):
         reports: dict[int, object] = {}
         scheduler = SoloScheduler(self, ticket, limit)
         self.evaluator._solo_scheduler = scheduler
+        self._tested = scheduler.tested
         entries = lpt_train_all(ticket.entries)
         training: queue.Queue = queue.Queue()
         for index, entry in enumerate(entries):
@@ -516,6 +517,23 @@ class SoloRunner(LocalRunner):
         if not failed.empty():
             raise failed.get()
         outcome = scheduler.finish()
+        tested = dict(scheduler.tested)
+        eval_done = self.clock()
+        if params.min_kl_seq > 0 and (any(isinstance(report, LoRAArtifact) for report in reports.values()) or outcome[0]):
+            # All vLLM servers must release the cards before torch loads two models.
+            self.evaluator.close()
+            scored_reports = {
+                entry.queue_pos: EntryResult(entry.queue_pos, SCORED, lora=reports[entry.queue_pos], outcomes=outcome[1][entry.queue_pos])
+                for entry in ticket.entries
+                if isinstance(reports[entry.queue_pos], LoRAArtifact) and entry.queue_pos in outcome[1]
+            }
+            measured = self.evaluator.measure_kl(ticket, list(scored_reports.values()), outcome[0], tested)
+            reports.update(self._kl_reports(ticket, reports, measured["entries"], outcome[0], outcome[3]))
+            null_kl = measured.get("null") or {}
+            kl_wall_s = measured["wall_s"]
+            kl_metrics = measured["entries"]
+        else:
+            null_kl, kl_wall_s, kl_metrics = {}, 0.0, {}
         if hasattr(self.evaluator, "config"):
             clients = getattr(self.evaluator, "_solo_clients", self.evaluator.clients_for(params))
             log_phase(
@@ -530,9 +548,28 @@ class SoloRunner(LocalRunner):
                 clients_per_server=clients,
                 open_files_limit=resource.getrlimit(resource.RLIMIT_NOFILE)[0],
             )
-        return self._solo_result(ticket, reports, *outcome, started, train_done[0])
+        return self._solo_result(ticket, reports, *outcome, started, train_done[0], null_kl, kl_wall_s, kl_metrics, eval_done=eval_done)
 
-    def _solo_result(self, ticket, reports, null, scored, dropped, stopped, started, train_done):
+    @staticmethod
+    def _kl_reports(ticket, reports, measurements, null, stopped):
+        """A per-entry KL failure is uncharged and cannot win; every peer is sealed."""
+        from ..types import NO_DECISION
+
+        first_look = ticket.params.look_sizes(len(ticket.draw.task_ids))[0]
+        n_scored = len(null[0].rstrip(NOT_RUN)) if null else 0
+        updated = {}
+        for pos, report in reports.items():
+            if not isinstance(report, LoRAArtifact):
+                continue
+            if stopped and n_scored < first_look:
+                continue  # _solo_result preserves the ordinary uncharged not_scored outcome.
+            measured = measurements.get(pos)
+            if measured is None or "error" in measured or "kl_seq" not in measured:
+                reason = "KL measurement failed: " + (measured or {}).get("error", "no measurement returned")
+                updated[pos] = EntryResult(pos, NO_DECISION, reason=reason)
+        return updated
+
+    def _solo_result(self, ticket, reports, null, scored, dropped, stopped, started, train_done, null_kl=None, kl_wall_s=0.0, kl_metrics=None, eval_done=None):
         params = ticket.params
         first_look = params.look_sizes(len(ticket.draw.task_ids))[0]
         n_scored = len(null[0].rstrip(NOT_RUN)) if null else 0
@@ -542,10 +579,14 @@ class SoloRunner(LocalRunner):
             if isinstance(report, LoRAArtifact) and stopped and n_scored < first_look:
                 report = EntryResult(entry.queue_pos, NOT_SCORED, reason=f"the round's time limit ended the scoring after {n_scored} tasks, before the first look of {first_look}")
             elif isinstance(report, LoRAArtifact):
-                proof = getattr(self.evaluator, "_solo_scheduler", None).tested.get(entry.queue_pos) if params.eval_merged else None
+                scheduler = getattr(self.evaluator, "_solo_scheduler", None) if hasattr(self, "evaluator") else None
+                tested = getattr(self, "_tested", scheduler.tested if scheduler is not None else {})
+                proof = tested.get(entry.queue_pos) if params.eval_merged else None
+                artifact = report
                 report = EntryResult(
-                    entry.queue_pos, SCORED, lora=report, outcomes=scored[entry.queue_pos], eliminated_at_look=dropped.get(entry.queue_pos),
+                    entry.queue_pos, SCORED, lora=artifact, outcomes=scored[entry.queue_pos], eliminated_at_look=dropped.get(entry.queue_pos),
                     tested_base_hash=proof.base_hash if proof else "", tested_fold_kernel=proof.kernel if proof else "",
+                    **{key: (kl_metrics or {}).get(entry.queue_pos, {}).get(key) for key in KL_FIELDS if key in (kl_metrics or {}).get(entry.queue_pos, {})},
                 )
             entries.append(report)
         finished = self.clock()
@@ -561,5 +602,6 @@ class SoloRunner(LocalRunner):
             started_at=started,
             finished_at=finished,
             stopped_at_limit=stopped,
-            phase_s={"training": train_done - started, "evaluation": finished - train_done},
+            phase_s={"training": train_done - started, "evaluation": (finished if eval_done is None else eval_done) - train_done} | ({"kl": max(0, int(kl_wall_s))} if ticket.params.min_kl_seq > 0 else {}),
+            **{f"null_{key}": value for key, value in (null_kl or {}).items()},
         )

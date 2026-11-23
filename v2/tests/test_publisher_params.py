@@ -46,6 +46,9 @@ ONLY_IN_THE_TABLE = {
     "weights_rate_limit_blocks": "a limit of the weights writer",
     "budget_usd_per_hour": "the operator's budget",
     "max_loras_per_box": "the upper limit of batch_cap; the servers' LoRA table is the batches of the round, not this value",
+    "kl_rollouts": "the gate-off rule is stated; the live gate-on sentence is covered by the KL tests",
+    "kl_max_tokens": "operator cost cap; its zero/full-completion default is in the params table",
+    "kl_time_limit_s": "worker phase cap; not a miner update rule",
 }
 # A recipe field that only the recipe table of section 2 states (with its note), and no sentence.
 ONLY_IN_THE_RECIPE_TABLE = {"method", "dropout", "kl", "image_digests"}
