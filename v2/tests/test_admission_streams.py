@@ -24,6 +24,7 @@ from sn120_v2.sim import SimWorld, sim_params
 THINK = "step " * 40  # 40 reasoning tokens: above the least of 32
 LIMIT = 50_000  # the byte cap of these tests
 STREAMS = 8
+WAIT_S = 30.0  # the longest that a thread of a test waits for another one. Only a broken order of the store calls reaches it, and the test then fails
 KINDS = ("valid", "not json", "thief", "oversized", "slow", "absent")
 HOTKEYS = [f"5Miner{n:02d}" for n in range(36)]
 
@@ -216,12 +217,50 @@ def test_a_file_that_goes_away_between_the_hash_and_the_download_has_no_verdict_
 
 
 def test_a_failed_download_is_no_error_when_the_check_does_not_need_it(build):
-    """A hotkey that is named two times: the read ahead of its second place may download the file, and the check then has the verdict already."""
+    """A hotkey that is named two times: the read ahead of its second place may download the file, and the check then has the verdict already.
+
+    Two threads download that file, and the store of this test fails the second download. The test fixes which
+    thread makes it, so the result does not depend on which thread runs first. The hotkey stands at the second and
+    at the last of ``STREAMS + 1`` places. At most ``STREAMS`` places are read ahead, so the last place is read
+    only when the check is past the first place. The first place has no file, and its store call waits for the
+    first download of the hotkey: so the second download is the one of the last place. The grade of the hotkey's
+    file waits for that download to fail: so the last place is read before the memory has the verdict.
+    """
+    twice, front = HOTKEYS[0], HOTKEYS[5]
+    named = [front, twice] + HOTKEYS[6:12] + [twice]
+    assert len(named) == STREAMS + 1 and stored(KINDS[5], front) is None, "one place more than the streams, and the first place has no file"
     many = Line(STREAMS, build)
-    many.store.fail[("get", layout.miner_object(HOTKEYS[0]), 2)] = InfraError("the second download fails")
-    got = many.check([HOTKEYS[0]] + HOTKEYS[6:12] + [HOTKEYS[0]])
+    key, downloaded, failed = layout.miner_object(twice), threading.Event(), threading.Event()
+    many.store.fail[("get", key, 2)] = InfraError("the second download fails")
+    size, get = many.store.size, many.store.get
+
+    def size_after_the_first_download(name: str) -> int:
+        if name == layout.miner_object(front):
+            downloaded.wait(WAIT_S)
+        return size(name)
+
+    def get_that_tells(name: str) -> bytes:
+        try:
+            return get(name)
+        except InfraError:
+            failed.set()
+            raise
+        finally:
+            if name == key:
+                downloaded.set()
+
+    def grade_after_the_failed_download(prompt: str, output: str, capped: bool) -> float | None:
+        failed.wait(WAIT_S)  # the first file that is graded is the one of ``twice``
+        return grade(prompt, output, capped)
+
+    many.store.size, many.store.get, many.adm.grader = size_after_the_first_download, get_that_tells, grade_after_the_failed_download
+    got = many.check(named)
+    assert downloaded.is_set() and failed.is_set(), "the second download was made, and it failed"
+    assert many.store.calls()[key] == ["size", "sha256", "size", "get"] * 2, "the last place made the store calls of a file with no verdict, after those of the first place"
     serial = Line(SERIAL_STREAMS, build)
-    assert [hotkey for hotkey, _ in got] == [hotkey for hotkey, _ in serial.check([HOTKEYS[0]] + HOTKEYS[6:12] + [HOTKEYS[0]])]
+    assert got == serial.check(named), "the verdicts of one stream, byte for byte"
+    assert many.memory() == serial.memory() and many.clock.now == serial.clock.now
+    assert serial.store.calls()[key] == ["size", "sha256", "size", "get", "size", "sha256"], "one stream downloads the file one time"
 
 
 def test_the_files_that_wait_in_memory_for_their_check_are_bounded_by_the_streams(build):
