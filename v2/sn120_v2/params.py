@@ -200,7 +200,8 @@ class Params(Record):
         "rotation_enabled", "rotation_k", "rotation_retire_p", "rotation_n_min",
         "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
-        "eval_merged", "null_prune_from_round",
+        "eval_merged", "null_prune_from_round", "min_kl_seq", "kl_rollouts",
+        "kl_max_tokens", "kl_time_limit_s",
     )
 
     netuid: int = 120
@@ -265,6 +266,10 @@ class Params(Record):
     min_scored_tasks: int = 100  # fewer scored tasks than this can never produce a winner
     min_cover: float = 0.95  # share of rollouts that must resolve; below it the entry is no_decision
     calibration_tol: float = 0.003  # multi-box guard on the null-M rate
+    min_kl_seq: float = 0.0  # minimum mean KL(new||head) per sampled rollout; 0 = off
+    kl_rollouts: int = 128  # deterministic sample-0 subsample; capped completions included
+    kl_max_tokens: int = 0  # first N completion tokens per rollout; 0 = the full completion
+    kl_time_limit_s: int = 1200  # independent hard cap, also bounded by the promotion deadline
 
     recipe: Recipe = field(default_factory=Recipe)
 
@@ -373,6 +378,10 @@ class Params(Record):
         _need(_unit(self.dedup_cos_own_seed) and self.dedup_cos_own_seed > 0, "dedup_cos_own_seed must be in (0, 1]")
         _need(self.min_signal_rollouts >= 1, "min_signal_rollouts must be at least 1")
         _need(math.isfinite(self.min_step_norm) and self.min_step_norm >= 0, "min_step_norm must be finite and nonnegative")
+        _need(math.isfinite(self.min_kl_seq) and self.min_kl_seq >= 0, "min_kl_seq must be finite and nonnegative")
+        _need(type(self.kl_rollouts) is int and self.kl_rollouts >= 8, "kl_rollouts must be an integer of at least 8")
+        _need(type(self.kl_max_tokens) is int and self.kl_max_tokens >= 0, "kl_max_tokens must be a nonnegative integer")
+        _need(type(self.kl_time_limit_s) is int and self.kl_time_limit_s > 0, "kl_time_limit_s must be a positive integer")
         _need(0.0 < self.drop_alpha < 1.0, "drop_alpha must be between 0 and 1")
         _need(_unit(self.cap_hit_floor) and _unit(self.cap_hit_margin), "cap-hit settings must be in [0, 1]")
         _need(_unit(self.min_cover) and self.min_cover > 0, "min_cover must be in (0, 1]")

@@ -820,6 +820,17 @@ class VllmEvaluator:
         if errors:
             raise InfraError(f"evaluator cleanup failed: {errors[0]}") from errors[0]
 
+    def measure_kl(self, ticket, entries, null_outcomes, tested):
+        from ..types import SCORED
+        from .kl import KLRunner
+
+        started = time.monotonic()
+        try:
+            return KLRunner(self.config, self.resident).measure(ticket, entries, null_outcomes, tested)
+        except Exception as exc:  # a KL infrastructure fault is never a round crash or a win
+            return {"entries": {entry.queue_pos: {"error": f"{type(exc).__name__}: {exc}"} for entry in entries if entry.status == SCORED},
+                    "null": None, "wall_s": time.monotonic() - started}
+
     def _grade(self, tasks: Sequence[str], jobs: list, replies: list, request: EvalRequest | None = None) -> dict[tuple[str, int, int], str]:
         codes = {job: ERROR if reply is None else CAP for job, reply in zip(jobs, replies)}
         ended = [(job, reply[0]) for job, reply in zip(jobs, replies) if reply is not None and not reply[1]]
