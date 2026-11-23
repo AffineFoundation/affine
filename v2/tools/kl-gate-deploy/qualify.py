@@ -36,14 +36,65 @@ def rewrite_records(path: Path, transform) -> None:
     path.write_bytes(b"\n".join(output) + b"\n")
 
 
+def simulate_activation(repo: Path, root: Path, python: str) -> dict:
+    """Run the real set-params CLI on a copy of a closed live-pin state."""
+    old_params = repo / "v2" / "ops" / "train64k_params_t3600_prune_open.json"
+    new_params = repo / "v2" / "ops" / "train64k_params_t3600_prune_open_kl8k.json"
+    source = root / "live-pin-source"
+    world = SimWorld(source, load_params(old_params))
+    world.register(1, quality=0.0)
+    assert world.round() is not None
+    assert world.controller.state.round is None
+    assert world.controller.params.params_hash == "073ef680cf338de5e085100704e60f80ba96657d6d4e19d12995e4cb971ef6f8"
+    original = (source / JOURNAL_FILE).read_bytes()
+    copied = root / "live-pin-copy"
+    shutil.copytree(source, copied)
+
+    def cli(*args):
+        proc = subprocess.run(
+            [python, "-m", "sn120_v2", *map(str, args)],
+            env=dict(os.environ, PYTHONPATH=str(repo / "v2")),
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        if proc.returncode != 0:
+            raise AssertionError(f"new-code {args}: rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}")
+        return proc
+
+    result = json.loads(cli(
+        "set-params", "--state-dir", copied, "--stack", "sn120_v2.sim:stack",
+        "--params", new_params,
+    ).stdout)
+    expected = {
+        "min_kl_seq": {"before": 0.0, "after": 0.000225},
+        "kl_max_tokens": {"before": 0, "after": 8192},
+        "recipe.code_digest": {
+            "before": "22b2d191b32e394d4621ce477e702b50410a6ef7706cce6cfd20c60ff64e42e1",
+            "after": "5e3aef5849ef6903c9fc1ab67f89eddbd2ea2cac9748621fc42b75224bf58419",
+        },
+    }
+    assert result == {
+        "params_hash_before": "073ef680cf338de5e085100704e60f80ba96657d6d4e19d12995e4cb971ef6f8",
+        "params_hash": "dcab97d47d2f4b02ef7a14d5d8786a0f5a14885ddbf2634845435612fb9b4b1e",
+        "changed": expected,
+    }
+    status = json.loads(cli("status", "--state-dir", copied).stdout)
+    from sn120_v2.state import replay
+    copied_state = replay(read_journal(copied / JOURNAL_FILE))
+    assert status["params_hash"] == result["params_hash"] and status["phase"] == "IDLE"
+    assert copied_state.round is None and copied_state.params.params_hash == result["params_hash"]
+    assert (source / JOURNAL_FILE).read_bytes() == original
+    return result
+
+
 def main() -> int:
     kit = Path(__file__).resolve().parent
     repo = kit.parents[2]
     old_v2 = Path(os.environ["KL_OLD_V2"]).resolve(strict=True)
     python = os.environ.get("KL_QUALIFY_PY", sys.executable)
     root = Path(tempfile.mkdtemp(prefix="kl-gate-qualification-"))
+    activation = simulate_activation(repo, root, python)
     closed = root / "closed"
-    new_params = repo / "v2" / "ops" / "train64k_params_t3600_prune_open_kl.json"
+    new_params = repo / "v2" / "ops" / "train64k_params_t3600_prune_open_kl8k.json"
     old_params = repo / "v2" / "ops" / "train64k_params_t3600_prune_open.json"
     pinned = load_params(new_params)
 
@@ -194,6 +245,8 @@ def main() -> int:
     print(json.dumps({
         "fixture": str(root), "old_code_replay": "passed",
         "open_kl_round_refusal": "passed", "pinned_old_loop_refusal": "passed",
+        "copied_live_params_transition": activation,
+        "copied_source_journal": "unchanged",
         "old_params_transition": "passed", "historical_journal_prefix": "unchanged",
         "historical_mirror_records": "unchanged", "old_loop_stop_after_round": "passed",
         "note": "Synthetic CPU control-plane qualification only; no GPU or production operation.",

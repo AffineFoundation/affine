@@ -477,7 +477,7 @@ def load_params(path: str | Path) -> Params:
 
 # These historical records are changed only in memory. Raw journal/store JSON
 # is never rewritten. A release with another min_kl_seq hash is not accepted.
-KL_PARAMS_HASH = "98d2e1eeaa4106a1e59a21a2f733242fde30a2dd90caaf7d5fa892c002259814"
+KL_PARAMS_HASH = "dcab97d47d2f4b02ef7a14d5d8786a0f5a14885ddbf2634845435612fb9b4b1e"
 KL_CODE_DIGEST = "5e3aef5849ef6903c9fc1ab67f89eddbd2ea2cac9748621fc42b75224bf58419"
 OLD_PARAMS_HASH = "073ef680cf338de5e085100704e60f80ba96657d6d4e19d12995e4cb971ef6f8"
 OLD_CODE_DIGEST = "22b2d191b32e394d4621ce477e702b50410a6ef7706cce6cfd20c60ff64e42e1"
@@ -491,11 +491,13 @@ def historical_params(data: Mapping[str, Any]) -> Params:
     params = Params.from_dict(data)
     if params.params_hash != KL_PARAMS_HASH:
         return params
-    if params.recipe.code_digest != KL_CODE_DIGEST or params.min_kl_seq != 0.000225 or params.kl_rollouts != 128:
+    if (params.recipe.code_digest != KL_CODE_DIGEST or params.min_kl_seq != 0.000225
+            or params.kl_rollouts != 128 or params.kl_max_tokens != 8192 or params.kl_time_limit_s != 1200):
         raise ConfigError("rollback compatibility: the reviewed KL pin has unexpected fields")
     effective = dataclasses.replace(
         params,
         min_kl_seq=0.0,
+        kl_max_tokens=0,
         recipe=dataclasses.replace(params.recipe, code_digest=OLD_CODE_DIGEST),
     )
     # The compatibility view behaves like old code, but the guard must still

@@ -13,27 +13,32 @@ journal, manifest, result or optimizer history.
 |---|---|
 | base / rollback commit | `917ad5484ff38ba96924fb7631fcad79720151f2` |
 | old params hash | `073ef680cf338de5e085100704e60f80ba96657d6d4e19d12995e4cb971ef6f8` |
-| new params hash | `98d2e1eeaa4106a1e59a21a2f733242fde30a2dd90caaf7d5fa892c002259814` |
+| new params hash | `dcab97d47d2f4b02ef7a14d5d8786a0f5a14885ddbf2634845435612fb9b4b1e` |
 | old GPU code digest | `22b2d191b32e394d4621ce477e702b50410a6ef7706cce6cfd20c60ff64e42e1` |
 | new GPU code digest | `5e3aef5849ef6903c9fc1ab67f89eddbd2ea2cac9748621fc42b75224bf58419` |
 | new recipe id | `b1f7cda18368657aebf33ee5097244ca41cccd6bcee6713459799680a6ef2d44` |
 | unchanged image digest | `9a4b16ff282b21baf44350e54c852ed59586b9efb6fe09e5cd2f1e288f4c108a` |
 
-The complete effective diff against the live params is:
+The params file to deploy is
+`v2/ops/train64k_params_t3600_prune_open_kl8k.json`. It is exactly the reviewed
+`train64k_params_t3600_prune_open_kl.json` file plus `"kl_max_tokens": 8192`.
+The uncapped file remains available for reference, but is **not** the deployment
+file. The complete effective diff against the live params is:
 
 ```text
 min_kl_seq: 0.0 -> 0.000225
+kl_max_tokens: 0 -> 8192
 recipe.code_digest: 22b2d191b32e394d4621ce477e702b50410a6ef7706cce6cfd20c60ff64e42e1
                  -> 5e3aef5849ef6903c9fc1ab67f89eddbd2ea2cac9748621fc42b75224bf58419
 ```
 
-`kl_rollouts` is explicitly `128` in the new raw file but is already the default
-on both sides. `kl_max_tokens=0` retains full completions; setting it above zero
-scores only that many leading completion tokens, without adding an end token at
-the cut. `kl_time_limit_s=1200` is an independent hard cap. All four fields are
-omitted from canonical JSON at their defaults, preserving the exact old live hash
-and old sealed-record compatibility. This params file changes only the floor and
-code digest; it does **not** turn on a completion-token cap.
+`kl_rollouts` is explicitly `128` and `kl_time_limit_s=1200` remains the default
+on both sides. The deployed cap scores only the first 8,192 completion tokens,
+without adding an end token at the cut. All four fields are omitted from
+canonical JSON at their defaults, preserving the exact old live hash and old
+sealed-record compatibility. This params file changes exactly the three fields
+above; it does not change the KL floor, rollout count, phase cap, recipe ID or
+serving image.
 
 ## Preconditions and copied-state rehearsal
 
@@ -69,8 +74,8 @@ PYTHONPATH="$NEW_V2" "$PY" -I - <<'PY'
 import json
 from pathlib import Path
 from sn120_v2.params import load_params
-p = load_params(Path('/OPERATOR-SELECTED/reviewed-kl-checkout/v2/ops/train64k_params_t3600_prune_open_kl.json'))
-assert p.params_hash == '98d2e1eeaa4106a1e59a21a2f733242fde30a2dd90caaf7d5fa892c002259814'
+p = load_params(Path('/OPERATOR-SELECTED/reviewed-kl-checkout/v2/ops/train64k_params_t3600_prune_open_kl8k.json'))
+assert p.params_hash == 'dcab97d47d2f4b02ef7a14d5d8786a0f5a14885ddbf2634845435612fb9b4b1e'
 assert p.recipe_id == 'b1f7cda18368657aebf33ee5097244ca41cccd6bcee6713459799680a6ef2d44'
 print(json.dumps({'params_hash': p.params_hash, 'recipe_id': p.recipe_id}))
 PY
@@ -83,11 +88,11 @@ rehearse the exact real CLI against that copy only:
 ```bash
 COPY=/OPERATOR-SCRATCH/kl-copied-state       # new operator-owned copy
 "$PY" -I -m sn120_v2 set-params --state-dir "$COPY" --stack "$STACK" \
-  --params "$NEW_V2/ops/train64k_params_t3600_prune_open_kl.json"
+  --params "$NEW_V2/ops/train64k_params_t3600_prune_open_kl8k.json"
 ```
 
 Require `params_hash` to be the new hash and `changed` to contain exactly the
-two effective fields above. If the copied stack has remote dependencies, use an
+three effective fields above. If the copied stack has remote dependencies, use an
 isolated local store and an explicitly non-live chain/entropy fixture; do not
 substitute a remote production stack for a simulation. Then independently
 replay the copy and inspect the original journal hash to prove it did not
@@ -111,14 +116,14 @@ on synthetic state, not this production-copy rehearsal.
    other controller takes the journal while stopped.
 4. Check out the reviewed KL commit and confirm the GPU code digest exactly.
    Do not install dependencies or replace the image.
-5. Run the copied-state `set-params` simulation above and verify the exact
-   expected hash and two-field effective diff.
+5. Run the copied-state `set-params` simulation above with the `_kl8k.json`
+   file and verify the exact expected hash and three-field effective diff.
 6. Only after explicit go-live authorization, journal the same complete file
    once through the real CLI:
 
    ```bash
    "$PY" -I -m sn120_v2 set-params --state-dir "$STATE" --stack "$STACK" \
-     --params "$NEW_V2/ops/train64k_params_t3600_prune_open_kl.json"
+     --params "$NEW_V2/ops/train64k_params_t3600_prune_open_kl8k.json"
    ```
 
 7. Verify `status` reports the new params hash and no open round. Start exactly
@@ -134,12 +139,16 @@ on synthetic state, not this production-copy rehearsal.
 
 ## Timing and warm-up
 
-The operator's H100 backtest, with the causal-conv1d fast path missing, measured
-about 2.7k model-prefill tokens/s per H100 for two models on roughly 30k-token
-rollouts. That implies roughly 15–20 GPU-minutes per entry for 128 rollouts on
-B300 if the slow path remains. Entries and their rollout shards now run in
-parallel across all eight GPUs. Each model load handles at most 16 rollouts;
-the log-only null calibration runs in its own worker with a resident head.
+The operator's production environment has FLA but not `causal-conv1d`, so the
+conv path uses the torch fallback. The latest supplied H100 measurement is about
+3.7k two-model prefill tokens/s per H100, with rollouts averaging roughly
+25–30k tokens. Full-length 128-rollout measurement across seven jobs therefore
+risks the 1,200-second cap on B300; the deployed `_kl8k.json` file caps each
+completion at 8,192 scored tokens to bound that work. The earlier H100 backtest
+measured about 2.7k model-prefill tokens/s on roughly 30k-token rollouts. Entries
+and their rollout shards now run in parallel across all eight GPUs. Each model
+load handles at most 16 rollouts; the log-only null calibration runs in its own
+worker with a resident head.
 
 The hard cap is the earlier of `kl_time_limit_s` (1,200 seconds) and the
 promotion deadline minus 60 seconds for sealing. With a fully used round, the
@@ -147,9 +156,9 @@ current 10,800-second limit and 600-second reserve leave only about 540 seconds
 after scoring. A timeout stops every child; any incomplete entry becomes
 uncharged `NO_DECISION` and cannot win. Neither cap is a measured runtime
 guarantee. No B300 KL measurement has been run, so the ten-minute target remains
-unqualified. If the first timing is too slow, change `kl_max_tokens` through a
-reviewed params update rather than another code change; that changes what the
-floor means and must be announced accordingly.
+unqualified even with the 8k cap. If the first timing is still too slow, change
+`kl_max_tokens` through a reviewed params update rather than another code change;
+that changes what the floor means and must be announced accordingly.
 
 `phases.jsonl` includes an overall `kl` wall-time record and a `kl_gpu` record
 per worker with `wall_s`, accepted completion `tokens`, `tokens_s`, and
@@ -202,7 +211,7 @@ rewrites historical journal/result bytes. Unknown newer params are refused.
      --params "$NEW_V2/ops/train64k_params_t3600_prune_open.json"
    ```
 
-   Require old hash `073ef680…` and only the reverse two-field diff. Only the
+   Require old hash `073ef680…` and only the reverse three-field diff. Only the
    explicit `set-params` command may cross a closed KL state to this pin. An
    ordinary old `run`, `end-round`, or loop remains refused while KL is pinned.
 4. Confirm `rollback.py status --state-dir "$STATE"` reports the old hash. Start
@@ -231,11 +240,14 @@ exports `KL_OLD_V2` on `PYTHONPATH` for its children; preserve that line.
 
 ## Disposable qualification
 
-The included test uses only synthetic CPU state. It proves closed-KL replay,
-active-pin loop refusal, exact old-pin transition and repeat no-op behavior,
-unchanged historical journal/mirror bytes, old-loop stop-after-round, and
-open-KL-round refusal with no appended leader. It does not prove a production
-store, chain interaction, service restart, or GPU runtime.
+The included test uses only synthetic CPU state. It creates a closed state at
+the exact live `073ef680…` params hash, copies it, and runs the real `set-params`
+CLI against the copy with `_kl8k.json`. It requires the new `dcab97d4…` hash and
+exactly the three-field diff above, then proves the source journal is unchanged.
+It also proves closed-KL replay, active-pin loop refusal, exact old-pin transition
+and repeat no-op behavior, unchanged historical journal/mirror bytes, old-loop
+stop-after-round, and open-KL-round refusal with no appended leader. It does not
+prove a production store, chain interaction, service restart, or GPU runtime.
 
 ```bash
 export KL_OLD_V2=/OPERATOR-SELECTED/exact-917ad548/v2
