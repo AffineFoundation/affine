@@ -36,8 +36,29 @@ def log(**kw):
     kw['at_cr'] = cr(time.time()); print(json.dumps(kw, default=str), flush=True)
 
 
+def public_json(value):
+    if isinstance(value, dict):
+        out = {k: public_json(v) for k, v in value.items() if not str(k).endswith('_cr')}
+        for k, v in value.items():
+            if str(k).endswith('_at_cr') and str(k)[:-3] not in value:
+                out[str(k)[:-3]] = public_json(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [public_json(v) for v in value]
+    if isinstance(value, str):
+        import re
+        from datetime import datetime, timedelta, timezone
+        m = re.fullmatch(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?) CR \(UTC-6\)', value)
+        if m:
+            return int(datetime.fromisoformat(m[1]).replace(tzinfo=timezone(timedelta(hours=-6))).timestamp())
+    return value
+
+
 def wj(path, value, mode):
-    path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
+    path = Path(path)
+    if mode == 0o644:
+        value = public_json(value)
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name('.' + path.name + '.tmp')
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     with os.fdopen(fd, 'w') as f:
@@ -86,7 +107,7 @@ def issue_links(b, state):
     for p in LINKS.glob('*.json'):
         if p.stem not in hks:
             p.unlink()
-    wj(WEB / 'ff' / 'links.json', dict(version=LINK_VERSION, issued_at=now, issued_at_cr=cr(now), expires_at=now + LINK_TTL,
+    wj(WEB / 'ff' / 'links.json', dict(version=LINK_VERSION, issued_at=now, expires_at=now + LINK_TTL,
                                        hotkeys=sorted(hks), reissue_every_seconds=LINK_EVERY), 0o644)
     state['links_at'] = now
     log(event='links', n=len(hks))
@@ -124,7 +145,7 @@ def readiness(b, state):
             del cache[hk]
     wj(FL.FF_READY, dict(version='sn120-ff-ready-v1', checked_at=now, epoch_index=e, caps=dict(max_tasks=max_tasks, max_rollouts=max_rollouts),
                          miners=miners), 0o600)
-    wj(STATUS, dict(version='sn120-ff-status-v1', generated_at=int(now), generated_at_cr=cr(now), format=ff_format.FORMAT,
+    wj(STATUS, dict(version='sn120-ff-status-v1', generated_at=int(now), format=ff_format.FORMAT,
                     caps=dict(max_tasks=max_tasks, max_rollouts=max_rollouts),
                     note='Format check of each miner file as uploaded (no content). The turn copies and re-checks the file.',
                     miners={hk: {k: v[k] for k in ('valid', 'reason', 'groups', 'rollouts', 'dropped_groups', 'checked_at', 'size') if k in v}

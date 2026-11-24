@@ -137,7 +137,7 @@ def main():
         doc = dict(frozen=False, kings=rows, reference=ref, checked_at=now, checked_at_cr=cr(now))
     doc.update(version='sn120-king-gain-mult-v1', activation_epoch=cfg['activation_epoch'], params={k: cfg[k] for k in
                ('lambda', 'min_shared', 'm_min', 'm_max', 'ref_window', 'se_mult')}, generated_at=now, generated_at_cr=cr(now))
-    pub = dict(version='sn120-king-gain-mult-public-v1', generated_at=now, generated_at_cr=cr(now), enabled=True,
+    pub = dict(version='sn120-king-gain-mult-public-v1', generated_at=now, enabled=True,
                activation_epoch=cfg['activation_epoch'], lambda_=cfg['lambda'], frozen=doc.get('frozen', False),
                rule=cfg['public_rule'],
                kings=[dict(epoch=r['epoch'], king=r['king'][:12], m=round(float(r['m']), 3), settled=bool(r['settled'])) for r in rows])

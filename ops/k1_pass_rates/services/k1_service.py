@@ -68,8 +68,28 @@ def log(**kw):
     kw['at'] = round(time.time(), 1); kw['at_cr'] = cr(kw['at']); print(json.dumps(kw, default=str), flush=True)
 
 
+def public_json(value):
+    if isinstance(value, dict):
+        out = {k: public_json(v) for k, v in value.items() if not str(k).endswith('_cr')}
+        for k, v in value.items():
+            if str(k).endswith('_at_cr') and str(k)[:-3] not in value:
+                out[str(k)[:-3]] = public_json(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [public_json(v) for v in value]
+    if isinstance(value, str):
+        import re
+        from datetime import datetime, timedelta, timezone
+        m = re.fullmatch(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?) CR \(UTC-6\)', value)
+        if m:
+            return int(datetime.fromisoformat(m[1]).replace(tzinfo=timezone(timedelta(hours=-6))).timestamp())
+    return value
+
+
 def wj(path, obj, mode=0o600):
-    path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
+    path = Path(path)
+    if mode == 0o644: obj = public_json(obj)
+    path.parent.mkdir(parents=True, exist_ok=True)
     t = path.with_name('.' + path.name + '.tmp'); fd = os.open(t, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     with os.fdopen(fd, 'w') as f: f.write(json.dumps(obj, indent=1, sort_keys=True) + '\n')
     os.chmod(t, mode); os.replace(t, path)
@@ -243,7 +263,7 @@ def verdicts(chain):
                 rec['signed_verdict'] = v; rec['regate'] = rg.get('note', 'operator re-gate'); v = rg['decision']; ev = rg.get('evaluated') or ev
             rec.update(verdict=v or ('timeout-promote' if pg.get('decision') == 'timeout-promote' else 'pending'),
                        candidate=dec.get('candidate'), z=ev.get('z'), n=ev.get('n'), cap=ev.get('c_cap_rate'),
-                       h_pass=ev.get('h_pass'), c_pass=ev.get('c_pass'), decided_at_cr=dec.get('decided_at_cr'))
+                       h_pass=ev.get('h_pass'), c_pass=ev.get('c_pass'), decided_at=dec.get('decided_at'))
             rec.update(pass_rates(e, dec, ev))   # 20261031 pt904u: pass rates for the held-out gate format too
             # t764u transparency: the trained task indices (filtered signed dispatch) + post-decision public artifacts
             kd = rj(d / 'TRAIN-DISPATCH-K1.json') or {}
@@ -290,7 +310,7 @@ def scores_doc(recs, chain, q):
         floor_info = dict(floor_applied=True, reason='no_k1_green_yet_last_good_pre_k1_scores', n=len(miners),
                           source=str(FLOOR), source_score_sha256=fl.get('score_sha256'))
     body = dict(version='sn120-k1-per-uid-live-v1', mode='live', live_weights=True, enabled=True,
-                generated_at=now, generated_at_cr=cr(now), netuid=NETUID,
+                generated_at=now, netuid=NETUID,
                 formula=dict(version='k1-last10-green-equal-v1',
                              text=('K=1 per-UID turns (Jacob t712u 2026-10-27). Each epoch trains one UID\'s batch. A turn whose candidate '
                                    'passes the promotion gate (GREEN: held-out gate (live from E271): GREEN only if the weighted per-task gain over the head is positive and weighted_z > 1.00 (strict), estimated cap-hit < 0.20 and >= 100 kept tasks; head and candidate scored on the same tasks of a private held-out probe set (4 seeded samples per task, shared seeds); from E296 the turn batch is not excluded; baseline revealed only after a GREEN or when the round closes (https://affine.io/gate.json rule)) earns. Weight = 1/N to each of '
@@ -325,7 +345,7 @@ def tick(state):
                 rollouts_per_task=[f.get('min_rollouts_per_task', 2), f.get('max_rollouts_per_task', 64)])
     recs = verdicts(chain)
     if rule == 'fewest-turns':
-        qpub = dict(version='sn120-k1-queue-v1', generated_at=now, generated_at_cr=cr(now), chain_block=chain['block'],
+        qpub = dict(version='sn120-k1-queue-v1', generated_at=now, chain_block=chain['block'],
                     enabled=f.get('enabled') is True, from_epoch=f.get('from_epoch'), next=q[:QUEUE_N], queue_length=len(q),
                     queue_rule=rule,
                     order_rule='(turns taken by this uid+hotkey, registration block, uid) ascending; UID 0 excluded; a turn counts when '
@@ -338,7 +358,7 @@ def tick(state):
         fs, lg = served(ts)
         shk = sorted({t.get('hotkey') for t in ts if t.get('hotkey')})
         hot = rule in ('hotkey-once', 'hotkey-registration-once')
-        qpub = dict(version='sn120-k1-queue-v2', generated_at=now, generated_at_cr=cr(now), chain_block=chain['block'],
+        qpub = dict(version='sn120-k1-queue-v2', generated_at=now, chain_block=chain['block'],
                     enabled=f.get('enabled') is True, from_epoch=f.get('from_epoch'), queue_rule=rule,
                     queue_rule_from_epoch=f.get('queue_rule_from_epoch'),
                     next=line[:QUEUE_N], queue_length=len(line), readiness_epoch=se,
@@ -374,7 +394,7 @@ def tick(state):
         doc = scores_doc(recs, chain, q)
         wj(SCORES, doc, 0o644)
         allp, valid = payees(recs, chain)
-        wj(K1PUB, dict(version='sn120-k1-public-v1', generated_at=now, generated_at_cr=cr(now), queue=qpub,
+        wj(K1PUB, dict(version='sn120-k1-public-v1', generated_at=now, queue=qpub,
                        payees=doc['k1']['payees'], turns=recs[-200:], floor=doc['formula']['nonzero_weight_floor'],
                        score_sha256=doc['score_sha256']), 0o644)
         key = (doc['score_sha256'], len(recs))

@@ -9,12 +9,11 @@ def kings():
     out = []
     for r in rows:
         if r.get("decision") == "green" and r.get("applied") in (None, "green", True, "promoted", "promote") :
-            out.append(dict(king=r["candidate"], epoch=r["epoch"], parent=r["head"], crowned_at=r["timestamps"].get("decided_at"),
-                            crowned_at_cr=r.get("decided_at_cr"), z=r.get("z")))
+            out.append(dict(king=r["candidate"], epoch=r["epoch"], parent=r["head"], crowned_at=r["timestamps"].get("decided_at"), z=r.get("z")))
     return out
 if __name__ == "__main__":
     ks = kings()
     for k in ks: k["descriptor"] = descriptor(k["king"]) is not None
     json.dump(ks, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "kings.json"), "w"), indent=1)
-    for k in ks: print(k["epoch"], k["king"][:8], k["parent"][:8], k["crowned_at_cr"], k["descriptor"])
+    for k in ks: print(k["epoch"], k["king"][:8], k["parent"][:8], k["crowned_at"], k["descriptor"])
     print("applied values:", sorted({str(json.loads(l).get("applied")) for l in open(G) if '"green"' in l}))

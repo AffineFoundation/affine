@@ -80,7 +80,7 @@ def z_bar_public(now=None):
     now = time.time() if now is None else now; v = float(pv.get('bar_z', 1.0))
     return dict(current=v, kind='fixed', from_epoch=553, rule='GREEN needs z > %.2f (fixed).' % v,
                 history='Fixed at z > 1.00 from E553; E513-E552 used a time-relaxed bar; the exact bar of every decision: entries[].thresholds.z_min.',
-                computed_at=now, computed_at_cr=_crs(now, '%Y-%m-%d %H:%M:%S CR (UTC-6)'))
+                computed_at=now)
 
 
 def pv_of(f) -> dict:
@@ -187,12 +187,12 @@ def settings_public(pv):
 def public_commit(r) -> dict:
     pv = r['cfg']
     return dict(schema=BV.ROUND_SCHEMA, baseline='prior-v1', round_id=r['id'], head=r['head'], opened_at=r['opened_at'],
-                opened_at_cr=r['opened_at_cr'], opened_epoch=r['opened_epoch'], env=pv['probe_env'], set_size=r.get('n'),
+                opened_epoch=r['opened_epoch'], env=pv['probe_env'], set_size=r.get('n'),
                 pool=dict(r['pool'], url=pv['pool_url']), secret_commitment=r['secret_commitment'],
                 commitment=r.get('draw_commitment') or r['secret_commitment'], upload_deadline=r.get('deadline'),
-                target_block=r.get('target_block'), target_block_fixed_at_cr=r.get('target_fixed_at_cr'),
+                target_block=r.get('target_block'), target_block_fixed_at=r.get('target_fixed_at'),
                 draw=dict(done=bool(r.get('ids') is not None), n=r.get('n'), expected_n=r.get('expected_n'),
-                          draw_commitment=r.get('draw_commitment'), drawn_at_cr=r.get('drawn_at_cr')),
+                          draw_commitment=r.get('draw_commitment'), drawn_at=r.get('drawn_at')),
                 table_snapshot_sha256=r['table']['sha256'], k_cand=pv['k_cand'], bar_z=pv['bar_z'], z_inclusive=pv['z_inclusive'],
                 settings=settings_public(pv), rule=rule_for(pv),
                 weighting=r.get('weighting') or 'prior-v1', irt=(r.get('irt_public') if r.get('weighting') == 'irt-info' else None))
@@ -202,7 +202,7 @@ def public_params(h: dict, cur) -> dict:
     """mining.json promotion_gate.heldout block when the prior-v1 baseline is on."""
     pv = _merge(h)
     keep = ('round_id', 'head', 'set_size', 'pool', 'env', 'commitment', 'secret_commitment', 'target_block', 'draw', 'opened_at',
-            'opened_at_cr', 'opened_epoch', 'baseline', 'k_cand', 'bar_z', 'z_inclusive', 'settings', 'status', 'rule', 'weighting', 'irt')
+            'opened_epoch', 'baseline', 'k_cand', 'bar_z', 'z_inclusive', 'settings', 'status', 'rule', 'weighting', 'irt')
     return dict(baseline='prior-v1', from_epoch=h.get('from_epoch'), settings_next_round=settings_public(pv),
                 pool=dict(url=pv['pool_url'], manifest=pv['pool_url'].replace('.jsonl', '.manifest.json')),
                 code=dict(baseline='https://github.com/AffineFoundation/affine/blob/main/priors/baseline_v1.py',

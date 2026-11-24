@@ -51,8 +51,26 @@ def log(**kw):
     print(json.dumps(dict(kw, at=round(time.time(), 1))), flush=True)
 
 
+def public_json(value):
+    if isinstance(value, dict):
+        out = {k: public_json(v) for k, v in value.items() if not str(k).endswith('_cr')}
+        for k, v in value.items():
+            if str(k).endswith('_at_cr') and str(k)[:-3] not in value:
+                out[str(k)[:-3]] = public_json(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [public_json(v) for v in value]
+    if isinstance(value, str):
+        import re
+        from datetime import datetime, timedelta, timezone
+        m = re.fullmatch(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?) CR \(UTC-6\)', value)
+        if m:
+            return int(datetime.fromisoformat(m[1]).replace(tzinfo=timezone(timedelta(hours=-6))).timestamp())
+    return value
+
+
 def wj_public(path, obj):
-    data = (json.dumps(obj, indent=1, sort_keys=True) + '\n').encode()
+    data = (json.dumps(public_json(obj), indent=1, sort_keys=True) + '\n').encode()
     low = data.decode('utf-8', 'replace')
     for bad in FORBID:
         if bad in low: raise RuntimeError('publish guard: %s in %s' % (bad, path))
@@ -131,7 +149,7 @@ def publish_turn(e, dec):
         schema=SCHEMA, epoch=e, published_at=round(time.time(), 1),
         decision={k: dec.get(k) for k in ('decision', 'reasons', 'head', 'candidate', 'evaluated', 'batch_overlap', 'batch_tasks',
                                            'sample_size', 'z_min', 'z_inclusive', 'cap_max', 'min_tasks', 'commitment',
-                                           'decided_at', 'decided_at_cr', 'mode')},
+                                           'decided_at', 'mode')},
         promoted=dec.get('decision') == 'green',
         turn={k: turn.get(k) for k in ('uid', 'hotkey', 'reg_block', 'queue_rule', 'queue_position', 'tasks', 'rollouts', 'head', 'at',
                                        'skipped_not_ready_count')},
@@ -184,7 +202,7 @@ def publish_ff_turn(e, dec, turn, ed, out):
     doc = dict(
         schema=SCHEMA, epoch=e, published_at=round(time.time(), 1), format=turn['format'],
         decision={k: dec.get(k) for k in ('decision', 'reasons', 'head', 'candidate', 'evaluated', 'batch_tasks', 'sample_size',
-                                           'z_min', 'z_inclusive', 'cap_max', 'min_tasks', 'commitment', 'decided_at', 'decided_at_cr', 'mode')},
+                                           'z_min', 'z_inclusive', 'cap_max', 'min_tasks', 'commitment', 'decided_at', 'mode')},
         promoted=green,
         turn={k: turn.get(k) for k in ('uid', 'hotkey', 'reg_block', 'queue_rule', 'queue_position', 'tasks', 'rollouts', 'dropped_groups',
                                        'capped_rollouts', 'file_sha256', 'file_bytes', 'head', 'at', 'skipped_not_ready_count')}
@@ -245,8 +263,8 @@ def publish_reveal(e, dec):
                       min_tasks=int(dec.get('min_tasks', 200)), z_inclusive=bool(dec.get('z_inclusive')))
     doc = dict(
         schema=SCHEMA + '-gate-reveal', epoch=e, published_at=round(time.time(), 1),
-        revealed_after='DECISION.json (%s, %s)' % (dec.get('decision'), dec.get('decided_at_cr')),
-        version=s.get('version'), sample_seed=seed, sample_drawn_at_cr=s.get('drawn_at_cr'), pool=pool,
+        revealed_after='DECISION.json (%s, %s)' % (dec.get('decision'), dec.get('decided_at')),
+        version=s.get('version'), sample_seed=seed, sample_drawn_at=s.get('drawn_at'), pool=pool,
         sample_indices=idx, commitment_published=c.get('commitment'), commitment_recomputed=commit,
         checks=dict(commitment_matches=commit == c.get('commitment') == dec.get('commitment'),
                     indices_match_seed=redraw == sorted(idx),
