@@ -8,17 +8,21 @@ deleted, never repaired and never used.
 
 from __future__ import annotations
 
+import os
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from .. import layout
 from ..canonical import file_sha256, manifest_digest
 from ..errors import InfraError, VerifyError
 from ..seams import ObjectStore
 from ..types import HeadVersion
+
+if TYPE_CHECKING:
+    from ..types import HeadManifest
 
 
 def hash_tree(path: Path) -> dict[str, str]:
@@ -123,3 +127,49 @@ def resident_head(resident: Resident, head: HeadVersion) -> Path:
         raise InfraError("the head has LoRAs that are not folded; fold it before a round")
     resident.tree(layout.public_master_prefix(head.base_fp32_master_digest), head.base_fp32_master_digest)
     return resident.tree(layout.public_base_prefix(head.base_hash), head.base_hash)
+
+
+def resident_parent_base(resident: Resident, manifest: HeadManifest) -> Path:
+    """The verifying parent's bf16 base, without its unneeded fp32 master.
+
+    Confirmation happens after the next head's fold, so the parent's cache may
+    already have been pruned. Full publication can fetch it from the store;
+    chain mode retains it in the local fold cache or checkpoint link instead.
+    """
+    head = manifest.head
+    if head.loras:
+        raise InfraError("the parent has LoRAs that are not folded; fold it before confirmation")
+    prefix = layout.public_base_prefix(head.base_hash)
+    try:
+        return resident.tree(prefix, head.base_hash)
+    except VerifyError as public_error:
+        from ..headfold import BASE, StoreSource, fetch_set
+
+        class ChainSource(StoreSource):
+            """The local checkpoint of this parent, after public files failed."""
+
+            def get(self, kind: str, set_id: str, name: str, sha256: str, path: Path) -> None:
+                if kind != BASE or set_id != head.base_hash:
+                    raise VerifyError("the chain fallback was asked for a different file set")
+                source = resident.root.parent / "checkpoint" / head.version_id / BASE / name
+                if not source.is_file():
+                    super().get(kind, set_id, name, sha256, path)
+                    return
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.unlink(missing_ok=True)
+                os.link(source, path)
+                if file_sha256(path) != sha256:
+                    path.unlink()
+                    raise VerifyError(f"{name} of the confirming parent's checkpoint link does not match its manifest")
+                self.fetched += path.stat().st_size
+
+        try:
+            path = fetch_set(ChainSource(resident.store), BASE, head.base_hash, manifest.base_files, resident.root.parent)
+            with resident._lock:  # noqa: SLF001 - the completed directory was checked by fetch_set
+                resident._verified.add(head.base_hash)  # noqa: SLF001
+            return path
+        except VerifyError as chain_error:
+            raise VerifyError(
+                f"the confirming parent's bf16 base is unavailable from the store or local fold cache "
+                f"({type(public_error).__name__}; {type(chain_error).__name__}: {chain_error})"
+            ) from chain_error

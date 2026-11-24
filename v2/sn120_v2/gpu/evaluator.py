@@ -31,7 +31,7 @@ from .batch import CHAT_TEMPLATE_KWARGS, END_OF_TURN
 from .fold_input import FoldInput, unchanged
 from .plan import BoxConfig, check_pins, log_phase
 from .procs import Child, Process, Spawn, gpu_env, nvidia_smi, stop_all, wait_gpus_free
-from .resident import Resident, resident_head
+from .resident import Resident, resident_head, resident_parent_base
 
 
 def samples_for_model(params: Params, model: str) -> int:
@@ -309,7 +309,7 @@ class VllmEvaluator:
         if not ticket.params.eval_merged:
             raise InfraError("production parent confirmation requires merged-model evaluation")
         parent = ticket.parent.manifest.head
-        base_dir = resident_head(self.resident, ticket.parent.manifest)
+        base_dir = resident_parent_base(self.resident, ticket.parent.manifest)
         # One additional merged-base switch is expected. The candidate count/table is unchanged.
         url = self._serve_one(parent, ticket.params, len(ticket.entries), 0, model="parent", base_dir=base_dir)
         request = EvalRequest(ticket.round_id, parent, (), ticket.draw.task_ids, ticket.draw.round_seed, 0,

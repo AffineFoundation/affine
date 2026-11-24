@@ -147,6 +147,7 @@ def test_solo_server_spawns_and_health_waits_do_not_block_other_gpus(build, tmp_
     seam._solo_lock = threading.RLock()
     seam._solo_start_locks = {}
     seam._solo_servers, seam._solo_urls, seam._solo_loaded = {}, {}, {}
+    seam._solo_base_dirs = {}
     seam._solo_server_clients, seam._solo_clients = {}, None
     seam._head, seam._table = None, 0
     seam.config = SimpleNamespace(work_dir=tmp_path)

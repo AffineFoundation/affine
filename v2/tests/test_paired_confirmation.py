@@ -61,7 +61,7 @@ def test_confirm_production_params_exact_identity_and_effective_diffs():
     assert (new.kl_max_tokens, new.kl_rollouts, new.kl_time_limit_s) == (8192, 128, 1200)
     assert new.batch_cap == 6 and new.n_gpus == 8
     assert new.recipe.code_digest == "ab2922c88558afd37e95938773a7e148e88c1a6ec543f96c1ce05483fd1b7941"
-    assert code_digest() == "20f5ee3347b40340b459bd8321b08a67e195d3f760fc376cb60f61536ea5dff3"
+    assert code_digest() == "cd207930a14ac2f653744dcd48ba96ee263bc6803ca4e573902786411a2b70e4"
     assert new.recipe.image_digests == live.recipe.image_digests == kl8k.recipe.image_digests == (
         "9a4b16ff282b21baf44350e54c852ed59586b9efb6fe09e5cd2f1e288f4c108a",
     )
@@ -390,6 +390,27 @@ def test_historical_one_sample_parent_revalidates_and_resettles_with_original_sc
         check_result(unpinned, dataclasses.replace(old_result, ticket_digest=unpinned.digest()))
 
 
+def test_20f5ee33_paired_parent_result_revalidates_and_resettles_without_legacy_exception(build):
+    params = build.params(confirm_next_round=True, null_samples_per_task=2,
+                          recipe=dataclasses.replace(build.params().recipe,
+                                                     code_digest="20f5ee3347b40340b459bd8321b08a67e195d3f760fc376cb60f61536ea5dff3"))
+    parent = build.parent(build.head())
+    ticket = dataclasses.replace(build.ticket(n_entries=1, params=params), parent=parent)
+    result = build.result(ticket, (PASS * 8, FAIL * 8), {0: PASS * 8},
+                          parent_outcomes=(FAIL * 8, FAIL * 8))
+    check_result(ticket, result)
+    controller = object.__new__(Controller)
+    controller.state = SimpleNamespace(pending_king=parent.pending, round=SimpleNamespace(
+        round_id=ticket.round_id, confirmation=None, parent=parent, excluded_training_prompts=0))
+    events = []
+    controller._log = lambda kind, data, now: events.append((kind, data))
+    controller._resolve_confirmation([(ticket, result)], 1000)
+    confirmation = events[0][1]["confirmation"]
+    assert confirmation["delta"] == 0.5 and confirmation["confirmed"]
+    with pytest.raises(ContractError, match="null_samples fresh samples"):
+        check_result(ticket, dataclasses.replace(result, parent_outcomes=(FAIL * 8,)))
+
+
 def test_historical_one_sample_result_survives_journal_replay_and_resettlement(tmp_path):
     world = confirming(tmp_path, n_tasks=8, min_scored_tasks=2, looks=(1.0,), null_samples_per_task=2)
     crown(world, quality=1.0)
@@ -633,22 +654,28 @@ def test_multi_box_parent_evidence_is_sealed_and_scored_from_a_usable_box(build)
 
 def test_production_parent_uses_exact_merged_manifest_matched_samples_and_no_lora_table_growth(build, tmp_path, monkeypatch):
     from sn120_v2.gpu import evaluator as production
+    from sn120_v2.gpu.resident import Resident
+    from sn120_v2.store import LocalStore
 
     params = build.params(confirm_next_round=True, eval_merged=True, n_gpus=8, batch_cap=6,
                           null_samples_per_task=2, max_num_seqs=2)
     ticket = dataclasses.replace(build.ticket(n_entries=6, params=params), parent=build.parent(build.head()))
-    parent_path = tmp_path / "exact-parent"
-    parent_path.mkdir()
+    store = LocalStore(tmp_path / "store")
+    parent = ticket.parent.manifest
+    for name, contents in {"model.bin": b"parent-base"}.items():
+        store.put(layout.public_base_file(parent.head.base_hash, name), contents)
+    # The old fold can prune both sets. Confirmation needs only the bf16 base.
+    assert parent.master_files and not store.list(layout.public_master_prefix(parent.head.base_fp32_master_digest))
+    parent_path = tmp_path / "work" / "cache" / parent.head.base_hash
     calls = []
     evaluator = production.VllmEvaluator.__new__(production.VllmEvaluator)
-    evaluator.resident = SimpleNamespace()
+    evaluator.resident = Resident(store, tmp_path / "work")
     evaluator.capture = SimpleNamespace(close=lambda: None)
     evaluator._solo_clients = 2
     evaluator._solo_servers = {0: SimpleNamespace(alive=lambda: True)}
     evaluator.settings = production.ServeSettings(clients_per_server=2)
     evaluator.pool = SimpleNamespace(task=lambda task: SimpleNamespace(messages=lambda: []))
     evaluator.http = lambda url, body, timeout: {"choices": [{"message": {"content": "answer"}, "finish_reason": "stop"}], "usage": {"completion_tokens": 1}, "request": body}
-    monkeypatch.setattr(production, "resident_head", lambda resident, manifest: parent_path)
     monkeypatch.setattr(production.ThreadPoolExecutor, "map", lambda self, fn, jobs: [fn(job) for job in jobs])
     evaluator._serve_one = lambda head, params, table, gpu, **kwargs: calls.append((head, table, gpu, kwargs)) or "http://parent"
     def rollout(request, url, job, written):
@@ -716,3 +743,19 @@ def test_parent_close_retains_current_and_confirming_base_identities(build, tmp_
     evaluator.close()
     assert kept == [{head.base_hash for head in (ticket.head, ticket.parent.manifest.head)} |
                     {head.base_fp32_master_digest for head in (ticket.head, ticket.parent.manifest.head)}]
+
+
+def test_parent_base_recovers_from_its_checkpoint_without_the_fp32_master(build, tmp_path):
+    from sn120_v2.gpu.resident import Resident, resident_parent_base
+    from sn120_v2.store import LocalStore
+
+    manifest = build.parent(build.head()).manifest
+    store = LocalStore(tmp_path / "store")
+    store.put(layout.public_base_file(manifest.head.base_hash, "model.bin"), b"small metadata only")
+    link = tmp_path / "work" / "checkpoint" / manifest.head.version_id / "base"
+    link.mkdir(parents=True)
+    (link / "model.bin").write_bytes(b"parent-base")
+    resident = Resident(store, tmp_path / "work")
+    base = resident_parent_base(resident, manifest)
+    assert (base / "model.bin").read_bytes() == b"parent-base"
+    assert not store.list(layout.public_master_prefix(manifest.head.base_fp32_master_digest))
