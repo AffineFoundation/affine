@@ -246,6 +246,10 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "ln(1 + (e - 1) * t), and spent = 0 before the first look",
         "the normal quantile of 1 - a_k",
         "or when its se is 0.",
+        publisher.LOCAL_INSTALL,
+        publisher.LOCAL_KL_DEFAULTS,
+        publisher.TRAIN_COST_EXAMPLE,
+        "Worked example: cap 22,130,000 with steps=16 gives 1,383,125 tokens (integer floor).",
         "(0.5 for a 0/1 split)",
         "an even 0/1 split gives 0.5",
         "or 0 when `field_se` is 0.",
@@ -283,7 +287,7 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     first, second = (publisher.stated_params(one) for one in texts)
     # Opt-in fields are absent at defaults, preserving old Params and llms
     # bytes. Non-default serving and rotation values must still be stated.
-    omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if (name == "null_samples_per_task" or name.startswith("rotation_")) and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
+    omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if (name == "null_samples_per_task" or name == "min_kl_tok" or name.startswith("rotation_")) and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
     omitted |= {"confirm_next_round"}
     public_fields = {f.name for f in dataclasses.fields(Params) if not f.name.startswith("_")} - {"recipe"}
     assert set(first) == public_fields - omitted

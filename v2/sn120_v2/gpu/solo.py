@@ -534,7 +534,7 @@ class SoloRunner(LocalRunner):
         tested = dict(scheduler.tested)
         eval_done = self.clock()
         eval_wall_s = time.monotonic() - train_done_wall[0]
-        if params.min_kl_seq > 0 and (any(isinstance(report, LoRAArtifact) for report in reports.values()) or outcome[0]):
+        if params.kl_floor_on and (any(isinstance(report, LoRAArtifact) for report in reports.values()) or outcome[0]):
             # All vLLM servers must release the cards before torch loads two models.
             self.evaluator.close()
             scored_reports = {
@@ -618,7 +618,7 @@ class SoloRunner(LocalRunner):
             started_at=started,
             finished_at=finished,
             stopped_at_limit=stopped,
-            phase_s={"training": train_done - started, "evaluation": (finished if eval_done is None else eval_done) - train_done} | ({"kl": max(0, int(kl_wall_s))} if ticket.params.min_kl_seq > 0 else {}),
+            phase_s={"training": train_done - started, "evaluation": (finished if eval_done is None else eval_done) - train_done} | ({"kl": max(0, int(kl_wall_s))} if ticket.params.kl_floor_on else {}),
             **{f"null_{key}": value for key, value in (null_kl or {}).items()},
             parent_outcomes=parent_outcomes if ticket.parent is not None else (),
             parent_error=parent_error if ticket.parent is not None else "",

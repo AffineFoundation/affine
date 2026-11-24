@@ -202,7 +202,7 @@ class Params(Record):
         "rotation_enabled", "rotation_k", "rotation_retire_p", "rotation_n_min",
         "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
-        "eval_merged", "null_prune_from_round", "min_kl_seq", "kl_rollouts",
+        "eval_merged", "null_prune_from_round", "min_kl_seq", "min_kl_tok", "kl_rollouts",
         "kl_max_tokens", "kl_time_limit_s", "confirm_next_round",
     )
 
@@ -270,6 +270,7 @@ class Params(Record):
     calibration_tol: float = 0.003  # multi-box guard on the null-M rate
     confirm_next_round: bool = False  # apply a crown now; pay it only after a fresh paired win in the next round
     min_kl_seq: float = 0.0  # minimum mean KL(new||head) per sampled rollout; 0 = off
+    min_kl_tok: float = 0.0  # minimum summed KL divided by measured completion tokens; 0 = off
     kl_rollouts: int = 128  # deterministic sample-0 subsample; capped completions included
     kl_max_tokens: int = 0  # first N completion tokens per rollout; 0 = the full completion
     kl_time_limit_s: int = 1200  # independent hard cap, also bounded by the promotion deadline
@@ -411,6 +412,7 @@ class Params(Record):
         _need(self.min_signal_rollouts >= 1, "min_signal_rollouts must be at least 1")
         _need(math.isfinite(self.min_step_norm) and self.min_step_norm >= 0, "min_step_norm must be finite and nonnegative")
         _need(math.isfinite(self.min_kl_seq) and self.min_kl_seq >= 0, "min_kl_seq must be finite and nonnegative")
+        _need(math.isfinite(self.min_kl_tok) and self.min_kl_tok >= 0, "min_kl_tok must be finite and nonnegative")
         _need(type(self.kl_rollouts) is int and self.kl_rollouts >= 8, "kl_rollouts must be an integer of at least 8")
         _need(type(self.kl_max_tokens) is int and self.kl_max_tokens >= 0, "kl_max_tokens must be a nonnegative integer")
         _need(type(self.kl_time_limit_s) is int and self.kl_time_limit_s > 0, "kl_time_limit_s must be a positive integer")
@@ -450,6 +452,10 @@ class Params(Record):
     @property
     def null_samples(self) -> int:
         return self.samples_per_task if self.null_samples_per_task is None else self.null_samples_per_task
+
+    @property
+    def kl_floor_on(self) -> bool:
+        return self.min_kl_seq > 0 or self.min_kl_tok > 0
 
     @property
     def params_hash(self) -> str:

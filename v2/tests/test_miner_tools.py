@@ -242,7 +242,7 @@ def test_the_live_public_params_and_future_fields_are_readable_only_by_the_publi
     assert params.params_hash == frozen["params_hash"]
     assert (params.crown_gate, params.z_bar, params.z_field_bar) == ("argmax_symmetric", 0.0, 0.0)
     future = copy.deepcopy(raw)
-    future.update(min_kl_seq=0.0, confirm_next_round=True)
+    future.update(min_kl_seq=0.0, min_kl_tok=0.0, confirm_next_round=False)
     future["recipe"]["future_recipe"] = {"anything": [1, 2]}
     future["recipe"]["miner_bounds"][0]["future_bound"] = "new"
     with pytest.raises(ContractError, match="unknown field"):

@@ -19,27 +19,36 @@ Nothing here touches the subnet. The tool reads public files. It writes only bel
 ## 1. What you need
 
 - Linux with the NVIDIA driver (`nvidia-smi` works) and at least 1 GPU. The tool uses GPUs 0 to N-1, where N is `--gpus`.
-- Python 3.12 and `uv`.
-- Free local disk for the base files of the head (18,849,863,399 bytes for the head of 2026-11-14) and for the caches of vLLM.
+- Python 3.12. Use a **clean virtual environment**. An older environment's torch pin can conflict with `vllm==0.32.0`, which requires torch 2.13; do not keep an old pin by installing around the dependency resolver.
+- Free local disk for the base files of the head, the **real fp32 master of tens of GB** when `eval_merged=true`, and the caches of vLLM. The master is not an upcast bf16 base and is not optional for a merged run.
 - Free ports 8100 to 8100+N-1 on `127.0.0.1`. One vLLM server listens on each.
 
 Which GPU is large enough is **not measured**. The code has run only on the GPUs of the box. Each GPU loads the whole model in `bfloat16`, serves a context of `max_context_tokens` tokens, and in training holds the longest row of your file.
 
-Install, from a checkout of the branch `v2`:
+Install from a fresh clone of the branch `v2`, at the **repository root**, in a clean Python 3.12 virtual environment:
 
-```
-git clone https://github.com/AffineFoundation/affine.git && cd affine
+```bash
+git clone https://github.com/AffineFoundation/affine
+cd affine
 git checkout v2
-cd v2
-uv venv .venv --python 3.12 && source .venv/bin/activate
-uv pip install -e ".[gpu,envs,miner]"
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e './v2[gpu,envs,r2]'
 ```
 
-This installs `boto3` with the `miner` extra as well as the tokenizer, chat-template and grading dependencies.
+The `gpu` extra installs the trainer, tokenizer, vLLM and serving dependencies; `envs` installs the official grader; `r2` supplies the object-store dependency. No R2 credentials, wallet keys or other secrets are needed for these public-read commands.
 
-Run every command below from `v2/`, inside the virtual environment.
+**Run every command below from the repository root (`affine/`), inside the activated virtual environment.** The `-e ./v2` install makes `python -m sn120_v2.replicate` importable without changing directory. If an old environment pins an incompatible torch, recreate the venv rather than carrying that pin forward: `vllm==0.32.0` requires torch 2.13.
 
-Every command takes `--mining-json`: the address `https://affine.io/mining.json`, or a file you saved from it.
+Every replication command takes `--mining-json`: the address `https://affine.io/mining.json`, or a file you saved from it. This is the complete public workflow:
+
+```bash
+python -m sn120_v2.replicate fetch --mining-json https://affine.io/mining.json --work /data/affine
+python v2/miner/affine_miner.py check --mining-json https://affine.io/mining.json --hotkey <ss58> --tokenizer /data/affine/cache --grade batch.json
+python -m sn120_v2.replicate run --mining-json https://affine.io/mining.json --hotkey <ss58> --work /data/affine --gpus 1 batch.json
+```
+
+Replace `<ss58>` with your hotkey. The sections below explain each step and the optional arguments.
 
 ## 2. The commands
 
@@ -55,13 +64,13 @@ It starts nothing and needs no GPU. It prints one JSON object:
 - `here`: your `image_digest` (the install digest), your `code_digest`, `gpus_found` (the GPUs that `nvidia-smi` lists; `null` when it does not answer), `n_gpus` (the value of `--gpus`).
 - `differences`: a list of `{"what", "text"}`. Section 5 explains each `what`.
 
-### fetch: the base files of the head
+### fetch: the base and, for a merged run, the fp32 master
 
 ```
 python -m sn120_v2.replicate fetch --mining-json https://affine.io/mining.json --work /data/affine
 ```
 
-It downloads each base file of the head through the signed links of the links file that mining.json names (`contract.read_links`), and checks the size and the sha256 of each file against the head manifest in mining.json. The links expire; the tool reads the links file anew at each start. If a download fails, run the command again: complete files are kept. `--read-links FILE_OR_URL` names another copy of the links file.
+It downloads each base file of the head through the signed links of the links file that mining.json names (`contract.read_links`), and checks the size and the sha256 of each file against the head manifest in mining.json. With `eval_merged=true`, it **also downloads the real fp32 master—tens of GB** from the links file's `master` / `master_files` data. That master is required to construct the official merged candidate; a bf16 base is never upcast as a substitute. The links expire; the tool reads the links file anew at each start. If a download fails, run the command again: complete files in the staging directory are kept and verified. `--read-links FILE_OR_URL` names another copy of the links file.
 
 If you have the files already, name their directory with `--from`. Then nothing is downloaded:
 
@@ -69,39 +78,21 @@ If you have the files already, name their directory with `--from`. Then nothing 
 python -m sn120_v2.replicate fetch --mining-json https://affine.io/mining.json --work /data/affine --from /path/to/model
 ```
 
-Each file is linked (or copied, when a link is not possible) and its sha256 is checked. Other files in that directory are ignored. While the head is the genesis model, llms.txt section 1 names the Hugging Face repository and revision that hold these files.
+Each file is linked (or copied, when a link is not possible) and its sha256 is checked. Other files in that directory are ignored. With `eval_merged=true`, pass `--master-from /path/to/fp32-master` alongside `--from`; the tool refuses to guess that the base is a master. Without `--from`, both sets come from signed links, and `--master-from` is unnecessary. While the head is the genesis model, llms.txt section 1 names the Hugging Face repository and revision that hold the base files.
 
-The files are collected in `<work>/fetch/<base_hash>/` and moved to `<work>/cache/<base_hash>/` when the set is complete. The command prints `{"base_hash", "dir", "files", "fetched"}`. Use the printed `dir` as the head tokenizer directory. For `affine_miner.py check` and `reproduce`, `--tokenizer <work>/cache` also works: when it contains the current contract's `<base_hash>/` directory, the tool resolves that inner directory and logs the selected path.
+The files are collected in `<work>/fetch/<base_hash>/` and moved to `<work>/cache/<base_hash>/` only when the set is complete and verified. The fp32 master uses the same complete-then-rename rule under `<work>/fetch/<base_fp32_master_digest>/` and `<work>/cache/<base_fp32_master_digest>/`; a partial download is never published as a cache directory. Correct cached files are retained on later runs. The fetch report gives `base_hash`, `base_dir`, `base_files`, `base_bytes` and `base_fetched`, plus `master_digest`, `master_dir`, `master_files`, `master_bytes` and `master_fetched` in merged mode (`master_hash` repeats the digest for compatibility). Byte totals for newly fetched files are in `fetched_bytes`, `base_fetched_bytes` and `master_fetched_bytes`. Use the printed base `dir` as the head tokenizer directory. For `affine_miner.py check` and `reproduce`, `--tokenizer <work>/cache` also works: when it contains the current contract's `<base_hash>/` directory, the tool resolves that inner directory and logs the selected path.
 
 **Do not add or change a file in `<work>/cache/`.** The box code verifies a directory there against its id and deletes a directory that does not match. `run` does the same. That is why `fetch` exists: a download tool that writes its own files into the model directory would make the set invalid.
 
 When the head changes (a winner is folded), `base_hash` changes. Run `fetch` again. The run removes the directory of the old base from `<work>/cache/`.
 
-### The current head's missing processor files
+### Processor metadata for an older sealed head
 
-Some already-sealed heads omit `preprocessor_config.json`, `processor_config.json` and `video_preprocessor_config.json`. Their `base_files` and `base_hash` must not change. Do **not** put the missing files into `<work>/cache/` or edit mining.json.
+An older sealed head may omit `preprocessor_config.json`, `processor_config.json` and `video_preprocessor_config.json`. Its `base_files` and `base_hash` must not change. Do **not** put supplementary files into `<work>/cache/<base_hash>/` or edit mining.json.
 
-For local **evaluation only**, make a separate serving directory, leaving the verified cache untouched:
+`run` now uses the production `FoldInputs` preparation automatically. It hard-links or copies the verified parent into `<work>/fold-inputs/<base_hash>/` and adds missing small metadata from the pinned genesis revision. The same prepared input feeds training, merged-candidate construction and scoring. No manual serving copy is needed, and no sealed parent manifest or cache is changed. Future folded/published heads carry these three processor files in `base_files`.
 
-```bash
-export HEAD=/data/affine/cache/<base_hash>
-export SERVING=/data/affine/serving/<base_hash>
-mkdir -p "$SERVING"
-cp -al "$HEAD"/. "$SERVING"/
-for name in preprocessor_config.json processor_config.json video_preprocessor_config.json; do
-  if [ ! -f "$HEAD/$name" ]; then
-    curl -fL "https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B/resolve/2367e865d009c13ac81713a2878291d33ab28177/$name" -o "$SERVING/$name"
-  fi
-done
-```
-
-The head has a **VL-shaped architecture**. Disable image/video inputs in standalone vLLM serving, evaluation and miner sampling with this exact option:
-
-```
---limit-mm-per-prompt '{"image":0,"video":0}'
-```
-
-The official evaluator and `miner/generator_search.py` already pass that option; use it for standalone serving and any other miner sampling server too. This serving copy is an evaluation workaround, not a new head and not a substitute for its sealed manifest. If another small processor or tokenizer file from the parent or that pinned genesis revision is needed, add it only to the separate serving copy. Future folds/published heads carry these small files automatically. `run` still reads the original verified head; the standalone serving copy does not alter its canonical training or head hashes.
+The head has a **VL-shaped architecture**. The official evaluator disables image/video inputs with `--limit-mm-per-prompt '{"image":0,"video":0}'`; use that same option for any standalone miner sampling server too.
 
 ### run: check, train, score, judge
 
@@ -110,6 +101,10 @@ python -m sn120_v2.replicate run --mining-json https://affine.io/mining.json --h
 ```
 
 `--hotkey` is the hotkey named in the file. No signature is needed.
+
+With `eval_merged=true`, `run` first verifies both the bf16 base and the real fp32 master. A missing or invalid master stops with a clear `ConfigError` **before training or any GPU process**; run `fetch` again rather than substituting the bf16 base. With `eval_merged=false`, the master is optional.
+
+For a merged run, the tool uses the production `SoloRunner`: it trains the LoRA, builds `round_bf16(fp32 king master + LoRA update)`, scores that merged candidate against null M on solo merged-model workers, then invokes the official `sn120_v2/gpu/kl.py` path through the evaluator when either KL floor is enabled. A prod-like KL measurement uses up to `kl_rollouts` (default **128**) of the entry's scored, non-error **sample-0** rollouts, and at most the first `kl_max_tokens` (**8192** on the current contract) completion tokens per rollout. `judging.decide` compares mean `kl_seq` with `params.min_kl_seq` when that floor is positive, and summed KL divided by total measured tokens (`kl_tok`) with `params.min_kl_tok` when that floor is positive. When both are positive both must pass; equality passes. It also applies the cap-hit and win-vs-null rules. There is no separate `replicate kl` subcommand; `run` is the end-to-end local KL command.
 
 Which round is repeated:
 
@@ -126,7 +121,7 @@ Other arguments:
 
 - `--gpus N`: use GPUs 0 to N-1. The default is `n_gpus` of the params, the count of the box. The command stops at once if `nvidia-smi` lists fewer.
 - `--pool auto|current|v2.0`: `auto` (the default) uses the archived v2.0 pool when the recorded draw names a task that is not in the current pool. `current` refuses such a draw; `v2.0` forces the archive. The archived pool is `sn120_v2/envs/archive/math_pool_v2.jsonl`, byte-for-byte the original pool. See [POOL_CHANGES.md](POOL_CHANGES.md).
-- `--first-tasks N`: score only the first N tasks of the draw. These are the tasks the box scores first, in the same order with the same weights. It is not a new draw of N tasks. The looks are shares of N. With fewer than `min_scored_tasks` tasks no LoRA can win.
+- `--first-tasks N`: score only the first N tasks of the draw. These are the tasks the box scores first, in the same order with the same weights. It is not a new draw of N tasks. The looks are shares of N. For a one-GPU smoke test, add `--first-tasks 8` (or another N at least `min_scored_tasks`) to the full `run` command above. Fewer than `min_scored_tasks` can exercise the pipeline but cannot produce a winner. KL still uses only the scored rollouts of this shortened run.
 - `--round-clock`: keep the time limits of a round (section 5, `round-clock`).
 - `--strict`: stop unless your machine has the pinned install, the pinned code and the GPU count of the box.
 - `--out FILE`: also write the report to this file.
@@ -137,7 +132,8 @@ Exit code 0: a report. Exit code 1: the file breaks a rule; the output is `{"val
 
 Where things are, below `--work`:
 
-- `cache/<base_hash>/`: the base files.
+- `cache/<base_hash>/`: the verified base files; `cache/<base_fp32_master_digest>/`: the verified fp32 master for a merged run.
+- `fold-inputs/<base_hash>/`: a separately prepared training/serving input, only when an old parent needs supplementary metadata. Never modify the sealed cache to make this.
 - `store/pending/rounds/local/local-l0/loras/000/`: the LoRA of the last run (`adapter_config.json`, `adapter_model.safetensors`, `train_report.json`). The next run overwrites it.
 - `logs/vllm-<gpu>.log`: the output of each vLLM server. `logs/train-<job>.log`: the output of a training job that failed. `logs/phases.jsonl`: times and sizes of each phase.
 
@@ -145,11 +141,17 @@ Where things are, below `--work`:
 
 With 2 rollouts per prompt, one official-head sample of 960 prompts produced 97 mixed-reward groups, a yield of about 10%; plan on about 5–8 times as many prompts as the mixed-reward groups you need, and the file needs 80 mixed groups.
 
-A mixed-reward group has rollouts with different rewards; its nonzero advantages train. A file in which no rollout trains is invalid. Check the actual file and its token/reward rules before uploading:
+A mixed-reward group has rollouts with different rewards; its nonzero advantages train. A file in which no rollout trains is invalid.
+
+**Training-cost rule:** `max_train_token_steps = steps × tokens`, where `tokens` is the sum of trained prompt + output + end-of-turn tokens over the kept training rows. Minibatches do **not** multiply this cost. Worked example: with the live cap **22,130,000** and `steps=16`, the token budget is **1,383,125** (integer floor). Official `check --tokenizer` rejects a large or long mixed-reward batch that exceeds the cap at those steps even when the same file passes at default `steps=1`. Do not add long rollouts for KL margin and then discover that `train_cost` rejects the file; check with your chosen steps and learning-rate bounds before upload.
+
+Check the actual file and its token/reward rules before uploading. You may set training values within the ranges printed by `python v2/miner/affine_miner.py bounds --mining-json https://affine.io/mining.json`. A bound's `decided: true` freezes the **bound** into `recipe_id`; it does **not** lock the value to its default. You may still choose values within that published range.
 
 ```
-python miner/affine_miner.py check --mining-json mining.json --hotkey <ss58> --tokenizer /data/affine/cache --grade batch.json
+python v2/miner/affine_miner.py check --mining-json https://affine.io/mining.json --hotkey <ss58> --tokenizer /data/affine/cache --grade batch.json
 ```
+
+**`affine_miner.py check` does NOT train and does NOT measure `kl_seq` or `kl_tok`. A passing file check is NOT a passing KL gate.** Its JSON report repeats this warning and points to `python -m sn120_v2.replicate run`, which trains and measures the merged candidate end-to-end. The enabled floors are the current `params.min_kl_seq` and `params.min_kl_tok` from mining.json, not hard-coded values. Check the measured `kl_seq` against a positive sequence floor and `kl_tok` against a positive token floor; both apply when both are enabled. See the `kl_gate` report below.
 
 Only an output with exactly `params.max_output_tokens` tokens (currently 65,536) is an official cap-hit. A shorter local limit such as 8192 must not be labeled an official cap-hit: below 65,536, a correct boxed answer can grade 1.0 rather than 0. At exactly the official cap the grade is 0 even if the answer is correct. The checker's reward-mismatch message explains both cases.
 
@@ -168,12 +170,15 @@ For direct grading, `sn120_v2.envs.math_grader.grade(task, output, capped)` acce
 | `box` | `params_hash`, `recipe_id` and `n_gpus` of mining.json. |
 | `here` | `image_digest`, `code_digest` and `n_gpus` of this run. |
 | `differences` | Every difference between this run and a round on the box (section 5). |
-| `status`, `reason` | `winner`, `lost`, `no_decision`, `skip`, `not_trained` or `not_scored`, with the same meaning as in a real round, and the reason in words. |
+| `status`, `reason` | `winner`, `lost`, `null_update`, `no_decision`, `skip`, `not_trained` or `not_scored`, with the same meaning as in a real round, and the reason in words. |
+| `win_vs_null` | `won`, `status`, `reason` and the score used for this one-batch comparison. `won: true` means this candidate beat null M locally; it does not guarantee a win against other miners. |
 | `eliminated_at_look` | The look at which the LoRA was dropped, or `null`. |
 | `score` | `n_tasks`, `delta`, `se`, `z`, `pass_rate`, `null_pass_rate`, `cap_rate`, `null_cap_rate`, `cover`, `eligible`, `reasons`. `null` when nothing was scored. |
 | `null_outcomes`, `outcomes` | One string per sample index: one outcome code per task, in the order of the draw. Null M has `null_samples_per_task` strings (defaulting to `samples_per_task`); your LoRA has `samples_per_task` strings. Scoring compares each LoRA pass with the mean of the king's samples on that task. |
 | `lora` | `lora_hash`, `dir` (the LoRA files on your disk), `train_report`. Absent when the training failed. |
-| `phase_s` | Wall seconds: `training` and `evaluation`. |
+| `phase_s` | Wall seconds: `training` and `evaluation`, plus `kl` when the official KL gate is enabled. |
+| `kl_gate` | `enabled`, the current `min_kl_seq` and `min_kl_tok` floors, `kl_rollouts`, `kl_max_tokens`, `measured`, official source and sample index, and the available metrics `kl_seq`, `kl_seq_se`, `kl_tok`, `kl_k`, `kl_tokens`. `passed` appears when a measurement exists and is true only when every enabled floor passes; equality passes. A value below an enabled floor produces `null_update`. Missing KL with either floor enabled is `no_decision`. |
+| `cap_hit` | `passed`, candidate/null `rate`, allowed `limit`, `floor`, `margin`, and whole `hits` / `rollouts` counts. The limit is `max(cap_hit_floor, null_cap_rate + cap_hit_margin)`. Absent if judging stopped before a score, for example on a failed KL floor. |
 | `stopped_at_limit` | `true` only with `--round-clock`, when the time limit of the round ended the scoring. |
 | `box_round` | Only with `--round-file`: `round_id`, `same_head` (the round ran on the head of this run), `same_draw` (the draw rebuilt here equals the draw in the file, over the tasks scored here), and `null_m`. |
 
@@ -190,7 +195,7 @@ For direct grading, `sn120_v2.envs.math_grader.grade(task, output, capped)` acce
 | File check | `sn120_v2/admission.py` `check_batch`, with the tokenizer of the head, the public task pool and the official grader in worker processes: at most 8 workers and 20 seconds for one row, as on the validator. |
 | Training | `sn120_v2/gpu/trainer.py` `LoraTrainer` starts `python -m sn120_v2.gpu.train_job`. The recipe is the one of mining.json with your `train` values. The seed is `train_seed(round_seed, batch_sha256)`. |
 | Scoring | `sn120_v2/gpu/evaluator.py` `VllmEvaluator`: vLLM servers with the arguments of the box, the request body of the box, the seed `rollout_seed(round_seed, task_id, sample)` for null M and for the LoRA, and the official grader. |
-| The round | `sn120_v2/worker.py` `LocalRunner`: training, then the looks in chunks of `eval_chunk_tasks` tasks, with the early drop of a LoRA that can no longer win. |
+| The round | `sn120_v2/worker.py` `LocalRunner` for ordinary runs; `sn120_v2/gpu/solo.py` `SoloRunner` for `eval_merged=true`, with training, merged-candidate scoring and the official KL handoff. |
 | The decision | `sn120_v2/judging.py` `decide`: delta, standard error, z, the cap-hit and cover rules, the status. With `crown_gate` = `argmax_symmetric` and `z_bar` > 0, eligibility needs delta > `TIE_TOLERANCE` AND z strictly above `z_bar` (with se > 0), including `winner` here. |
 | The draw | `sn120_v2/irt.py` `draw_from_snapshot`. |
 | The model cache | `sn120_v2/gpu/resident.py` `Resident`: every file set is hashed before it is used. |
@@ -214,7 +219,7 @@ Each entry of `differences` in a report has one of these names in `what`. The te
 | `gpus` | `--gpus` is not `n_gpus` of the params. | One vLLM server runs on each GPU, and task i of a chunk goes to server i mod the number of GPUs. With fewer GPUs each server gets more of the tasks. The training job splits the rows over its GPUs and adds the gradients: the same sum in exact arithmetic, another rounding. |
 | `round-clock` | Always, unless `--round-clock`. | No time limit of the round applies. On the box the training ends `train_time_budget_s` after the start of the round, and the scoring stops at `round_time_limit_s - promote_reserve_s`; what is scored by then is the whole test. A slower machine would hit these limits and score fewer tasks. The limit of one reply, `eval_time_budget_s`, is the same here. |
 | `one-batch` | Always. | The round has one batch: yours. The result says whether your LoRA beats null M by the win rule. In a real round the eligible LoRA with the highest delta wins, so `winner` here does not mean a win there. The training job has all GPUs of the run; on the box a job has floor(`n_gpus` / batches of the round) GPUs, at least 1. On the box all LoRAs of a round are loaded into the same servers and scored together, and the LoRA table of the servers (`--max-loras`) is the number of batches of the round; here it is 1. |
-| `no-master` | Always. | The fp32 master of the head is not checked and not needed. The box checks it before it trains or scores, because the box also folds a winner. This tool never folds. |
+| `master` | Always. | For `eval_merged=true`, `fetch` downloads and verifies the real fp32 master (tens of GB), and `run` uses it to construct the official fp32-master + LoRA merged candidate. It is optional for `eval_merged=false`. An unfolded head can require a checkpoint/head-chain rebuild; that is separate from candidate construction. |
 | `free-gpus` | Always. | Before the scoring starts, only GPUs 0 to N-1 must be free. The box waits for all of its GPUs. |
 | `first-tasks` | With `--first-tasks`. | Only the first N tasks of the draw are scored. |
 | `round-head` | The round you repeat ran on another head than the head of mining.json. | The run uses the head of mining.json. Null M is then another model than in that round. |
@@ -275,7 +280,9 @@ On CPU, by the tests in `tests/test_replicate.py` (the real trainer, evaluator, 
 
 - `run` trains with the seed, the rows and the recipe of the box, and scores every task of the draw in its order with the seeds of the round, for null M and the LoRA.
 - The copy of the params changes only the values listed in section 5.
-- `fetch` checks every file, moves only a complete set into the cache, and shows no part of a signed link in an error.
+- `fetch` checks every file, downloads both base and fp32 master under merged mode through the signed links, retains correct staged files, moves only a complete set into the cache, and shows no part of a signed link in an error.
+- Merged `run` refuses a missing or corrupt master before training, and non-merged `run` does not require one. `FoldInputs` remains separate from the sealed cache.
+- `SoloRunner` constructs and scores a merged candidate and hands it to the official KL path. Tests cover passing and low-KL outcomes, cap-hit and win-vs-null reporting, and official sample-0 rollout selection/token caps.
 - `--first-tasks` scores a prefix of the draw. `--round-file` compares with the file of the box.
 
 Against the live public files, on a machine without a GPU, on 2026-11-14 (params `f777b949…`, head `9fa81073…`):
@@ -287,7 +294,7 @@ Against the live public files, on a machine without a GPU, on 2026-11-14 (params
 
 ## 9. For the operator
 
-This change was prepared and tested without a production host. It changes files under `sn120_v2/gpu/` and `pyproject.toml`; because the code digest covers `sn120_v2/gpu/*.py`, a box adopting this commit will have a new code digest and must qualify it under its normal rollout procedure. The public-contract loader does not alter strict journal decoding or replay. Processor/tokenizer supplementation happens in a separate prepared fold-input directory; it never changes a sealed parent cache or manifest. This PR does not deploy the change, restart a box, or modify an existing checkpoint or optimizer lineage.
+This change was prepared and CPU-tested without a production host or a real GPU. It changes `sn120_v2/gpu/solo.py`, so its GPU `code_digest` differs from the previous production code and must be qualified before adoption. The public-contract loader does not alter strict journal decoding or replay. Processor/tokenizer supplementation happens in a separate prepared fold-input directory; it never changes a sealed parent cache or manifest. This change is staging-only: it does not deploy, restart a box, change production params, or modify a checkpoint or optimizer lineage.
 
 One finding for the public site, with no action in this change: `https://affine.io/public/...` answers 403 to the default client name of Python's `urllib`, while `mining.json` and `llms.txt` answer 200. This tool sends its own client name (`sn120-v2-replicate/1`) and is not affected. A miner script that reads `public/irt/...` or `public/read_links.json` with plain `urllib` is.
 

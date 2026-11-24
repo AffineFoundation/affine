@@ -45,6 +45,38 @@ ROUND_ID, LEASE_ID, BOX_ID = "local", "local-l0", "local-box"
 PUT_URL_ENV = "AFFINE_PUT_URL"  # the opened upload link; it is a secret, so it is not a command-line argument
 # The public site answers 403 to the default client name of urllib on its files under public/. So every request of this tool names itself.
 CLIENT = {"User-Agent": "sn120-v2-miner/1"}
+LOCAL_KL_COMMAND = "python -m sn120_v2.replicate run"
+LOCAL_KL_HELP = "python -m sn120_v2.replicate run --mining-json mining.json --hotkey <ss58> --work <directory> --gpus <N> batch.json"
+
+
+def kl_guidance(params: Params) -> str:
+    """The file check and the model-change measurement are separate gates."""
+    floors = []
+    if params.min_kl_seq > 0:
+        floors.append(f"params.min_kl_seq = {params.min_kl_seq:g} nats/sequence")
+    if params.min_kl_tok > 0:
+        floors.append(f"params.min_kl_tok = {params.min_kl_tok:g} nats/token")
+    enabled = "Enabled contract floor(s): " + " and ".join(floors) + "." if floors else "Both KL floors are off now."
+    return (
+        "WARNING: check does NOT train and does NOT measure kl_seq or kl_tok. A passing file check is NOT a passing KL gate. "
+        f"{enabled} Floors come from the contract, not a hard-coded value. "
+        f"Measure the trained merged candidate and run the official KL gate locally with `{LOCAL_KL_COMMAND}`; "
+        f"full command: `{LOCAL_KL_HELP}` (no separate `replicate kl` command is needed)."
+    )
+
+
+def train_cost_guidance(params: Params) -> str:
+    """The published cap is total trained tokens multiplied by steps, never minibatches."""
+    cap, bound = params.max_train_token_steps, params.recipe.bound("steps")
+    text = (
+        "train_cost: max_train_token_steps = steps × tokens; tokens is the sum of trained tokens "
+        "(prompt + output + eos) over the kept training rows. Minibatches do NOT multiply this cost."
+    )
+    if cap > 0:
+        text += f" The current cap is {cap:,}. With steps=16, the token budget is {cap // 16:,} (integer floor)."
+    if bound is not None:
+        text += f" Your allowed steps range is {bound.low:g}–{bound.high:g}."
+    return text
 
 
 def load_contract(source: str) -> tuple[Params, HeadVersion]:
@@ -60,9 +92,11 @@ def load_contract(source: str) -> tuple[Params, HeadVersion]:
 
 def bounds_text(params: Params) -> str:
     """Every field a miner may set under ``train``, read from ``Recipe.miner_bounds``."""
-    lines = [f'Fields you may set under "train" (recipe_id {params.recipe_id}):']
+    lines = [f'Fields you may set under "train" (recipe_id {params.recipe_id}):',
+             "decided means the bound is frozen into recipe_id, NOT that its value is locked. You may still set each value within its published range.",
+             train_cost_guidance(params)]
     for row in miner_settable(params.recipe):
-        status = "" if row["decided"] else " [placeholder: it can change]"
+        status = " [decided: bound frozen into recipe_id; value is yours to set in range]" if row["decided"] else " [placeholder: bound can change; value is yours to set in range]"
         lines.append(f"  {row['key']}: default {json.dumps(row['default'])}; allowed: {row['allowed']}{status}")
     return "\n".join(lines)
 
@@ -79,6 +113,7 @@ def check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None = None,
 
 
 def check_report(batch: Batch, params: Params) -> dict[str, Any]:
+    warning = kl_guidance(params)
     return {
         "valid": True,
         "format": batch.format,
@@ -89,6 +124,9 @@ def check_report(batch: Batch, params: Params) -> dict[str, Any]:
         "rules_run": list(batch.checked),
         "rules_not_run": [family for family in ("tokens", "grader") if family not in batch.checked],
         "train_applied": applied_train(params, batch.train),
+        "train_cost_guidance": train_cost_guidance(params),
+        "warnings": [warning],
+        "kl_gate": {"trained": False, "kl_seq_measured": False, "kl_tok_measured": False, "passing_file_check_is_passing_kl_gate": False, "enabled": params.kl_floor_on, "min_kl_seq": params.min_kl_seq, "min_kl_tok": params.min_kl_tok, "command": LOCAL_KL_COMMAND, "warning": warning},
     }
 
 
@@ -176,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("bounds", "check", "upload", "reproduce"):
         command = commands.add_parser(name)
+        if name == "check":
+            command.epilog = "WARNING: this does NOT train or measure kl_seq or kl_tok; a passing file check is NOT a passing KL gate. Enabled floors come from params.min_kl_seq and params.min_kl_tok. Measure them with `python -m sn120_v2.replicate run`. max_train_token_steps = steps × sum(prompt + output + eos over kept training rows); minibatches do NOT multiply it. Live worked example: cap 22,130,000 / steps=16 = 1,383,125 tokens; official check --tokenizer rejects a mixed batch above that budget."
         command.add_argument("--mining-json", required=True, help="mining.json: a file or an http(s) URL")
         if name == "bounds":
             continue

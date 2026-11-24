@@ -371,7 +371,7 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
         from .gpu.merged import assert_tested_result
 
         assert_tested_result(params, entry)
-        _need(entry.kl_seq is None or params.min_kl_seq > 0, f"{what}: KL present while min_kl_seq is off")
+        _need(entry.kl_seq is None or params.kl_floor_on, f"{what}: KL present while min_kl_seq is off")
         if entry.status != SCORED:
             _need(not entry.outcomes and entry.eliminated_at_look is None, f"{what}: an unscored entry has no outcomes")
             continue
@@ -483,14 +483,19 @@ def decide(
                 rows.append((seat, entry, NULL_UPDATE,
                              f"stored update norm {shown} does not meet min_step_norm {params.min_step_norm:g}", None))
                 continue
-            if params.min_kl_seq > 0:
+            if params.kl_floor_on:
                 if entry.kl_seq is None:
+                    enabled = "min_kl_seq" if params.min_kl_seq > 0 else "min_kl_tok"
                     rows.append((seat, entry, NO_DECISION,
-                                 "KL measurement is missing while min_kl_seq is enabled", None))
+                                 f"KL measurement is missing while {enabled} is enabled", None))
                     continue
-                if entry.kl_seq < params.min_kl_seq:
+                if params.min_kl_seq > 0 and entry.kl_seq < params.min_kl_seq:
                     rows.append((seat, entry, NULL_UPDATE,
                                  f"measured KL {entry.kl_seq:.3g} nats/seq is below min_kl_seq {params.min_kl_seq:g}", None))
+                    continue
+                if params.min_kl_tok > 0 and entry.kl_tok < params.min_kl_tok:
+                    rows.append((seat, entry, NULL_UPDATE,
+                                 f"measured KL {entry.kl_tok:.3g} nats/token is below min_kl_tok {params.min_kl_tok:g}", None))
                     continue
             if seat.queue_pos in copies:
                 copy = copies[seat.queue_pos]
