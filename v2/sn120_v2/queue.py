@@ -98,10 +98,16 @@ def squat_trim(
     queue: Queue,
     verdicts: Mapping[str, Verdict],
     now: int,
+    turns_last_day: int,
     min_wait_s: int,
     age_factor: float,
 ) -> list[RegKey]:
-    """Normal seats with no valid file and an age strictly over ``age_factor * min_wait_s``."""
+    """Normal seats with no valid file and an age strictly over ``age_factor * min_wait_s``.
+
+    With no turns in the last day the wait is unknown, so no seat is moved.
+    """
+    if turns_last_day <= 0:
+        return []
     moved: list[RegKey] = []
     for seat in waiting(queue):
         if zone(seat) != NORMAL:

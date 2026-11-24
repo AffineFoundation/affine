@@ -135,10 +135,10 @@ def test_squat_trim_cannot_touch_a_seat_at_the_front_at_the_mainnet_wait(world, 
     late = max(times) + 3 * YEAR  # older than 2 x 365 days: every normal seat with no file is due
 
     def trimmed(state) -> list[int]:
-        return sorted(uid for uid, _ in squat_trim(state.queue, {}, late, min_wait_s=params.squat_min_wait_s, age_factor=params.squat_age_factor))
+        return sorted(uid for uid, _ in squat_trim(state.queue, {}, late, 1, min_wait_s=params.squat_min_wait_s, age_factor=params.squat_age_factor))
 
     assert trimmed(world.controller.state) == [3, 4, 5], "before the command UID 3 is a normal seat, and the trim reaches it"
-    assert squat_trim(world.controller.state.queue, {}, min(times) + 2 * YEAR, params.squat_min_wait_s, params.squat_age_factor) == [], "not before 730 days"
+    assert squat_trim(world.controller.state.queue, {}, min(times) + 2 * YEAR, 1, params.squat_min_wait_s, params.squat_age_factor) == [], "not before 730 days"
 
     assert main(command(world, "hk8", "hk7", "hk3")) == 0
     capsys.readouterr()

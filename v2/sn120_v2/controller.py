@@ -630,7 +630,7 @@ class Controller:
         started = time.monotonic()
         with timed("open: the check of the waiting files"):
             verdicts = self.check_files(now)
-        moved = squat_trim(state.queue, verdicts, now, params.squat_min_wait_s, params.squat_age_factor)
+        moved = squat_trim(state.queue, verdicts, now, state.turns_last_day(now), params.squat_min_wait_s, params.squat_age_factor)
         if moved:
             self._log(SEATS_DEMOTED, {"keys": [list(key) for key in moved]}, now)
         round_id = f"r{state.round_seq + 1:06d}"

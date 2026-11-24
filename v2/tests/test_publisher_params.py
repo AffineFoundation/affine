@@ -171,6 +171,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"at most once each {admission.FAULT_HOLD_S // 60} minutes",
         f"after {admission.FAULT_TRIES} failed checks in a row",
         f"After {admission.FAULT_TRIES} counted checks in a row",
+        f"No seat is moved when no turn was charged in the last {queue.SECONDS_PER_DAY // 3600} hours.",
         f"A new file is written every {publisher.show(upload['reissue_every_seconds'] / 60)} minutes",
         f"Each link works for {publisher.show(upload['link_ttl_seconds'] / 3600)} hours",
         f"a text of more than {public.TEXT_LIMIT} characters",

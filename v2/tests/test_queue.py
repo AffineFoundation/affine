@@ -68,8 +68,13 @@ def test_boxes_get_consecutive_blocks_of_seats(build, n, boxes, sizes):
     assert [e.queue_pos for block in blocks for e in block] == list(range(n))
 
 
-def trim(build, queue, ready=(), now=10 * DAY):
-    return squat_trim(queue, build.verdicts(*ready), now, min_wait_s=DAY, age_factor=2.0)
+def trim(build, queue, ready=(), now=10 * DAY, turns_last_day=1):
+    return squat_trim(queue, build.verdicts(*ready), now, turns_last_day, min_wait_s=DAY, age_factor=2.0)
+
+
+def test_squat_trim_moves_no_seat_when_no_turn_was_charged_in_the_last_day(build):
+    old = build.queue(build.seat(1, registered_at=7 * DAY))
+    assert trim(build, old, turns_last_day=0) == []
 
 
 def test_squat_trim_moves_only_an_old_seat_with_no_valid_file(build):

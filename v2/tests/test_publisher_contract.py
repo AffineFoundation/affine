@@ -230,11 +230,11 @@ def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     assert "When 5 failures are counted for a seat, the seat is held" in flat and "so it never holds a seat" in flat
     assert "A seat that has a valid file stored keeps its place and is never moved back." in flat
     assert "It applies only to a seat that has no valid file stored when the validator picks the entries of a round" in flat
-    assert "older than 3 x 7200 s = 21600 s (`squat_age_factor` x `squat_min_wait_s`). A seat with a valid file is never moved." in flat
+    assert "older than 3 x 7200 s = 21600 s (`squat_age_factor` x `squat_min_wait_s`). No seat is moved when no turn was charged in the last 24 hours. A seat with a valid file is never moved." in flat
     assert "The two values are parameters (section 11). The validator can change them." in flat and "is announced" not in flat
     assert "seats ahead x seconds per turn" not in flat
     assert "seconds per turn = 86400 /" not in flat.lower()
-    assert "for as long as no entry was charged in the last 24 hours" not in flat
+    assert "No seat is moved when no turn was charged in the last 24 hours." in flat
 
 
 def test_the_queue_text_gives_the_wait_in_days_and_says_what_removes_a_seat(tmp_path):
