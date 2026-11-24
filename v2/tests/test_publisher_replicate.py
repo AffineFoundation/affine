@@ -68,8 +68,17 @@ def test_the_tool_that_llms_txt_names_is_in_the_code(tmp_path):
         "kl_seq_se", "kl_tokens", "cap_hit", "win_vs_null", "params.min_kl_seq",
         "passing file check is NOT a passing KL", "minibatches do NOT multiply",
         "22,130,000", "steps=16", "1,383,125", "decided", "vllm==0.32.0", "torch 2.13", "--first-tasks",
+        "task_ids[:N]", "weights[:N]", "about 4 percentage points", "1–3 points", "not full-draw values",
+        "does not forecast the official 2000-task decision", "54.84%", "61.10%", "+2.32 points", "-4.12 points",
+        "pin `--round <round_id>`", "`--round-file <public address>/public/rounds/<round_id>/round.json`",
+        "nats/sequence", "nats/token", "kl_tok", "14.48–51.20", "not a fixed typical range",
+        "public/rounds/<round_id>/batch.json", "Recipe.for_miner", "steps=1", "global_norm_cap=1e6",
+        "not a recommended step count", "not a learning rate or step count miners must choose",
     ):
         assert warning in text
+    assert "null_pass_rate equals the full-draw" not in text
+    assert "null_pass_rate is the full-draw" not in text
+    assert "prefix null pass rate is the full-draw rate" not in text
     check = next(argv for argv in commands(text) if argv[1:3] == ["v2/miner/affine_miner.py", "check"] and "--tokenizer" in argv)
     assert check[check.index("--mining-json") + 1] == f"{SITE}/mining.json"
     assert check[check.index("--tokenizer") + 1] == "<directory>/cache"
