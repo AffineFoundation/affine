@@ -303,7 +303,7 @@ class VllmEvaluator:
         self._confirming_parent = ticket.parent.manifest.head if ticket.parent is not None and ticket.parent.manifest is not None else None
 
     def score_parent(self, ticket: RoundTicket, deadline: int = 0) -> tuple[str, ...]:
-        """One fresh parent sample 0 on GPU 0, outside the candidate LoRA table and ordinary scheduler."""
+        """Fresh parent samples on GPU 0, matched to every new-head null sample."""
         if ticket.parent is None or ticket.parent.manifest is None:
             raise InfraError("the pinned parent manifest is unavailable")
         if not ticket.params.eval_merged:
@@ -314,7 +314,7 @@ class VllmEvaluator:
         url = self._serve_one(parent, ticket.params, len(ticket.entries), 0, model="parent", base_dir=base_dir)
         request = EvalRequest(ticket.round_id, parent, (), ticket.draw.task_ids, ticket.draw.round_seed, 0,
                               ticket.params, deadline, len(ticket.entries))
-        jobs = [("parent", 0, index) for index in range(len(ticket.draw.task_ids))]
+        jobs = [("parent", sample, index) for sample in range(ticket.params.null_samples) for index in range(len(ticket.draw.task_ids))]
         written: list[tuple[int, float]] = []
         # Parent rollout archives are optional. Do not send an extra model through the existing head/winner archiver.
         capture, self.capture = self.capture, None
@@ -328,11 +328,12 @@ class VllmEvaluator:
             with ThreadPoolExecutor(self._solo_clients or self.clients_for(ticket.params)) as threads:
                 replies = list(threads.map(rollout, jobs))
             if self.clock_expired(deadline) or any(reply is None for reply in replies):
-                raise InfraError("the parent did not complete sample 0 on the full fresh draw")
+                raise InfraError("the parent did not complete all samples on the full fresh draw")
             if not self._solo_servers[0].alive():
                 raise InfraError("the parent vLLM server died during confirmation")
             codes = self._grade(request.task_ids, jobs, replies, request)
-            return ("".join(codes[job] for job in jobs),)
+            return tuple("".join(codes["parent", sample, index] for index in range(len(ticket.draw.task_ids)))
+                         for sample in range(ticket.params.null_samples))
         finally:
             self.capture = capture
 

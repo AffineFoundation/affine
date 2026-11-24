@@ -1,4 +1,4 @@
-"""Paired crown confirmation: fresh sample 0, deferred payout, replay and public evidence."""
+"""Paired crown confirmation: matched sample means, deferred payout, replay and public evidence."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from sn120_v2.envs.math_pool import MathPool, Task
 from sn120_v2.errors import ContractError, InfraError
 from sn120_v2.gpu.plan import code_digest
 from sn120_v2.gpu.solo import SoloRunner, SoloScheduler, SoloSettings
-from sn120_v2.journal import JOURNAL_FILE
+from sn120_v2.journal import JOURNAL_FILE, JournalRecord, read_journal
 from sn120_v2.judging import TIE_TOLERANCE, check_result, duplicate_decision, score_confirmation
 from sn120_v2.params import Params, load_params
 from sn120_v2.payout import paid_set, weights
@@ -26,8 +26,9 @@ from sn120_v2.publisher import check_pair, contract, render
 from sn120_v2.sampling import UniformSampler, rollout_seed
 from sn120_v2.sim import SimWorld, sim_params
 from sn120_v2.state import load
-from sn120_v2.state import CONFIRMATION_RESOLVED, HEAD_APPLIED, HEAD_FOLDED, ROUND_CLOSED, ROUND_SETTLED
-from sn120_v2.types import DUPLICATE, FAIL, NOT_RUN, NULL_MODEL, PASS, King, RoundDecision
+from sn120_v2.state import CONFIRMATION_RESOLVED, HEAD_APPLIED, HEAD_FOLDED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED
+from sn120_v2.store import get_record, put_record
+from sn120_v2.types import DUPLICATE, FAIL, NOT_RUN, NULL_MODEL, PASS, BoxResult, King, RoundDecision, RoundTicket
 
 
 def confirming(tmp_path, **changes) -> SimWorld:    return SimWorld(tmp_path, sim_params(confirm_next_round=True, **changes))
@@ -59,7 +60,8 @@ def test_confirm_production_params_exact_identity_and_effective_diffs():
     assert new.confirm_next_round is True and new.min_kl_seq == 22
     assert (new.kl_max_tokens, new.kl_rollouts, new.kl_time_limit_s) == (8192, 128, 1200)
     assert new.batch_cap == 6 and new.n_gpus == 8
-    assert new.recipe.code_digest == code_digest() == "ab2922c88558afd37e95938773a7e148e88c1a6ec543f96c1ce05483fd1b7941"
+    assert new.recipe.code_digest == "ab2922c88558afd37e95938773a7e148e88c1a6ec543f96c1ce05483fd1b7941"
+    assert code_digest() == "20f5ee3347b40340b459bd8321b08a67e195d3f760fc376cb60f61536ea5dff3"
     assert new.recipe.image_digests == live.recipe.image_digests == kl8k.recipe.image_digests == (
         "9a4b16ff282b21baf44350e54c852ed59586b9efb6fe09e5cd2f1e288f4c108a",
     )
@@ -83,24 +85,34 @@ def test_confirm_production_params_exact_identity_and_effective_diffs():
 
 
 def score_examples():
-    new, old = "PPFP", "PPFF"
-    return (1.0, 2.0, 3.0, 4.0), (new,), (old,)
+    return (1.0, 2.0, 3.0, 4.0), ("PPPP", "PPFF"), ("PPPF", "PPFF")
 
 
-def test_score_confirmation_is_sample_zero_only_weighted_and_strictly_positive():
+def test_score_confirmation_uses_matched_sample_means_and_paired_se():
+    # Per-task differences: (0, 0, 0.5, 0). delta = 2/10. The existing weighted
+    # estimator gives spread sum((w * (d - delta))**2) = 2.0.
     scored = score_confirmation(*score_examples())
-    assert scored["confirmed"] and scored["delta"] == pytest.approx(0.4)
-    assert scored["new_pass_rate"] == pytest.approx(0.7)
-    assert scored["old_pass_rate"] == pytest.approx(0.3)
-    assert scored["se"] > 0 and scored["z"] == pytest.approx(scored["delta"] / scored["se"])
+    assert scored["confirmed"] and scored["delta"] == pytest.approx(0.2)
+    assert scored["new_pass_rate"] == pytest.approx(0.65)
+    assert scored["old_pass_rate"] == pytest.approx(0.45)
+    assert scored["se"] == pytest.approx((4 / 3 * 2.0) ** 0.5 / 10)
+    assert scored["z"] == pytest.approx(scored["delta"] / scored["se"])
+
+
+def test_score_confirmation_exact_tie_and_loss_fail_without_a_z_threshold():
     for outcomes in ((PASS * 4, PASS * 4), (FAIL * 4, PASS * 4)):
         rejected = score_confirmation((1.0,) * 4, outcomes[:1], outcomes[1:])
         assert not rejected["confirmed"] and rejected["delta"] <= TIE_TOLERANCE
-    with pytest.raises(ContractError, match="exactly one sample-0"):
+        assert "TIE_TOLERANCE" in rejected["reason"]
+    tied = score_confirmation((1.0,) * 4, ("PPFF", "FFPP"), ("PFPF", "FPFP"))
+    assert tied["delta"] == 0 and tied["se"] == 0 and not tied["confirmed"]
+    with pytest.raises(ContractError, match="same nonzero number"):
         score_confirmation((1.0,), (PASS, PASS), (FAIL,))
     with pytest.raises(ContractError, match="cover different numbers|full fresh draw"):
         score_confirmation((1.0,) * 4, (PASS * 3 + NOT_RUN,), (FAIL * 4,))
     assert TIE_TOLERANCE == 1e-12
+    # Sample 0 ties, but the later matched samples make the head win.
+    assert score_confirmation((1.0,) * 4, ("PPPP", "PPFF"), ("PPPP", "FFFF"))["delta"] == 0.25
 
 
 def test_clear_win_confirms_later_without_backpaying_the_confirming_round(tmp_path):
@@ -121,7 +133,8 @@ def test_clear_win_confirms_later_without_backpaying_the_confirming_round(tmp_pa
     assert load(world.root / JOURNAL_FILE).kings == world.controller.state.kings
     report = json.loads(world.store.get(layout.round_file(second.round_id)))
     assert report["confirmation"]["confirmed"] and report["parent_outcomes"]
-    assert len(report["parent_outcomes"]) == 1 and len(report["parent_outcomes"][0]) == second.n_tasks
+    assert len(report["parent_outcomes"]) == world.params.null_samples
+    assert all(len(text) == second.n_tasks for text in report["parent_outcomes"])
     assert set(report["confirmation"]) == {
         "parent_version_id", "pending_round_id", "pending_uid", "new_version_id", "delta", "se", "z",
         "new_pass_rate", "old_pass_rate", "new_head_pass_rate", "old_head_pass_rate", "n_tasks", "excluded_training_prompts", "confirmed", "paid", "payout_status", "reason",
@@ -189,6 +202,34 @@ def test_disabled_mode_is_exactly_immediate_apply_and_pay(tmp_path):
     world.reopen()
     world.register(2, 0.3)
     assert world.round().parent is None
+
+
+def test_nonconfirming_rollouts_and_outcomes_are_identical_with_confirmation_enabled(tmp_path):
+    worlds = [SimWorld(tmp_path / name, sim_params(confirm_next_round=enabled, n_tasks=8, min_scored_tasks=2,
+                                                  looks=(1.0,), null_samples_per_task=2))
+              for name, enabled in (("off", False), ("on", True))]
+    requests, outcomes = [], []
+    for world in worlds:
+        world.register(1, 0.0)
+        seen, chunks = [], []
+        original = world.evaluator.evaluate
+        def evaluate(request, *, original=original, seen=seen, chunks=chunks):
+            seen.append(request)
+            chunk = original(request)
+            chunks.append(chunk)
+            return chunk
+        world.evaluator.evaluate = evaluate
+        world.evaluator.score_parent = lambda *args, **kwargs: pytest.fail("a non-confirming round scored a parent")
+        record = world.round()
+        sealed = json.loads(world.store.get(layout.sealed_result(record.round_id, record.leases[0].lease_id)))
+        requests.append((seen, chunks))
+        outcomes.append(sealed | {"ticket_digest": "the pinned params differ by design"})
+    for request1, request2 in zip(requests[0][0], requests[1][0]):
+        assert request2 == dataclasses.replace(request1, params=dataclasses.replace(
+            request1.params, confirm_next_round=True, _legacy_fields=request2.params._legacy_fields))
+    assert requests[0][1] == requests[1][1]
+    assert outcomes[0] == outcomes[1]
+    assert [sum(len(text) for sample in chunk.outcomes.values() for text in sample) for chunk in requests[0][1]] == [24]
 
 
 def test_disabling_while_pending_expires_old_crown_before_immediate_new_king(tmp_path):
@@ -303,17 +344,17 @@ def test_no_pending_draw_is_byte_identical_and_parent_slot_is_conditional(tmp_pa
     assert on.controller._parent_slot().pending == on.controller.state.pending_king
 
 
-def test_parent_result_sealing_requires_fresh_null_and_exactly_sample_zero(build):
+def test_parent_result_sealing_requires_null_samples_and_a_full_fresh_null(build):
     params = build.params(confirm_next_round=True, null_samples_per_task=2)
     ticket = dataclasses.replace(build.ticket(n_entries=1, params=params), parent=build.parent(build.head()))
-    result = build.result(ticket, (PASS * 8, FAIL * 8), {0: PASS * 8}, parent_outcomes=(FAIL * 8,))
+    result = build.result(ticket, (PASS * 8, FAIL * 8), {0: PASS * 8}, parent_outcomes=(FAIL * 8, FAIL * 8))
     check_result(ticket, result)
-    # The exact tie does not use null sample 1.
-    scored = score_confirmation(ticket.draw.weights, result.null_outcomes[:1], result.parent_outcomes)
-    assert scored["delta"] == 1 and scored["confirmed"]
+    scored = score_confirmation(ticket.draw.weights, result.null_outcomes, result.parent_outcomes)
+    assert scored["delta"] == 0.5 and scored["confirmed"]
     for bad in (
-        dataclasses.replace(result, parent_outcomes=(FAIL * 8, PASS * 8)),
-        dataclasses.replace(result, parent_outcomes=(FAIL * 7 + NOT_RUN,)),
+        dataclasses.replace(result, parent_outcomes=(FAIL * 8,)),
+        dataclasses.replace(result, parent_outcomes=(FAIL * 8, FAIL * 8, FAIL * 8)),
+        dataclasses.replace(result, parent_outcomes=(FAIL * 7 + NOT_RUN, FAIL * 8)),
         dataclasses.replace(result, null_outcomes=(PASS * 7 + NOT_RUN, FAIL * 8)),
     ):
         with pytest.raises(ContractError):
@@ -321,6 +362,77 @@ def test_parent_result_sealing_requires_fresh_null_and_exactly_sample_zero(build
     with pytest.raises(ContractError, match="without a pinned parent"):
         without_parent = dataclasses.replace(ticket, parent=None)
         check_result(without_parent, dataclasses.replace(result, ticket_digest=without_parent.digest()))
+
+
+@pytest.mark.parametrize("old_digest", [
+    "e1a7b6af03451847c349d7b4db459d15d6efec1e7316eacc234c9a384d7ce7fd",
+    "ab2922c88558afd37e95938773a7e148e88c1a6ec543f96c1ce05483fd1b7941",
+])
+def test_historical_one_sample_parent_revalidates_and_resettles_with_original_scoring(build, old_digest):
+    params = build.params(confirm_next_round=True, null_samples_per_task=2,
+                          recipe=dataclasses.replace(build.params().recipe, code_digest=old_digest))
+    parent = build.parent(build.head())
+    ticket = dataclasses.replace(build.ticket(n_entries=1, params=params), parent=parent)
+    old_result = build.result(ticket, (PASS * 8, FAIL * 8), {0: PASS * 8}, parent_outcomes=(FAIL * 8,))
+    check_result(ticket, old_result)
+    controller = object.__new__(Controller)
+    controller.state = SimpleNamespace(pending_king=parent.pending, round=SimpleNamespace(
+        round_id=ticket.round_id, confirmation=None, parent=parent, excluded_training_prompts=0))
+    events = []
+    controller._log = lambda kind, data, now: events.append((kind, data))
+    controller._resolve_confirmation([(ticket, old_result)], 1000)
+    confirmation = events[0][1]["confirmation"]
+    assert confirmation["delta"] == 1 and confirmation["confirmed"]
+    with pytest.raises(ContractError, match="null_samples fresh samples"):
+        check_result(ticket, dataclasses.replace(old_result, parent_outcomes=(FAIL * 8, PASS * 8, FAIL * 8)))
+    unpinned = dataclasses.replace(ticket, params=build.params(confirm_next_round=True, null_samples_per_task=2))
+    with pytest.raises(ContractError, match="null_samples fresh samples"):
+        check_result(unpinned, dataclasses.replace(old_result, ticket_digest=unpinned.digest()))
+
+
+def test_historical_one_sample_result_survives_journal_replay_and_resettlement(tmp_path):
+    world = confirming(tmp_path, n_tasks=8, min_scored_tasks=2, looks=(1.0,), null_samples_per_task=2)
+    crown(world, quality=1.0)
+    world.register(2, -1.0)
+    tickets = world.controller.open_round(world.clock(), "legacy-parent")
+    assert world.controller.state.pending_king is not None
+    # Construct a synthetic old-format ticket, stored bytes and matching lease
+    # seal in this test's own mirrored journal; no production record is changed.
+    raw_ticket = canonical_json(tickets[0].to_dict() | {
+        "params": tickets[0].params.to_dict() | {"recipe": tickets[0].params.recipe.to_dict() | {
+            "code_digest": "ab2922c88558afd37e95938773a7e148e88c1a6ec543f96c1ce05483fd1b7941",
+        }},
+    })
+    store = world.controller.store
+    store.put(layout.ticket(tickets[0].round_id, tickets[0].lease_id), raw_ticket)
+    old_ticket = get_record(store, layout.ticket(tickets[0].round_id, tickets[0].lease_id), RoundTicket)
+    assert old_ticket.params.recipe.code_digest == "ab2922c88558afd37e95938773a7e148e88c1a6ec543f96c1ce05483fd1b7941"
+    lease = dataclasses.replace(world.controller.state.round.leases[0], ticket_digest=old_ticket.digest())
+    record = dataclasses.replace(world.controller.state.round, leases=(lease,))
+    records = read_journal(world.root / JOURNAL_FILE)
+    opened = next(item for item in records if item.kind == ROUND_OPENED and item.data["round"]["round_id"] == record.round_id)
+    replacement = JournalRecord(opened.seq, opened.fence, opened.at, opened.kind, {"round": record.to_dict()}, opened.prev)
+    records = [replacement if item.seq == opened.seq else item for item in records]
+    lines = []
+    previous = ""
+    for item in records:
+        item = dataclasses.replace(item, prev=previous)
+        lines.append(item.line())
+        previous = item.checksum
+    for key, line in zip(sorted(store.list(layout.JOURNAL)), lines):
+        store.put(key, line)
+    (world.root / JOURNAL_FILE).write_bytes(b"".join(line + b"\n" for line in lines))
+    old_result = BoxResult.from_json(canonical_json(world.runner.run(old_ticket).to_dict() | {"parent_outcomes": [FAIL * 8]}))
+    check_result(old_ticket, old_result)
+    put_record(store, layout.sealed_result(old_result.round_id, old_result.lease_id), old_result)
+    world.reopen()
+    world.evaluator.score_parent = lambda *args, **kwargs: pytest.fail("stored parent evidence must not run again")
+    world.controller.tick(world.clock())
+    assert world.controller.state.round is None and world.controller.state.pending_king is None
+    confirmation = world.controller.state.rounds[-1].confirmation
+    assert confirmation is not None and confirmation.confirmed
+    assert load(world.root / JOURNAL_FILE).kings == world.controller.state.kings
+    assert [king.uid for king in world.controller.state.kings] == [1]
 
 
 def test_public_pair_and_check_pair_describe_confirmation_and_kl_publication(tmp_path):
@@ -336,8 +448,13 @@ def test_public_pair_and_check_pair_describe_confirmation_and_kl_publication(tmp
     for phrase in ("new_head_pass_rate", "old_head_pass_rate", "n_tasks, delta, se", "paid and", "payout_status", "round.json and mining.json"):
         assert phrase in text
     published = contract(world.params, "https://example.org")
+    confirmation = published["crown_confirmation"]
+    assert confirmation["enabled"]
+    assert confirmation["new_samples"] == confirmation["parent_samples"] == confirmation["new_head_null_samples"] == world.params.null_samples
+    assert "sample mean" in confirmation["comparison"] and "paired differences of sample means" in confirmation["comparison"]
+    assert "same seed and sampling configuration" in text and "differences of sample means" in text
+    assert confirmation["prior_winner_outcomes_used"] is False
     assert published["crown_confirmation"]["enabled"]
-    assert published["crown_confirmation"]["prior_winner_outcomes_used"] is False
     assert published["duplicate_policy"]["kl_public_round_entry_fields"] == ["kl_seq", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens"]
 
 
@@ -392,7 +509,7 @@ def test_solo_eight_gpus_six_candidates_parent_does_not_change_batch_or_lora_tab
             return Worker()
         def score_parent(self, ticket, deadline):
             assert len(ticket.entries) == 6
-            return (PASS * 8,)
+            return (PASS * 8,) * ticket.params.null_samples
         def close(self):
             pass
 
@@ -400,24 +517,27 @@ def test_solo_eight_gpus_six_candidates_parent_does_not_change_batch_or_lora_tab
     trainer = SimpleNamespace(train=lambda request: artifacts[request.entry.queue_pos], close=lambda: None)
     result = SoloRunner(trainer, evaluator, lambda: 1000, build.image, settings=SoloSettings(steal_block_tasks=2), poll_s=0.01).run(ticket)
     assert ticket.params.batch_cap == 6 and params.n_gpus == 8
-    assert result.null_outcomes == (PASS * 8, PASS * 8) and result.parent_outcomes == (PASS * 8,)
+    assert result.null_outcomes == (PASS * 8, PASS * 8) and result.parent_outcomes == (PASS * 8, PASS * 8)
     check_result(ticket, result)
     assert all(event[2] == 6 for event in events if event[0] == "serve")
 
 
-def test_parent_scoring_uses_same_fresh_seed_as_new_head_sample_zero(tmp_path):
-    world = confirming(tmp_path)
+def test_parent_scoring_uses_the_same_fresh_seed_as_each_new_head_sample(tmp_path):
+    world = confirming(tmp_path, null_samples_per_task=2)
     crown(world)
     world.register(2, -1.0)
     seen = []
     original = world.evaluator.score_parent
     def checked(ticket, deadline=0):
-        seen.extend(rollout_seed(ticket.draw.round_seed, task, 0) for task in ticket.draw.task_ids)
+        seen.extend((sample, task, rollout_seed(ticket.draw.round_seed, task, sample))
+                    for sample in range(ticket.params.null_samples) for task in ticket.draw.task_ids)
         return original(ticket, deadline)
     world.evaluator.score_parent = checked
     second = world.round()
-    assert seen == [rollout_seed(second.round_seed, task, 0) for task in json.loads(world.store.get(layout.round_file(second.round_id)))["draw"]["task_ids"]]
-    assert seen and second.confirmation.n_tasks == len(seen)
+    task_ids = json.loads(world.store.get(layout.round_file(second.round_id)))["draw"]["task_ids"]
+    assert seen == [(sample, task, rollout_seed(second.round_seed, task, sample))
+                    for sample in range(world.params.null_samples) for task in task_ids]
+    assert seen and second.confirmation.n_tasks == len(task_ids)
 
 
 def test_duplicate_only_close_expires_pending_without_a_lease_or_king(tmp_path):
@@ -499,7 +619,7 @@ def test_multi_box_parent_evidence_is_sealed_and_scored_from_a_usable_box(build)
     tickets = [dataclasses.replace(build.ticket(n_entries=3, first_pos=3 * index, lease=index, params=params), parent=parent)
                for index in range(2)]
     results = [build.result(ticket, (PASS * 8, FAIL * 8), {entry.queue_pos: PASS * 8 for entry in ticket.entries},
-                            parent_outcomes=(FAIL * 8,)) for ticket in tickets]
+                            parent_outcomes=(FAIL * 8, FAIL * 8)) for ticket in tickets]
     controller = object.__new__(Controller)
     controller.state = SimpleNamespace(pending_king=parent.pending, round=SimpleNamespace(
         round_id="r000001", confirmation=None, parent=parent, excluded_training_prompts=7))
@@ -508,12 +628,11 @@ def test_multi_box_parent_evidence_is_sealed_and_scored_from_a_usable_box(build)
     controller._resolve_confirmation(list(zip(tickets, results)), 1000)
     confirmation = events[0][1]["confirmation"]
     assert events[0][0] == CONFIRMATION_RESOLVED and confirmation["confirmed"]
-    assert confirmation["delta"] == 1 and confirmation["n_tasks"] == 8 and confirmation["excluded_training_prompts"] == 7
+    assert confirmation["delta"] == 0.5 and confirmation["n_tasks"] == 8 and confirmation["excluded_training_prompts"] == 7
 
 
-def test_production_parent_uses_exact_merged_manifest_sample_zero_and_no_lora_table_growth(build, tmp_path, monkeypatch):
+def test_production_parent_uses_exact_merged_manifest_matched_samples_and_no_lora_table_growth(build, tmp_path, monkeypatch):
     from sn120_v2.gpu import evaluator as production
-    from sn120_v2.gpu.plan import BoxConfig
 
     params = build.params(confirm_next_round=True, eval_merged=True, n_gpus=8, batch_cap=6,
                           null_samples_per_task=2, max_num_seqs=2)
@@ -533,30 +652,42 @@ def test_production_parent_uses_exact_merged_manifest_sample_zero_and_no_lora_ta
     monkeypatch.setattr(production.ThreadPoolExecutor, "map", lambda self, fn, jobs: [fn(job) for job in jobs])
     evaluator._serve_one = lambda head, params, table, gpu, **kwargs: calls.append((head, table, gpu, kwargs)) or "http://parent"
     def rollout(request, url, job, written):
-        assert job == ("parent", 0, job[2]) and request.head == ticket.parent.manifest.head
+        assert job[0] == "parent" and 0 <= job[1] < ticket.params.null_samples and request.head == ticket.parent.manifest.head
         assert request.batches == 6 and request.round_seed == ticket.draw.round_seed
         answer = production.VllmEvaluator._rollout(evaluator, request, url, job, written)
         assert answer is not None, "the real rollout hook must accept its synthetic HTTP response"
         return answer
+    jobs = []
     seeds = []
     original_http = evaluator.http
     def checked_http(url, body, timeout):
         if url.endswith("/v1/chat/completions"):
-            task = ticket.draw.task_ids[len(seeds)]
-            assert body["seed"] == rollout_seed(ticket.draw.round_seed, task, 0)
+            model, sample, index = jobs[len(seeds)]
+            task = ticket.draw.task_ids[index]
+            null_body = production.chat_body(NULL_MODEL, [], rollout_seed(ticket.draw.round_seed, task, sample), params)
+            assert body == production.chat_body(model, [], null_body["seed"], params)
+            assert body["seed"] == null_body["seed"]
+            assert {key: value for key, value in body.items() if key != "model"} == {
+                key: value for key, value in null_body.items() if key != "model"
+            }
+            assert body["seed"] == rollout_seed(ticket.draw.round_seed, task, sample)
             assert body["model"] == "parent"
             seeds.append(body["seed"])
         return original_http(url, body, timeout)
     evaluator.http = checked_http
-    evaluator._rollout = rollout
+    def record_rollout(request, url, job, written):
+        jobs.append(job)
+        return rollout(request, url, job, written)
+    evaluator._rollout = record_rollout
     evaluator._grade = lambda tasks, jobs, replies, request: {job: PASS for job in jobs}
     evaluator.begin_round(ticket)
     monkeypatch.setattr(production.VllmEvaluator, "clock_expired", staticmethod(lambda deadline: False))
-    assert evaluator.score_parent(ticket, 0) == (PASS * 8,)
+    assert evaluator.score_parent(ticket, 0) == (PASS * 8, PASS * 8)
     assert evaluator.capture is not None
     assert len(calls) == 1 and calls[0][0] == ticket.parent.manifest.head
     assert calls[0][1:3] == (6, 0) and calls[0][3] == {"model": "parent", "base_dir": parent_path}
-    assert ticket.params.batch_cap == 6 and len(ticket.entries) == 6 and len(seeds) == 8
+    assert jobs == [("parent", sample, index) for sample in range(params.null_samples) for index in range(8)]
+    assert ticket.params.batch_cap == 6 and len(ticket.entries) == 6 and len(seeds) == 16
     assert evaluator._confirming_parent == ticket.parent.manifest.head
     ticket_without_parent = dataclasses.replace(ticket, parent=None)
     with pytest.raises(InfraError, match="manifest is unavailable"):

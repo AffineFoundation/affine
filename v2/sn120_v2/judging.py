@@ -84,6 +84,17 @@ from .types import (
 
 TIE_TOLERANCE = 1e-12
 
+# The two production code identities that issued sample-0-only parent evidence.
+# A pinned old identity, not the result's shape, authorizes historical replay and re-settlement.
+LEGACY_PARENT_ONE_SAMPLE_CODE_DIGESTS = frozenset({
+    "e1a7b6af03451847c349d7b4db459d15d6efec1e7316eacc234c9a384d7ce7fd",
+    "ab2922c88558afd37e95938773a7e148e88c1a6ec543f96c1ce05483fd1b7941",
+})
+
+
+def legacy_parent_one_sample(params: Params, parent_samples: int) -> bool:
+    return parent_samples == 1 and params.recipe.code_digest in LEGACY_PARENT_ONE_SAMPLE_CODE_DIGESTS
+
 
 def _need(ok: bool, message: str) -> None:
     if not ok:
@@ -154,25 +165,25 @@ def estimate(weights: Sequence[float], diffs: Sequence[float]) -> tuple[float, f
     return delta, math.sqrt(n / (n - 1) * spread) / total
 
 
-def score_confirmation(weights: Sequence[float], new_s0_outcomes: Sequence[str], parent_s0_outcomes: Sequence[str]) -> dict[str, float | int | bool | str]:
-    """Fresh paired sample-0 comparison. Null sample 1 and prior winner outcomes are not inputs.
+def score_confirmation(weights: Sequence[float], new_outcomes: Sequence[str], parent_outcomes: Sequence[str]) -> dict[str, float | int | bool | str]:
+    """Fresh paired comparison of per-task means over matched new-head and parent samples.
 
     There is deliberately no z/SE payout threshold: z and SE are diagnostics. Exact ties and losses fail.
     """
-    _need(len(new_s0_outcomes) == 1 and len(parent_s0_outcomes) == 1,
-          "confirmation needs exactly one sample-0 outcome string for the new head and parent")
-    n = scored_prefix((*new_s0_outcomes, *parent_s0_outcomes))
-    _need(n == len(new_s0_outcomes[0]) == len(parent_s0_outcomes[0]) == len(weights),
-          "confirmation needs both sample-0 strings over the same full fresh draw")
-    new, old = pass_rates(new_s0_outcomes, n), pass_rates(parent_s0_outcomes, n)
+    _need(new_outcomes and len(new_outcomes) == len(parent_outcomes),
+          "confirmation needs the same nonzero number of new-head and parent sample strings")
+    n = scored_prefix((*new_outcomes, *parent_outcomes))
+    _need(n == len(weights) and all(len(text) == n for text in (*new_outcomes, *parent_outcomes)),
+          "confirmation needs every new-head and parent sample over the same full fresh draw")
+    new, old = pass_rates(new_outcomes, n), pass_rates(parent_outcomes, n)
     delta, se = estimate(weights, [a - b for a, b in zip(new, old)])
     confirmed = delta > TIE_TOLERANCE
     return {
         "delta": delta, "se": se, "z": delta / se if se > 0 else 0.0,
         "new_pass_rate": weighted_mean(weights, new), "old_pass_rate": weighted_mean(weights, old),
         "n_tasks": n, "confirmed": confirmed,
-        "reason": "fresh paired sample-0 delta is positive" if confirmed
-                  else f"fresh paired sample-0 delta {delta:.6g} does not exceed TIE_TOLERANCE {TIE_TOLERANCE:g}",
+        "reason": "fresh paired sample-mean delta is positive" if confirmed
+                  else f"fresh paired sample-mean delta {delta:.6g} does not exceed TIE_TOLERANCE {TIE_TOLERANCE:g}",
     }
 
 
@@ -320,13 +331,15 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
     else:
         _need(params.confirm_next_round, "a parent slot requires confirm_next_round")
         _need(bool(result.parent_outcomes) != bool(result.parent_error),
-              "a pinned parent needs either one sample-0 result or an explicit parent-only failure")
+              "a pinned parent needs either fresh sample results or an explicit parent-only failure")
         if ticket.parent.manifest is None:
             _need(not result.parent_outcomes and bool(result.parent_error),
                   "an unavailable parent manifest must produce parent-only no_decision evidence")
         if result.parent_outcomes:
             _need(ticket.parent.manifest is not None, "parent outcomes require the pinned parent manifest")
-            _need(len(result.parent_outcomes) == 1, "the parent has exactly sample 0")
+            parent_samples = len(result.parent_outcomes)
+            _need(parent_samples == params.null_samples or legacy_parent_one_sample(params, parent_samples),
+                  "the parent needs null_samples fresh samples, except under a pinned legacy code identity")
             check_outcomes(result.parent_outcomes, n, "parent")
             _need(scored_prefix(result.parent_outcomes) == n and len(result.null_outcomes) == params.null_samples
                   and scored_prefix(result.null_outcomes) == n,
