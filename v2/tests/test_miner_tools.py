@@ -160,6 +160,9 @@ def test_cli_bounds_and_check_read_everything_from_mining_json(build, tmp_path, 
     contract = mining_json(build, tmp_path, Recipe(image_digests=(build.image,), steps=2, miner_bounds=bounds))
     code, out = cli(capsys, "bounds", "--mining-json", contract)
     assert code == 0 and "steps: default 2; allowed: a whole number from 2 to 7" in out
+    assert "decided means the bound is frozen into recipe_id, NOT that its value is locked" in out
+    assert "You may still set each value within its published range" in out
+    assert "steps × tokens" in out and "Minibatches do NOT multiply this cost" in out
     assert all(f"  {bound.key}: default " in out for bound in bounds)
     batch = tmp_path / "batch.json"
     batch.write_bytes(batch_bytes({"steps": 7}))
@@ -167,6 +170,22 @@ def test_cli_bounds_and_check_read_everything_from_mining_json(build, tmp_path, 
     report = json.loads(out)
     assert code == 0 and report["valid"] and report["train_applied"]["steps"] == 7
     assert report["rules_not_run"] == ["tokens", "grader"]  # the tool says what it could not check
+    warning = " ".join(report["warnings"])
+    assert "does NOT train and does NOT measure kl_seq" in warning
+    assert "passing file check is NOT a passing KL gate" in warning
+    assert tool.LOCAL_KL_COMMAND in warning and tool.LOCAL_KL_HELP in warning
+    assert report["kl_gate"] == {
+        "trained": False, "kl_seq_measured": False, "passing_file_check_is_passing_kl_gate": False,
+        "min_kl_seq": 0.0, "command": tool.LOCAL_KL_COMMAND, "warning": warning,
+    }
+    assert "steps × tokens" in report["train_cost_guidance"]
+    assert "Minibatches do NOT multiply this cost" in report["train_cost_guidance"]
+    with pytest.raises(SystemExit) as help_exit:
+        tool.main(["check", "--help"])
+    assert help_exit.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "does NOT train or measure kl_seq" in help_text and tool.LOCAL_KL_COMMAND in help_text
+    assert "22,130,000 / steps=16 = 1,383,125 tokens" in " ".join(help_text.split())
     code, out = cli(capsys, "check", "--mining-json", contract, "--hotkey", "someone-else", str(batch))
     assert code == 1 and json.loads(out)["rule"] == "hotkey"
     batch.write_bytes(batch_bytes({"steps": 8}))
@@ -242,12 +261,15 @@ def test_the_live_public_params_and_future_fields_are_readable_only_by_the_publi
     assert params.params_hash == frozen["params_hash"]
     assert (params.crown_gate, params.z_bar, params.z_field_bar) == ("argmax_symmetric", 0.0, 0.0)
     future = copy.deepcopy(raw)
-    future.update(min_kl_seq=0.0, confirm_next_round=True)
+    future.update(min_kl_seq=10.0, confirm_next_round=True, kl_max_tokens=8192)
+    current = dataclasses.replace(params, min_kl_seq=10.0, confirm_next_round=True, kl_max_tokens=8192)
+    assert Params.from_dict(future) == current  # the live fields are strict, known contract fields
+    future["future_param"] = {"future": True}
     future["recipe"]["future_recipe"] = {"anything": [1, 2]}
     future["recipe"]["miner_bounds"][0]["future_bound"] = "new"
     with pytest.raises(ContractError, match="unknown field"):
         Params.from_dict(future)
-    assert Params.from_public_dict(future) == params
+    assert Params.from_public_dict(future) == current
     with pytest.raises(ContractError, match="expected an integer"):
         Params.from_public_dict(raw | {"n_tasks": "2000"})
 
@@ -257,8 +279,8 @@ def test_the_live_public_params_and_future_fields_are_readable_only_by_the_publi
     document = json.loads(mining.read_text())
     document["params"] = future
     mining.write_text(json.dumps(document))
-    assert tool.load_contract(str(mining))[0] == params
-    assert Contract.load(str(mining)).params == params
+    assert tool.load_contract(str(mining))[0] == current
+    assert Contract.load(str(mining)).params == current
 
 
 def test_every_read_of_an_address_names_its_client(build, tmp_path, monkeypatch):

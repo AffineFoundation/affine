@@ -179,6 +179,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"the first {sampling.SEED_BITS} bits of sha256",
         publisher.OPTIMIZER,  # typed in the publisher; a test below compares it with the training job
         publisher.GRADER_VERSION,  # the same, with the grader
+        publisher.TRAIN_COST_EXAMPLE,  # a fixed worked example of the live cap, not the current contract value
         f"at most {publisher.BOX_TRIES} tries in all, inside the training time",
         f"Task pool: {publisher._pool_lines(params)[0].split(' tasks in ')[0].removeprefix('- Task pool: ')} tasks",
         f"{len(json.loads((math_pool.POOL_FILE.with_suffix('.dropped.json')).read_bytes())['dropped']):,} tasks of the earlier pool",
@@ -252,6 +253,11 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "or 0 when `field_se` is 0.",
         f"The old z {publisher.RETIRED_KING_Z_BAR}",
         publisher.SAMPLING_GUIDANCE,
+        "In a clean Python 3.12 venv",
+        "vllm==0.32.0` requires torch 2.13",
+        "`kl_rollouts` (default 128)",
+        "sample-0 rollouts, at most the first `kl_max_tokens` (currently 8192)",
+        "minibatches do NOT multiply it. Worked example: cap 22,130,000 with steps=16 gives 1,383,125 tokens (integer floor).",
     ]  # fmt: skip
 
 

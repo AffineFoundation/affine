@@ -28,7 +28,7 @@ from sn120_v2.irt import IRTSampler, draw_from_snapshot  # noqa: E402
 from sn120_v2.params import Recipe  # noqa: E402
 from sn120_v2.sampling import rollout_seed, train_seed  # noqa: E402
 from sn120_v2.store import LocalStore  # noqa: E402
-from sn120_v2.types import NULL_MODEL, HeadManifest, HeadVersion  # noqa: E402
+from sn120_v2.types import NULL_MODEL, SCORED, EntryResult, HeadManifest, HeadVersion  # noqa: E402
 
 HOTKEY = "hk1"
 BASE = {"config.json": b"{}", "tokenizer.json": b"tokens", "model-00001.safetensors": b"weights"}
@@ -67,6 +67,7 @@ class Farm:
     def __init__(self):
         self.servers, self.bodies, self.loads, self.lock = [], [], [], threading.Lock()
         self.fails: set[str] = set()  # problem texts
+        self.capped = False
 
     def spawn(self, argv, env, log):
         server = SimpleNamespace(argv=list(argv), env=dict(env), up=True)
@@ -87,8 +88,9 @@ class Farm:
                 self.loads.append((port, body["lora_name"]))
                 return {}
             self.bodies.append((port, body))
-        passed = body["model"] != NULL_MODEL and body["messages"][-1]["content"] not in self.fails
-        return {"choices": [{"message": {"content": "P ok" if passed else "F no"}, "finish_reason": "stop"}]}
+        passed = body["model"] != NULL_MODEL and body["messages"][-1]["content"] not in self.fails and not self.capped
+        content = "C cap" if self.capped and body["model"] != NULL_MODEL else "P ok" if passed else "F no"
+        return {"choices": [{"message": {"content": content}, "finish_reason": "length" if content.startswith("C") else "stop"}]}
 
 
 class Grades:
@@ -161,7 +163,7 @@ def write_contract(world, params=None, round="view", history=(), manifest=None) 
 
 def test_public_contract_ignores_future_params_fields_but_keeps_strict_values(world, capsys):
     contract = json.loads(Path(world.write()).read_text())
-    contract["params"].update(min_kl_seq=0.0, confirm_next_round=True)
+    contract["params"]["future_param"] = {"future": True}
     contract["params"]["recipe"]["future_recipe"] = {"future": True}
     contract["params"]["recipe"]["miner_bounds"][0]["future_bound"] = "new"
     path = world.tmp / "future.json"
@@ -198,9 +200,9 @@ def run(world, capsys, *more: str) -> tuple[int, dict]:
 def test_a_run_changes_only_the_values_this_machine_cannot_keep(build):
     params = build.params(n_gpus=8, recipe=Recipe(image_digests=("box-image",), code_digest="c" * 64))
     same, notes = replicate.local_params(params, "box-image", "c" * 64, 8, round_clock=True)
-    assert same is params and [note["what"] for note in notes] == ["one-batch", "no-master", "free-gpus"]  # the box's own params, untouched
+    assert same is params and [note["what"] for note in notes] == ["one-batch", "master", "free-gpus"]  # the box's own params, untouched
     local, notes = replicate.local_params(params, "my-image", plan.code_digest(), 1)
-    assert [note["what"] for note in notes] == ["install", "code", "gpus", "round-clock", "one-batch", "no-master", "free-gpus"]
+    assert [note["what"] for note in notes] == ["install", "code", "gpus", "round-clock", "one-batch", "master", "free-gpus"]
     assert (local.recipe.image_digests, local.recipe.code_digest, local.n_gpus) == (("my-image",), plan.code_digest(), 1)
     assert local.eval_time_budget_s == params.eval_time_budget_s and local.round_time_limit_s == replicate.NO_ROUND_LIMIT_S  # one reply keeps its limit
     changed = {"recipe", "n_gpus", "round_time_limit_s", "lease_timeout_s", "promote_reserve_s", "train_time_budget_s"}
@@ -223,7 +225,7 @@ def test_compare_starts_nothing_and_names_every_difference(world, build, capsys,
     code, report = cli(capsys, "compare", "--mining-json", str(world.tmp / "mining.json"), "--gpus", "1")
     assert code == 0 and report["box"] == {"params_hash": world.params.params_hash, "recipe_id": world.params.recipe_id, "image_digests": [build.image], "code_digest": "", "n_gpus": 8}
     assert report["here"] == {"image_digest": plan.install_digest(), "code_digest": plan.code_digest(), "gpus_found": 3, "n_gpus": 1}
-    assert [note["what"] for note in report["differences"]] == ["install", "gpus", "round-clock", "one-batch", "no-master", "free-gpus"]
+    assert [note["what"] for note in report["differences"]] == ["install", "gpus", "round-clock", "one-batch", "master", "free-gpus"]
     assert world.farm.servers == [] and world.job.calls == [] and not world.work.exists()
 
     def no_driver():
@@ -233,20 +235,46 @@ def test_compare_starts_nothing_and_names_every_difference(world, build, capsys,
     assert cli(capsys, "compare", "--mining-json", str(world.tmp / "mining.json"))[1]["here"]["gpus_found"] is None
 
 
-# ---- the cache without the master ----
+# ---- the local cache fails closed ----
 
 
-def test_the_cache_answers_for_the_master_and_verifies_everything_else(world, tmp_path):
+def test_the_cache_never_answers_with_a_missing_master_or_searches_the_local_store(world, tmp_path):
     store = LocalStore(tmp_path / "s")
     cache = replicate.BaseOnly(store, tmp_path / "w")
+    cache.merged = True
     master = world.head.base_fp32_master_digest
-    assert cache.tree(layout.public_master_prefix(master), master) == cache.root / master and not (cache.root / master).exists()
-    with pytest.raises(VerifyError):  # the base is not there and not in the store
+    for _ in range(2):
+        with pytest.raises(ConfigError, match="tens of GB.*fetch command") as caught:
+            cache.tree(layout.public_master_prefix(master), master)
+        assert "eval_merged" in str(caught.value) and not (cache.root / master).exists()
+    with pytest.raises(ConfigError, match="base files.*fetch command"):
         cache.tree(layout.public_base_prefix(world.head.base_hash), world.head.base_hash)
-    with pytest.raises(VerifyError):  # the box's own cache does not answer for a master
+    with pytest.raises(VerifyError):  # the box's own cache still verifies through its real object store
         Resident(store, tmp_path / "w").tree(layout.public_master_prefix(master), master)
     with pytest.raises(VerifyError):  # a LoRA is verified too
         cache.tree("pending/loras/x", h("lora"))
+
+
+def test_the_cache_verifies_the_real_master_and_refuses_a_corrupt_one(world, tmp_path):
+    master_dir = world.tmp / "master-source"
+    master_dir.mkdir()
+    (master_dir / "master.safetensors").write_bytes(b"fp32")
+    master_files = {"master.safetensors": h("fp32")}
+    master = manifest_digest(master_files)
+    resident_module._SHARED.clear()
+    cache = replicate.BaseOnly(LocalStore(tmp_path / "s"), tmp_path / "w")
+    cache.merged = True
+    path = cache.root / master
+    path.mkdir(parents=True)
+    (path / "master.safetensors").write_bytes(b"fp32")
+    assert cache.tree(layout.public_master_prefix(master), master) == path
+    resident_module._SHARED.clear()  # a new process: do not trust the previous verification
+    cache = replicate.BaseOnly(LocalStore(tmp_path / "s"), tmp_path / "w")
+    cache.merged = True
+    (path / "master.safetensors").write_bytes(b"bf16, not the master")
+    with pytest.raises(ConfigError, match="missing files or does not hash.*tens of GB"):
+        cache.tree(layout.public_master_prefix(master), master)
+    assert not path.exists()  # the official Resident deletes a bad cache, never serves it
 
 
 # ---- fetch ----
@@ -260,12 +288,24 @@ def test_fetch_from_a_directory_checks_each_file_and_fills_the_cache_in_one_move
     assert not cache.exists()  # a half-filled set never reaches the cache: the box code would delete it
     (world.source / "model-00001.safetensors").write_bytes(BASE["model-00001.safetensors"])
     (world.source / "README.md").write_text("not a file of the head")  # more files in the source are ignored
-    assert fetch(world, capsys) == {"base_hash": world.head.base_hash, "dir": str(cache), "files": 3, "fetched": 2}  # the first file was kept
+    assert fetch(world, capsys) == {
+        "base_hash": world.head.base_hash,
+        "base_dir": str(cache),
+        "dir": str(cache),
+        "base_files": 3,
+        "files": 3,
+        "base_bytes": sum(map(len, BASE.values())),
+        "bytes": sum(map(len, BASE.values())),
+        "base_fetched": 2,
+        "fetched": 2,
+        "base_fetched_bytes": len(BASE["tokenizer.json"]) + len(BASE["model-00001.safetensors"]),
+        "fetched_bytes": len(BASE["tokenizer.json"]) + len(BASE["model-00001.safetensors"]),
+    }  # the first file was kept
     assert {path.name: path.read_bytes() for path in cache.iterdir()} == BASE
     assert fetch(world, capsys)["fetched"] == 0  # a second fetch only verifies
     (cache / "extra.txt").write_text("x")
     code, report = cli(capsys, "fetch", "--mining-json", str(world.tmp / "mining.json"), "--work", str(world.work), "--from", str(world.source))
-    assert code == 2 and "does not hash to base_hash" in report["reason"] and (cache / "extra.txt").exists()  # fetch deletes nothing of yours
+    assert code == 2 and "does not match its manifest and id" in report["reason"] and (cache / "extra.txt").exists()  # fetch deletes nothing of yours
 
 
 def links_file(world, **changes) -> dict:
@@ -414,14 +454,17 @@ def test_run_is_the_round_of_the_box_for_one_batch(world, capsys):
     draw = draw_from_snapshot(world.snapshot, "seed-7", 8)
     world.farm.fails = {POOL.task(task).problem for task in draw.task_ids[-2:]}
     code, report = run(world, capsys, "--out", str(world.tmp / "report.json"))
-    assert code == 0 and json.loads((world.tmp / "report.json").read_text()) == report
+    assert code == 0, report
+    assert json.loads((world.tmp / "report.json").read_text()) == report
     assert report["status"] == "winner" and report["score"]["eligible"] and report["score"]["n_tasks"] == 8 and report["score"]["z"] > world.params.z_bar
+    assert report["win_vs_null"] | {"score": None} == {"won": True, "status": "winner", "reason": report["reason"], "score": None}
+    assert report["cap_hit"]["passed"] and report["cap_hit"]["rate"] == 0 and report["cap_hit"]["rollouts"] == 8
     assert report["null_outcomes"] == ["F" * 8] and report["outcomes"] == ["PPPPPPFF"]  # in the order of the draw
     assert report["rules_run"] == ["format", "tokens", "grader"] and report["valid"] and report["n_rollouts"] == 2
     assert report["round"] == {"round_id": "r000007", "round_seed": "seed-7", "irt_snapshot_id": world.snapshot["snapshot_id"], "n_tasks": 8, "scored_tasks": 8}
     assert report["box"] == {"params_hash": world.params.params_hash, "recipe_id": world.params.recipe_id, "n_gpus": 8}
     assert report["here"] == {"image_digest": plan.install_digest(), "code_digest": plan.code_digest(), "n_gpus": 2}
-    assert [note["what"] for note in report["differences"]] == ["install", "gpus", "round-clock", "one-batch", "no-master", "free-gpus"]
+    assert [note["what"] for note in report["differences"]] == ["install", "gpus", "round-clock", "one-batch", "master", "free-gpus"]
     assert "box_round" not in report and not report["stopped_at_limit"] and set(report["phase_s"]) == {"training", "evaluation"}
 
     # The training job: the seed, the rows and the recipe of the box, on the GPUs of this run.
@@ -446,6 +489,265 @@ def test_run_is_the_round_of_the_box_for_one_batch(world, capsys):
 
     # The two graders are the box's: 8 or fewer workers with the short limit for the file check, the default pool for the scoring.
     assert Grades.made == [{}, {"workers": replicate.GRADE_WORKERS, "timeout_s": replicate.GRADE_TIMEOUT_S}]
+
+
+@pytest.mark.parametrize("kl_seq,status,won", [(0.5, "winner", True), (0.1, "null_update", False)])
+def test_merged_local_replication_uses_solo_and_the_official_kl_gate(world, build, monkeypatch, kl_seq, status, won):
+    """The old streaming evaluator refused this path before any candidate was trained."""
+    from sn120_v2.types import TrainReport
+
+    params = build.params(n_gpus=1, n_tasks=8, looks=(1.0,), eval_merged=True, min_kl_seq=0.25, kl_max_tokens=8192)
+    local = dataclasses.replace(params, n_gpus=1)
+    ticket = build.ticket(n_entries=1, params=params)
+    artifact = build.artifact(ticket.head, ticket.entries[0], params)
+    batch_sha256 = sha256_hex(batch_bytes())
+    report = TrainReport(seed=train_seed(ticket.draw.round_seed, batch_sha256, params.train_seed_scope), steps=1, loss=0.1, step_norm=0.2, tokens=10, wall_s=1.0, gpu_class="cpu", image_digest=build.image)
+    artifact = dataclasses.replace(artifact, report=report)
+    work = world.work.resolve()
+    lora_prefix = layout.pending_lora_prefix(replicate.ROUND_ID, replicate.LEASE_ID, 0)
+    files = {}
+    for name in artifact.files:
+        path = work / "store" / lora_prefix.removeprefix("pending/") / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(name)
+        files[name] = sha256_hex(path.read_bytes())
+    artifact = dataclasses.replace(artifact, prefix=lora_prefix, files=files, lora_hash=manifest_digest(files), batch_sha256=sha256_hex(batch_bytes()))
+    events = []
+
+    class Trainer:
+        def train(self, request):
+            events.append("trained")
+            return artifact
+
+        def close(self):
+            pass
+
+    class Evaluator:
+        http = None
+
+        def solo_worker(self, ticket, trained, deadline, gpu):
+            class Worker:
+                def run(self, *, steal, result, judge, alive, deadline):
+                    events.append("scored")
+                    while claim := steal(gpu, NULL_MODEL):
+                        model, start, stop = claim
+                        for index in range(start, stop):
+                            code = ("P" if index == 0 else "F") if model == NULL_MODEL else ("P" if index < 6 else "F")
+                            result(model, 0, index, code)
+
+            return Worker()
+
+        def build_merged(self, round_id, head, artifact, params, gpu):
+            events.append("merged")
+            path = work / "merged"
+            path.mkdir(exist_ok=True)
+            return SimpleNamespace(path=path, base_hash=head.base_hash, kernel="fixed-order-v1")
+
+        def _serve_one(self, *args, **kwargs):
+            return "http://local"
+
+        def close(self):
+            pass
+
+        def measure_kl(self, ticket, entries, null, tested):
+            assert all(isinstance(entry, EntryResult) and entry.status == SCORED for entry in entries)
+            assert set(tested) == {0}
+            events.append("official-KL")
+            return {"entries": {0: {"kl_seq": kl_seq, "kl_seq_se": 0.01, "kl_tok": 0.2, "kl_k": 1, "kl_tokens": 100}}, "null": {}, "wall_s": 1.0}
+
+    from sn120_v2.gpu.solo import SoloSettings
+    monkeypatch.setattr(replicate.SoloRunner, "__init__", lambda self, *args, **kwargs: replicate.LocalRunner.__init__(self, *args, **kwargs) or setattr(self, "settings", SoloSettings(prewarm=False)))
+    built = SimpleNamespace(store=LocalStore(work / "store"), trainer=Trainer(), evaluator=Evaluator(), image=build.image)
+    raw = batch_bytes()
+    result = replicate.run_round(raw, HOTKEY, params, local, ticket.head, ticket.draw, built, tokens=WordTokens(), clock=lambda: 1000)
+    assert events == ["trained", "merged", "scored", "official-KL"]
+    assert result["status"] == status and result["win_vs_null"]["won"] is won
+    assert result["kl_gate"]["passed"] is won and result["kl_gate"]["measured"]
+    assert result["kl_gate"]["kl_seq"] == kl_seq and result["kl_gate"]["min_kl_seq"] == 0.25 and result["kl_gate"]["kl_max_tokens"] == 8192
+    assert result["kl_gate"]["kl_seq_se"] == 0.01 and result["kl_gate"]["kl_k"] == 1 and result["kl_gate"]["kl_tokens"] == 100
+    if not won:
+        assert "below min_kl_seq 0.25" in result["reason"] and result["score"] is None
+    assert result["outcomes"] == ["PPPPPPFF"] and result["null_outcomes"] == ["PFFFFFFF"]
+    assert result["phase_s"]["kl"] == 1
+
+
+def test_the_report_exposes_the_cap_hit_gate_and_a_loss_against_null(world, capsys):
+    fetch(world, capsys)
+    draw = draw_from_snapshot(world.snapshot, "seed-7", 8)
+    world.farm.fails = {POOL.task(task).problem for task in draw.task_ids}
+    code, report = run(world, capsys)
+    assert code == 0 and report["status"] == "lost" and report["score"]["n_tasks"] == 8
+    assert report["win_vs_null"]["won"] is False and report["win_vs_null"]["status"] == "lost"
+    assert report["cap_hit"] == {
+        "passed": True, "rate": 0.0, "null_rate": 0.0,
+        "limit": world.params.cap_hit_floor, "margin": world.params.cap_hit_margin,
+        "floor": world.params.cap_hit_floor, "hits": 0, "rollouts": 8,
+    }
+    world.farm.fails = set()
+    world.farm.capped = True
+    code, report = run(world, capsys)
+    assert code == 0 and report["status"] == "lost"
+    assert report["cap_hit"] == {
+        "passed": False, "rate": 1.0, "null_rate": 0.0,
+        "limit": world.params.cap_hit_floor, "margin": world.params.cap_hit_margin,
+        "floor": world.params.cap_hit_floor, "hits": 8, "rollouts": 8,
+    }
+
+
+def test_the_official_kl_selector_and_token_cap_use_scored_sample_zero_captures(tmp_path):
+    from sn120_v2.gpu.kl import selected_rollouts, tokenize_rows
+    from sn120_v2.types import ERROR
+    outcomes = ("PF" + ERROR,)
+    rows = [
+        {"task_pos": 0, "sample_index": 0, "outcome": "P", "prompt": [{"role": "user", "content": "p0"}], "completion_text": "zero"},
+        {"task_pos": 1, "sample_index": 1, "outcome": "F", "prompt": [{"role": "user", "content": "p1"}], "completion_text": "not sample zero"},
+        {"task_pos": 1, "sample_index": 0, "outcome": "E", "prompt": [], "completion_text": "an error"},
+        {"task_pos": 1, "sample_index": 0, "outcome": "F", "prompt": [{"role": "user", "content": "p1"}], "completion_text": "x"},
+        {"task_pos": 2, "sample_index": 0, "outcome": "E", "prompt": [], "completion_text": "not eligible"},
+        {"task_pos": 3, "sample_index": 0, "outcome": "-", "prompt": [], "completion_text": "not scored"},
+    ]
+    capture = tmp_path / "rollouts.jsonl"
+    capture.write_text("\n".join(json.dumps(row) for row in reversed(rows)) + "\nnot-json\n")
+    selected = selected_rollouts(capture, outcomes, "round-seed", "lora-hash", 128)
+    assert [row["task_pos"] for row in selected] == [0, 1]
+    assert selected_rollouts(capture, outcomes, "round-seed", "lora-hash", 1)[0]["task_pos"] in {0, 1}
+    assert selected_rollouts(capture, outcomes, "round-seed", "lora-hash", 1) == selected_rollouts(capture, outcomes, "round-seed", "lora-hash", 1)
+
+    class Tokens:
+        def convert_tokens_to_ids(self, token):
+            return 99
+
+        def apply_chat_template(self, prompt, **kwargs):
+            assert kwargs["add_generation_prompt"] is True and kwargs["enable_thinking"] is True
+            return "prompt"
+
+        def encode(self, text, add_special_tokens):
+            assert add_special_tokens is False
+            return [10] * len(text)
+
+    encoded = tokenize_rows(Tokens(), selected, max_tokens=2)
+    assert [row["completion_ids"] for row in encoded] == [[10, 10], [10, 99]]
+    assert len(tokenize_rows(Tokens(), selected[:1], max_tokens=0)[0]["completion_ids"]) == len("zero") + 1
+
+
+def test_merged_fetch_requires_and_verifies_the_actual_fp32_master(world, capsys):
+    params = dataclasses.replace(world.params, eval_merged=True)
+    master_dir = world.tmp / "fp32"
+    master_dir.mkdir()
+    master_data = b"real fp32 weights"
+    (master_dir / "master.safetensors").write_bytes(master_data)
+    master_files = {"master.safetensors": sha256_hex(master_data)}
+    master_hash = manifest_digest(master_files)
+    head = HeadVersion.make(parent_version_id=None, base_hash=world.head.base_hash, base_fp32_master_digest=master_hash, loras=(), round_id="genesis", applied_at=1)
+    manifest = HeadManifest(head, world.files, master_files, {})
+    world.write(params=params, manifest=manifest)
+    code, report = cli(capsys, "fetch", "--mining-json", str(world.tmp / "mining.json"), "--work", str(world.work), "--from", str(world.source))
+    assert code == 2 and "--master-from" in report["reason"]
+    code, report = cli(capsys, "fetch", "--mining-json", str(world.tmp / "mining.json"), "--work", str(world.work), "--from", str(world.source), "--master-from", str(master_dir))
+    assert code == 0 and report["fetched"] == 4 and report["master_hash"] == master_hash
+    assert report["base_hash"] == world.head.base_hash and report["master_digest"] == master_hash
+    assert (report["base_files"], report["master_files"], report["fetched_bytes"]) == (3, 1, sum(map(len, BASE.values())) + len(master_data))
+    assert report["base_bytes"] == sum(map(len, BASE.values())) and report["master_bytes"] == len(master_data)
+    assert Path(report["master_dir"]) == world.work.resolve() / "cache" / master_hash
+    assert (Path(report["master_dir"]) / "master.safetensors").read_bytes() == master_data
+    code, again = cli(capsys, "fetch", "--mining-json", str(world.tmp / "mining.json"), "--work", str(world.work), "--from", str(world.source), "--master-from", str(master_dir))
+    assert code == 0 and again["fetched"] == 0
+    assert (again["base_fetched"], again["master_fetched"], again["fetched_bytes"]) == (0, 0, 0)
+    assert again["base_dir"] == str(world.work.resolve() / "cache" / world.head.base_hash)
+    assert again["master_dir"] == str(world.work.resolve() / "cache" / master_hash)
+
+    rows = [{"name": name, "sha256": sha, "size": len(master_data), "url": (master_dir / name).as_uri()} for name, sha in master_files.items()]
+    links = links_file(world, head_version_id=head.version_id, master={"id": master_hash, "files": rows})
+    path = world.public / "read_links.json"
+    path.write_text(json.dumps(links))
+    assert set(replicate.base_links(replicate.Contract.load(str(world.tmp / "mining.json")), links, 1000)) == set(world.files) | {f"../{master_hash}/master.safetensors"}
+    broken = dict(links)
+    broken["master"] = {"id": h("wrong"), "files": rows}
+    with pytest.raises(ConfigError, match="fp32 master"):
+        replicate.base_links(replicate.Contract.load(str(world.tmp / "mining.json")), broken, 1000)
+
+    # The ordinary public path downloads BOTH file sets from read_links.json.
+    linked_work = world.tmp / "linked-work"
+    contract = replicate.Contract.load(str(world.tmp / "mining.json"))
+    linked = replicate.fetch(contract, linked_work, now=lambda: 1000)
+    assert (linked["base_files"], linked["base_bytes"], linked["base_fetched"]) == (3, sum(map(len, BASE.values())), 3)
+    assert (linked["master_files"], linked["master_bytes"], linked["master_fetched"]) == (1, len(master_data), 1)
+    assert linked["master_digest"] == master_hash and linked["fetched"] == 4
+    assert (Path(linked["base_dir"]) / "config.json").read_bytes() == BASE["config.json"]
+    assert (Path(linked["master_dir"]) / "master.safetensors").read_bytes() == master_data
+    assert not (linked_work / "fetch" / master_hash).exists()
+    assert replicate.fetch(contract, linked_work, now=lambda: 1000)["fetched"] == 0
+
+    # A broken resumed download never publishes a partial master directory.
+    incomplete = world.tmp / "incomplete-work"
+    master_dir.joinpath("master.safetensors").write_bytes(b"wrong fp32 weights")
+    with pytest.raises(VerifyError, match="master.safetensors"):
+        replicate.fetch(contract, incomplete, now=lambda: 1000)
+    assert not (incomplete / "cache" / master_hash).exists()
+    assert (incomplete / "cache" / world.head.base_hash).is_dir()
+    master_dir.joinpath("master.safetensors").write_bytes(master_data)
+    resumed = replicate.fetch(contract, incomplete, now=lambda: 1000)
+    assert (resumed["base_fetched"], resumed["master_fetched"]) == (0, 1)
+    assert (Path(resumed["master_dir"]) / "master.safetensors").read_bytes() == master_data
+
+
+def test_merged_cli_constructs_fold_inputs_after_verifying_the_real_master(world, capsys, monkeypatch):
+    params = dataclasses.replace(world.params, eval_merged=True)
+    master_data = b"real fp32 master"
+    master_files = {"master.safetensors": sha256_hex(master_data)}
+    master_hash = manifest_digest(master_files)
+    head = HeadVersion.make(parent_version_id=None, base_hash=world.head.base_hash, base_fp32_master_digest=master_hash, loras=(), round_id="genesis", applied_at=1)
+    world.write(params=params, manifest=HeadManifest(head, world.files, master_files, {}))
+    contract = replicate.Contract.load(str(world.tmp / "mining.json"))
+    args = replicate.parser().parse_args(["run", "--mining-json", str(world.tmp / "mining.json"), "--hotkey", HOTKEY, "--work", str(world.work), "--gpus", "2", str(world.batch)])
+    monkeypatch.setattr(replicate, "gpu_count", lambda: 2)
+    monkeypatch.setattr(replicate, "parts", lambda *args, **kwargs: pytest.fail("parts/training must not start before the master is verified"))
+
+    code, report = run(world, capsys)
+    assert code == 2 and report["error"] == "ConfigError"
+    assert "base files" in report["reason"] and "fetch command" in report["reason"]
+    code, fetched = cli(capsys, "fetch", "--mining-json", str(world.tmp / "mining.json"), "--work", str(world.work), "--from", str(world.source))
+    assert code == 2 and "--master-from" in fetched["reason"]
+    master_source = world.tmp / "master-source"
+    master_source.mkdir()
+    (master_source / "master.safetensors").write_bytes(master_data)
+    code, fetched = cli(capsys, "fetch", "--mining-json", str(world.tmp / "mining.json"), "--work", str(world.work), "--from", str(world.source), "--master-from", str(master_source))
+    assert code == 0
+    (world.work / "cache" / master_hash).rename(world.tmp / "saved-master")  # keep the verified fixture for the final case
+    code, report = run(world, capsys)
+    assert code == 2 and report["error"] == "ConfigError"
+    assert "eval_merged" in report["reason"] and "tens of GB" in report["reason"] and "fetch command" in report["reason"]
+    assert world.job.calls == [] and world.farm.servers == []
+
+    master_dir = world.work.resolve() / "cache" / master_hash
+    master_dir.mkdir(parents=True)
+    (master_dir / "master.safetensors").write_bytes(b"not fp32")
+    code, report = run(world, capsys)
+    assert code == 2 and report["error"] == "ConfigError"
+    assert "does not hash" in report["reason"] and "fetch command again" in report["reason"]
+    assert not master_dir.exists() and world.job.calls == []
+
+    (world.tmp / "saved-master").rename(master_dir)
+    seen = {}
+
+    def fake_parts(work, gpus=None, **kwargs):
+        seen["fold_input"] = kwargs["fold_input"]
+        evaluator = SimpleNamespace(pool=load_pool(), grader=None)
+        return SimpleNamespace(trainer=SimpleNamespace(), evaluator=evaluator, resident=replicate.BaseOnly(LocalStore(work / "store"), work), image="image")
+
+    monkeypatch.setattr(replicate, "parts", fake_parts)
+    monkeypatch.setattr(replicate, "run_round", lambda *args, **kwargs: {"status": "winner"})
+    assert replicate.run(args, contract)["status"] == "winner"
+    assert isinstance(seen["fold_input"], replicate.FoldInputs)
+    assert seen["fold_input"].root == world.work.resolve() / "fold-inputs"
+
+
+def test_non_merged_run_does_not_require_the_master(world, capsys):
+    fetch(world, capsys)
+    assert not (world.work / "cache" / world.head.base_fp32_master_digest).exists()
+    code, report = run(world, capsys)
+    assert code == 0 and report["status"] == "lost"  # the fake grader rejects the file's output; the run still trains and scores
+    assert not report["kl_gate"]["enabled"] and not report["kl_gate"]["measured"]
 
 
 def test_run_stops_at_an_early_look_like_the_box_and_first_tasks_scores_the_start_of_the_round(world, capsys):
@@ -529,9 +831,23 @@ def test_the_document_names_every_command_option_and_difference(world):
     commands = [line.split()[3:] for line in text.splitlines() if line.startswith("python -m sn120_v2.replicate ")]
     assert {argv[0] for argv in commands} == {"compare", "fetch", "run"}
     for argv in commands:
+        argv = ["8" if word == "<N>" else word for word in argv]
         replicate.parser().parse_args(argv)  # exits on an argument the tool does not have
+    for warning in (
+        "git clone https://github.com/AffineFoundation/affine", "git checkout v2", "python3.12 -m venv .venv",
+        "python -m pip install -e './v2[gpu,envs,r2]'", "tens of GB", "`master` / `master_files`",
+        "max_train_token_steps = steps × tokens", "Minibatches do **not** multiply", "22,130,000", "steps=16", "1,383,125",
+        "does NOT train and does NOT measure `kl_seq`", "passing file check is NOT a passing KL gate",
+        "params.min_kl_seq", "kl_rollouts` (default **128**)", "kl_max_tokens` (**8192**", "sample-0",
+        "win_vs_null", "cap_hit", "--first-tasks N", "one-GPU smoke test", "decided: true", "recipe_id",
+        "vllm==0.32.0", "torch 2.13", "clean virtual environment", "eval_merged=false",
+    ):
+        assert warning in text
+    assert "no-master" not in text and "this tool never folds" not in text
+    documented_check = "python v2/miner/affine_miner.py check --mining-json https://affine.io/mining.json --hotkey <ss58> --tokenizer /data/affine/cache --grade batch.json"
+    assert documented_check in text
     options = {option for name in ("compare", "fetch", "run") for option in long_options(name)}
-    assert len(options) == 15 and all(f"`{option}" in text for option in options)
+    assert len(options) == 16 and all(f"`{option}" in text for option in options)
     pinned = dataclasses.replace(world.params, recipe=dataclasses.replace(world.params.recipe, code_digest=h("the box's code")))
     local, notes = replicate.local_params(pinned, "another install", "another code", 1)
     view = world.view | {"head_version_id": h("another head"), "params_hash": h("other params")}

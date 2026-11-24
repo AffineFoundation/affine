@@ -245,6 +245,8 @@ def test_a_future_fold_carries_parent_and_genesis_processor_files_without_unseal
     sealed, old_json = hash_tree(world.root / "genesis" / "base"), old.to_json()
     manifest = world.king()
     expected = set(old.base_files) | set(metadata)
+    processor_files = {"preprocessor_config.json", "processor_config.json", "video_preprocessor_config.json"}
+    assert processor_files <= set(manifest.base_files)
     assert set(manifest.base_files) == expected
     assert {name: manifest.base_files[name] for name in old.base_files if not name.endswith(".safetensors")} == {
         name: sha for name, sha in old.base_files.items() if not name.endswith(".safetensors")}
