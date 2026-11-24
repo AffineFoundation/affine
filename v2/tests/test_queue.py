@@ -68,26 +68,31 @@ def test_boxes_get_consecutive_blocks_of_seats(build, n, boxes, sizes):
     assert [e.queue_pos for block in blocks for e in block] == list(range(n))
 
 
-def trim(build, queue, ready=(), now=10 * DAY, turns=24):
-    return squat_trim(queue, build.verdicts(*ready), now, turns, min_wait_s=DAY, age_factor=2.0)
+def trim(build, queue, ready=(), now=10 * DAY):
+    return squat_trim(queue, build.verdicts(*ready), now, min_wait_s=DAY, age_factor=2.0)
 
 
 def test_squat_trim_moves_only_an_old_seat_with_no_valid_file(build):
     old = build.queue(build.seat(1, registered_at=7 * DAY))
     assert trim(build, old) == [(1, 101)], "age 3 days is more than 2 x the 1 day minimum wait"
     assert trim(build, old, ready=("hk1",)) == [], "a seat with a valid file is never moved"
-    assert trim(build, old, turns=0) == [], "no turn rate, no move"
-    assert trim(build, build.queue(build.seat(1, registered_at=int(8.5 * DAY)))) == [], "age 1.5 days is not old enough"
     assert trim(build, build.queue(build.seat(1, registered_at=0))) == [], "unknown age"
     other_zones = build.queue(build.seat(1, registered_at=1, demoted=True), build.seat(2, registered_at=1, front=True))
     assert trim(build, other_zones) == []
 
 
-def test_squat_trim_expected_wait_grows_with_the_seats_ahead(build):
-    queue = build.queue(*(build.seat(uid, block=uid, registered_at=5 * DAY) for uid in range(1, 102)))
-    # 24 turns per day = 1 hour per turn. Age is 5 days = 120 hours.
-    # A seat with k seats ahead waits max(24, k) hours, and moves when 120 > 2 * that, so k < 60.
-    assert trim(build, queue, turns=24) == [(uid, uid) for uid in range(1, 61)]
+@pytest.mark.parametrize("age,moved", [(2 * DAY - 1, []), (2 * DAY, []), (2 * DAY + 1, [(1, 101)])])
+def test_squat_trim_uses_a_strict_flat_cutoff(build, age, moved):
+    queue = build.queue(build.seat(1, registered_at=10 * DAY - age))
+    assert trim(build, queue) == moved
+
+
+def test_squat_trim_flat_cutoff_does_not_depend_on_seats_ahead(build):
+    keys = [(uid, uid) for uid in range(1, 102)]
+    old = build.queue(*(build.seat(uid, block=uid, registered_at=7 * DAY) for uid, _ in keys))
+    at_cutoff = build.queue(*(build.seat(uid, block=uid, registered_at=8 * DAY) for uid, _ in keys))
+    assert trim(build, old) == keys, "every no-file seat above the flat cutoff moves, however long the line"
+    assert trim(build, at_cutoff) == [], "no seat at the flat cutoff moves, however long the line"
 
 
 def sync(build, queue, regs, served_regs=(), served_hotkeys=(), netuid=120, **kw):
