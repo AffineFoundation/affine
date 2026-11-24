@@ -22,10 +22,13 @@ from sn120_v2 import layout, recheck
 from sn120_v2.canonical import canonical_json, sha256_hex
 from sn120_v2.envs.math_pool import MathPool, Task
 from sn120_v2.errors import ConfigError, InfraError, VerifyError
+from sn120_v2.irt import IRTSampler
 from sn120_v2.journal import JOURNAL_FILE
 from sn120_v2.judging import TIE_TOLERANCE, score_confirmation
+from sn120_v2.pool_runtime import PoolRuntime
 from sn120_v2.sampling import rollout_seed
 from sn120_v2.sim import SimEvaluator, SimWorld, sim_params
+from sn120_v2.state import load
 
 
 @pytest.fixture
@@ -82,10 +85,17 @@ def infra_failed(root: Path) -> tuple[SimWorld, object, object]:
     return world, crown, confirmation
 
 
+def simulation_tasks(store, record, draw):
+    """The SimWorld catalog; production rotation is exercised separately below."""
+    records = [recheck._task_record(Task(task_id, "affine_math", f"problem {task_id.split(':')[1]}", "1"))
+               for task_id in draw.task_ids]
+    return {"provenance": {"record_schema": recheck.TASK_SCHEMA, "source": "CPU simulation"}, "records": records}
+
+
 def exported(tmp_path: Path) -> tuple[SimWorld, object, object, dict, Path]:
     world, crown, confirmation = infra_failed(tmp_path / "state")
     bundle_path = tmp_path / "bundle.json"
-    bundle = recheck.export_bundle(world.root, confirmation.round_id, bundle_path)
+    bundle = recheck.export_bundle(world.root, confirmation.round_id, bundle_path, task_loader=simulation_tasks)
     assert json.loads(bundle_path.read_bytes()) == bundle
     return world, crown, confirmation, bundle, bundle_path
 
@@ -115,7 +125,7 @@ def test_export_is_deterministic_sealed_and_never_writes_state(tmp_path):
     lock.write_bytes(b"leave this byte alone")
     locked_before = lock.read_bytes()
     locked_stat = lock.stat()
-    again = recheck.export_bundle(world.root, confirmation.round_id, tmp_path / "second.json")
+    again = recheck.export_bundle(world.root, confirmation.round_id, tmp_path / "second.json", task_loader=simulation_tasks)
     assert again == bundle
     assert (tmp_path / "second.json").read_bytes() == path.read_bytes()
     assert journal.read_bytes() == before and lock.read_bytes() == locked_before
@@ -275,7 +285,7 @@ def test_legacy_crown_note_distinguishes_one_old_parent_from_two_live_nulls(tmp_
     confirmation = world.round()
     assert confirmation.outcome == "null" and not confirmation.confirmation.confirmed
     path = tmp_path / "bundle.json"
-    bundle = recheck.export_bundle(world.root, confirmation.round_id, path)
+    bundle = recheck.export_bundle(world.root, confirmation.round_id, path, task_loader=simulation_tasks)
     body = bundle["body"]
     assert body["crown_design"]["parent_samples"] == 1
     assert body["crown_design"]["note"] == recheck.LEGACY_NOTE
@@ -445,7 +455,7 @@ def test_default_evaluator_prepares_historical_base_and_live_solo_budget(tmp_pat
 
     class Evaluator:
         def __init__(self, store, config, pool, grader, *, fold_input):
-            self.config, self.fold_input = config, fold_input
+            self.config, self.fold_input, self.pool = config, fold_input, pool
             self.resident = types.SimpleNamespace(tree=lambda prefix, identity: calls.append(("unprepared", identity)))
             self._solo_clients = None
 
@@ -457,15 +467,15 @@ def test_default_evaluator_prepares_historical_base_and_live_solo_budget(tmp_pat
             return 37
 
     monkeypatch.setitem(sys.modules, "sn120_v2.envs.math_grader", types.SimpleNamespace(GradePool=object))
-    monkeypatch.setattr("sn120_v2.envs.math_pool.pool_for_draw", lambda ids: calls.append(("pool", ids)) or "pool")
+    monkeypatch.setattr("sn120_v2.envs.math_pool.pool_for_draw", lambda ids: pytest.fail("scoring must not use the local pool"))
     monkeypatch.setattr("sn120_v2.gpu.evaluator.VllmEvaluator", Evaluator)
     prepared_path = tmp_path / "work" / "fold-inputs" / ticket.parent.manifest.head.base_hash
     prepared_path.mkdir(parents=True)
     monkeypatch.setattr("sn120_v2.gpu.fold_input.FoldInputs", lambda work, genesis: lambda base, head: Prepared()(base, head) and prepared_path)
     evaluator = recheck._default_evaluator(body, ticket, tmp_path / "work")
-    assert calls[0][0] == "pool" and calls[0][1] == ticket.draw.task_ids
-    assert calls[1] == (tmp_path / "work" / "cache" / ticket.parent.manifest.head.base_hash, ticket.parent.manifest.head)
-    assert calls[2] == ("budget", ticket.params.n_gpus, ticket.params.max_num_seqs)
+    assert evaluator.pool.task(ticket.draw.task_ids[0]).problem == body["tasks"]["records"][0]["problem"]
+    assert calls[0] == (tmp_path / "work" / "cache" / ticket.parent.manifest.head.base_hash, ticket.parent.manifest.head)
+    assert calls[1] == ("budget", ticket.params.n_gpus, ticket.params.max_num_seqs)
     assert evaluator._solo_clients == 37
     # This is the exact live score_parent handoff: a supplied base_dir bypasses
     # _start_one's fold_input fallback, so the prepared path must arrive here.
@@ -473,6 +483,103 @@ def test_default_evaluator_prepares_historical_base_and_live_solo_budget(tmp_pat
     assert resident_parent_base(evaluator.resident, ticket.parent.manifest) == prepared_path
     evaluator.resident.tree("masters/other", "other")
     assert calls[-1] == ("unprepared", "other")
+
+
+def rotated_gen_export(tmp_path: Path):
+    """A real rotated IRT round whose reserve shard contains the production-style task."""
+    root = tmp_path / "state"
+    reserve = root / "reserve"
+    (reserve / "shards").mkdir(parents=True)
+    (reserve / "withdrawn.jsonl").write_bytes(b"")
+    tasks = [Task("gen:5238", "affine_math", "generated problem: compute 5237+1", "5238"), *(
+        Task(f"gen:{5200 + index}", "affine_math", f"generated problem {index}: compute {index}+1", str(index + 1))
+        for index in range(38))]
+    rows = [{"id": task.task_id, "env": task.slice, "problem": task.problem, "answer": task.answer,
+             "source": "test-generator@rev:1", "license": "CC0-1.0", "added_at": "2026-11-18",
+             "audit": {"verdict": "keep", "method": "test", "ref": "test"}} for task in tasks]
+    raw = b"".join(canonical_json(row) + b"\n" for row in rows)
+    name = "0001-generated.jsonl"
+    (reserve / "shards" / name).write_bytes(raw)
+    manifest = [{"shard": name, "sha256": sha256_hex(raw), "count": len(rows), "added_at": "2026-11-18"},
+                {"withdrawn": {"sha256": sha256_hex(b""), "count": 0}}]
+    (reserve / "MANIFEST.jsonl").write_bytes(b"".join(canonical_json(row) + b"\n" for row in manifest))
+    params = sim_params(confirm_next_round=True, n_tasks=64, min_scored_tasks=2, looks=(1.0,), batch_cap=1,
+                        null_samples_per_task=2, z_bar=0.0, rotation_enabled=True, rotation_rule="info",
+                        rotation_k=64, rotation_active_size=40, rotation_churn_max=0)
+    world = SimWorld(root, params)
+    from sn120_v2.envs.math_pool import load_pool
+    initial = load_pool().task_ids[:2]
+    world.pool = list(initial)
+    world.sampler = IRTSampler(initial, params)
+    world.controller.sampler = world.sampler
+    pool = PoolRuntime(world.store, params, load(root / JOURNAL_FILE), root=reserve, initial_ids=initial)
+    world.controller.pool = pool
+    world.controller.prompt_pool = MathPool((), "test")
+    world.register(738, 0.3)
+    crown = world.round()
+    assert crown.outcome == "applied"
+    assert any(task_id.startswith("gen:") for task_id in crown.rotation["admitted"])
+    world.evaluator.score_parent = lambda *args, **kwargs: (_ for _ in ()).throw(InfraError("parent base missing"))
+    world.register(922, -1.0)
+    confirmation = world.round()
+    assert not confirmation.confirmation.confirmed
+    # Only sealed rotation artifacts may be read, never the current reserve
+    # directory, retired-task pointer, or newer round object.
+    before = {path: path.read_bytes() for path in (root / JOURNAL_FILE, root / "journal.lock") if path.exists()}
+    sentinel = b'{"current mutable pointer must not be read"}'
+    for key in (layout.RETIRED_TASKS, layout.RESERVE_MANIFEST, layout.pool_rotation("r999999")):
+        world.store.put(key, sentinel)
+    original_evidence = recheck._task_evidence
+
+    def tracked_evidence(store, record, draw):
+        assert store.get(layout.RETIRED_TASKS) == sentinel
+        return original_evidence(store, record, draw)
+
+    path = tmp_path / "bundle.json"
+    bundle = recheck.export_bundle(root, confirmation.round_id, path, task_loader=tracked_evidence)
+    assert all(path.read_bytes() == raw for path, raw in before.items())
+    assert all(world.store.get(key) == sentinel for key in (layout.RETIRED_TASKS, layout.RESERVE_MANIFEST))
+    return world, confirmation, bundle, path, tasks
+
+
+def test_rotated_gen_tasks_are_exported_from_sealed_shards_for_prompt_and_grade(tmp_path, monkeypatch):
+    world, confirmation, bundle, path, tasks = rotated_gen_export(tmp_path)
+    records = {row["id"]: row for row in bundle["body"]["tasks"]["records"]}
+    assert any(task_id.startswith("gen:") for task_id in records)
+    assert bundle["body"]["tasks"]["provenance"]["rotation"]["active_sha256"] == confirmation.rotation["active_sha"]
+    assert bundle["body"]["tasks"]["provenance"]["snapshot_object"] == layout.irt_snapshot(confirmation.snapshot_id)
+    monkeypatch.setattr("sn120_v2.envs.math_pool.pool_for_draw", lambda ids: pytest.fail("bundle scoring used a local pool"))
+    body, ticket, _ = recheck.load_bundle(path)
+    pool = recheck._bundle_pool(body, ticket.draw.task_ids)
+    from sn120_v2.envs import math_grader
+    monkeypatch.setattr(math_grader, "_runtime_checked", lambda: True)
+    for task in tasks:
+        if task.task_id not in records:
+            continue
+        sealed = records[task.task_id]
+        assert sealed["problem"] == task.problem and sealed["answer"] == task.answer
+        assert sealed["sha256"] == sha256_hex(canonical_json({key: sealed[key] for key in ("id", "env", "problem", "answer")}))
+        assert pool.task(task.task_id).messages() == task.messages()
+        output = f"<think>compute</think>\\boxed{{{task.answer}}}"
+        assert math_grader.grade(pool.task(task.task_id), output, False).code == "P"
+        assert math_grader.grade(pool.task(task.task_id), "<think>wrong</think>\\boxed{wrong}", False).code == "F"
+
+
+def test_bundle_missing_task_and_task_hash_mismatch_refuse_before_scoring(tmp_path, monkeypatch):
+    _, _, bundle, path, _ = rotated_gen_export(tmp_path)
+    original = json.loads(path.read_bytes())
+    monkeypatch.setattr(recheck, "_fetch_parent", lambda *args: pytest.fail("download started before task validation"))
+    monkeypatch.setattr(recheck, "_default_evaluator", lambda *args: pytest.fail("evaluator started before task validation"))
+    body = bundle["body"]
+    body["tasks"]["records"] = body["tasks"]["records"][1:]
+    path.write_bytes(canonical_json(dict(bundle, sha256=sha256_hex(canonical_json(body)))))
+    with pytest.raises(VerifyError, match="task evidence|missing"):
+        recheck.score_bundle(path, tmp_path / "missing-work", tmp_path / "missing.json")
+    body = original["body"]
+    body["tasks"]["records"][0]["problem"] = "a different local prompt"
+    path.write_bytes(canonical_json(dict(original, sha256=sha256_hex(canonical_json(body)))))
+    with pytest.raises(VerifyError, match="hash differs"):
+        recheck.score_bundle(path, tmp_path / "changed-work", tmp_path / "changed.json")
 
 
 def test_anonymous_public_fallback_checks_hash_and_size(tmp_path, monkeypatch, headfold_without_torch):

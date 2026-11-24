@@ -41,7 +41,8 @@ from .state import CONFIRMATION_RESOLVED, GENESIS, PARAMS_SET, ROUND_OPENED, ROU
 from .store import LocalStore
 from .types import BoxResult, Confirmation, RoundTicket
 
-BUNDLE_SCHEMA = "sn120-v2-offline-recheck-1"
+BUNDLE_SCHEMA = "sn120-v2-offline-recheck-2"
+TASK_SCHEMA = "sn120-v2-task-record-1"
 LINKS_SCHEMA = "sn120-v2-read-links-1"
 PUBLIC_ROOT = "https://affine.io"
 LEGACY_NOTE = "crown round used 1-sample design; scored under live 2-sample contract"
@@ -213,7 +214,137 @@ def _pending(record: RoundRecord) -> Any:
     return pending
 
 
-def _export_body(state_dir: str | Path, round_id: str, store: Any) -> dict[str, Any]:
+def _task_record(task: Any) -> dict[str, Any]:
+    """The exact live Task fields used for both chat messages and reference grading."""
+    body = {"id": task.task_id, "env": task.slice, "problem": task.problem, "answer": task.answer}
+    if any(not isinstance(value, str) for value in body.values()):
+        raise VerifyError("a live pool task has a non-string task field")
+    return {"schema": TASK_SCHEMA, **body, "sha256": sha256_hex(canonical_json(body))}
+
+
+def _task_evidence(store: Any, record: RoundRecord, draw: Any) -> dict[str, Any]:
+    """Resolve the draw from immutable public inputs, without PoolRuntime I/O.
+
+    The rotation carries the pre-decision reserve history. Its full shards still
+    contain earlier admissions, so no current reserve/retired pointer is read.
+    """
+    from .envs.math_pool import POOL_V2_0_FILE, POOL_V2_0_SHA256, Task, load_pool
+    from .envs.reserve import load_reserve
+    from .irt import SCHEMA, verify_snapshot
+    from .pool_runtime import load_active
+    snapshot_raw = store.get(layout.irt_snapshot(draw.snapshot_id))
+    snapshot = json.loads(snapshot_raw)
+    if snapshot.get("schema") == SCHEMA:
+        verify_snapshot(snapshot)
+        if set(draw.task_ids) - set(snapshot["tasks"]):
+            raise VerifyError("the sealed draw has a task outside its IRT snapshot")
+    elif snapshot.get("method") != "uniform placeholder: every pool task has the same chance":
+        raise VerifyError("the draw snapshot is not a supported live sampler snapshot")
+    # Reserve tasks must not switch the packaged pool from current to archive.
+    # Live Catalog lookup prefers current, then archive, then reserve records.
+    current = load_pool()
+    archive = load_pool(POOL_V2_0_FILE, POOL_V2_0_SHA256)
+    provenance: dict[str, Any] = {
+        "snapshot_object": layout.irt_snapshot(draw.snapshot_id),
+        "snapshot_sha256": sha256_hex(snapshot_raw),
+        "base_pool_sha256": {"current": current.sha256, "archive": archive.sha256},
+        "record_schema": TASK_SCHEMA,
+        "record_hash": "sha256 of canonical JSON {id,env,problem,answer}",
+        "lookup": "VllmEvaluator uses this bundle pool for both task.messages() rollout prompts and task.answer grading",
+    }
+    reserve_tasks: dict[str, Any] = {}
+    if record.rotation is None:
+        provenance["rotation"] = None
+    else:
+        block = record.rotation
+        active_ids = load_active(store, block["active_sha"])
+        if len(active_ids) != block["size"] or set(draw.task_ids) - set(active_ids):
+            raise VerifyError("the sealed draw has a task outside its rotated active set")
+        rotation_raw = store.get(layout.pool_rotation(record.round_id))
+        from .rotation import Rotation
+        rotation = Rotation.from_json(rotation_raw)
+        if (rotation.round_id != record.round_id or rotation.active_sha != block["active_sha"]
+                or rotation.digest() != block["state_sha"] or rotation.reserve_manifest_sha != block["reserve_manifest_sha"]
+                or rotation.journal_block() != {key: value for key, value in block.items() if key not in ("state_sha", "size")}):
+            raise VerifyError("the round rotation does not match its journal seals")
+        history = rotation.reserve_history
+        manifest = b"".join(canonical_json(row) + b"\n" for row in [*history["shards"], {
+            "withdrawn": {"sha256": history["withdrawn_sha"], "count": history["withdrawn_count"]},
+        }])
+        withdrawn = b"".join(canonical_json(row) + b"\n" for row in history["withdrawn"])
+        if sha256_hex(manifest) != history["manifest_sha"] or sha256_hex(withdrawn) != history["withdrawn_sha"]:
+            raise VerifyError("the rotation reserve history does not match its content hashes")
+        shard_objects = {row["shard"]: layout.reserve_shard(row["shard"], row["sha256"]) for row in history["shards"]}
+        withdrawn_ids = {row["id"] for row in history["withdrawn"]}
+        with tempfile.TemporaryDirectory(prefix="sn120-recheck-pool-") as temporary:
+            root = Path(temporary)
+            (root / "shards").mkdir()
+            (root / "MANIFEST.jsonl").write_bytes(manifest)
+            (root / "withdrawn.jsonl").write_bytes(withdrawn)
+            for row in history["shards"]:
+                raw = store.get(shard_objects[row["shard"]])
+                if sha256_hex(raw) != row["sha256"]:
+                    raise VerifyError(f"reserve shard {row['shard']} differs from its rotation hash")
+                (root / "shards" / row["shard"]).write_bytes(raw)
+            # Verify the exact reserve bytes and schemas using the live verifier.
+            # Read task text from those bytes directly: unlike today's Catalog,
+            # this retains tasks consumed or retired by earlier sealed rounds.
+            load_reserve(root)
+            for shard in history["shards"]:
+                for line in (root / "shards" / shard["shard"]).read_bytes().splitlines():
+                    row = json.loads(line)
+                    if row["id"] not in withdrawn_ids:
+                        reserve_tasks[row["id"]] = Task(row["id"], row["env"], row["problem"], row["answer"])
+        provenance["rotation"] = {
+            "rotation_object": layout.pool_rotation(record.round_id),
+            "rotation_sha256": sha256_hex(rotation_raw),
+            "active_object": layout.active_pool(block["active_sha"]),
+            "active_sha256": block["active_sha"],
+            "reserve_manifest_sha256": history["manifest_sha"],
+            "reserve_history_sha256": sha256_hex(canonical_json(history)),
+            "reserve_shard_objects": shard_objects,
+        }
+    records = []
+    for task_id in draw.task_ids:
+        try:
+            task = current.task(task_id)
+        except Exception:
+            try:
+                task = archive.task(task_id)
+            except Exception:
+                if task_id not in reserve_tasks:
+                    raise VerifyError(f"draw task {task_id!r} is not in the verified historical pool") from None
+                task = reserve_tasks[task_id]
+        records.append(_task_record(task))
+    provenance["task_count"] = len(records)
+    return {"provenance": provenance, "records": records}
+
+
+def _bundle_pool(body: Mapping[str, Any], task_ids: Sequence[str]) -> Any:
+    """Build a draw-only live-compatible pool, with no local task fallback."""
+    from .envs.math_pool import MathPool, Task
+    evidence = body["tasks"]
+    records = evidence["records"]
+    if not isinstance(records, list) or len(records) != len(body["draw"]["task_ids"]):
+        raise VerifyError("bundle task evidence does not cover the exact draw")
+    tasks = []
+    for task_id, row in zip(body["draw"]["task_ids"], records):
+        if not isinstance(row, dict) or row.get("schema") != TASK_SCHEMA or set(row) != {"schema", "id", "env", "problem", "answer", "sha256"}:
+            raise VerifyError("a bundle task record has the wrong schema")
+        fields = {key: row[key] for key in ("id", "env", "problem", "answer")}
+        if any(not isinstance(value, str) for value in fields.values()) or row["id"] != task_id:
+            raise VerifyError(f"bundle task {task_id!r} is missing or has the wrong identity")
+        if row["sha256"] != sha256_hex(canonical_json(fields)):
+            raise VerifyError(f"bundle task {task_id!r} hash differs from its prompt or grading reference")
+        tasks.append(Task(task_id, row["env"], row["problem"], row["answer"]))
+    pool = MathPool(tuple(tasks), "bundle-" + sha256_hex(canonical_json(records)))
+    if set(task_ids) - set(pool.task_ids):
+        missing = next(task_id for task_id in task_ids if task_id not in pool.task_ids)
+        raise VerifyError(f"bundle task {missing!r} is missing; refusing local pool substitution")
+    return pool
+
+
+def _export_body(state_dir: str | Path, round_id: str, store: Any, *, task_loader: Callable[[Any, RoundRecord, Any], dict[str, Any]] | None = None) -> dict[str, Any]:
     journal_raw, records, rounds, confirmations, params_at_open = _journal(state_dir)
     if round_id not in rounds:
         raise ConfigError(f"round {round_id} is not in the journal")
@@ -261,6 +392,7 @@ def _export_body(state_dir: str | Path, round_id: str, store: Any) -> dict[str, 
         "params_hash": ticket.params.params_hash,
         "genesis": next(item.data["genesis"] for item in records if item.kind == GENESIS),
         "draw": ticket.draw.to_dict(),
+        "tasks": (task_loader or _task_evidence)(store, record, ticket.draw),
         "parent_manifest": record.parent.manifest.to_dict(),
         "null_samples": list(result.null_outcomes),
         "null_sample_representation": "one outcome string per new-head sample; one outcome code per draw task",
@@ -304,9 +436,9 @@ def _export_body(state_dir: str | Path, round_id: str, store: Any) -> dict[str, 
     return body
 
 
-def export_bundle(state_dir: str | Path, round_id: str, out: str | Path, *, store: Any = None) -> dict[str, Any]:
+def export_bundle(state_dir: str | Path, round_id: str, out: str | Path, *, store: Any = None, task_loader: Callable[[Any, RoundRecord, Any], dict[str, Any]] | None = None) -> dict[str, Any]:
     """Write a deterministic, self-contained bundle without writing to ``state_dir``."""
-    body = _export_body(state_dir, round_id, _evidence_store(state_dir) if store is None else store)
+    body = _export_body(state_dir, round_id, _evidence_store(state_dir) if store is None else store, task_loader=task_loader)
     envelope = {"schema": BUNDLE_SCHEMA, "body": body, "sha256": sha256_hex(canonical_json(body))}
     _write_json(out, envelope)
     return envelope
@@ -372,6 +504,7 @@ def load_bundle(path: str | Path) -> tuple[dict[str, Any], RoundTicket, tuple[st
             raise VerifyError("bundle ticket and params disagree")
         if ticket.params.params_hash != body["params_hash"] or ticket.draw.to_dict() != body["draw"]:
             raise VerifyError("bundle ticket, params hash and draw disagree")
+        _bundle_pool(body, ticket.draw.task_ids)
         if ticket.parent is None or ticket.parent.manifest is None or ticket.parent.manifest.to_dict() != body["parent_manifest"]:
             raise VerifyError("bundle ticket and parent manifest disagree")
         if evidence["parent_manifest_object"] != layout.head_manifest(ticket.parent.manifest.head.version_id):
@@ -510,12 +643,11 @@ class _ParentResident:
 def _default_evaluator(body: Mapping[str, Any], ticket: RoundTicket, work: Path) -> Any:
     from .admission import LazyPool
     from .envs.math_grader import GradePool
-    from .envs.math_pool import pool_for_draw
     from .gpu.evaluator import VllmEvaluator
     from .gpu.fold_input import FoldInputs
     from .gpu.plan import BoxConfig, install_digest
     store = LocalStore(work / "store")  # local only: no store credentials on the scoring host
-    pool = pool_for_draw(tuple(ticket.draw.task_ids))
+    pool = _bundle_pool(body, ticket.draw.task_ids)
     fold_input = FoldInputs(work, GenesisSpec.from_dict(body["genesis"]))
     # FoldInputs adds missing metadata only in a separate directory. Supply it
     # at score_parent's actual resident boundary, not through _start_one's

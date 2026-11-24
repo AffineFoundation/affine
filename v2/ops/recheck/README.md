@@ -31,6 +31,18 @@ choose a base from these abbreviated names: the command uses the full parent
   resolution, and a SHA-256 of its canonical body. Loading verifies those
   duplicated identities against the sealed ticket/result bytes; recomputing the
   outer hash does not make a modified outcome valid.
+* The **schema-2 bundle embeds one task record per draw entry**, in exact draw
+  order: task ID, environment, prompt/problem and grading reference/answer.
+  Each record has a SHA-256 over its canonical fields and is covered by the
+  bundle-body SHA-256. Export resolves reserve tasks from the historical
+  `snapshot_id`, rotation `active_sha`, sealed rotation reserve history and
+  content-addressed shards, never today's mutable reserve pointer. It does not
+  construct `PoolRuntime` or take a reserve lock. The records retain consumed
+  earlier admissions as well as newly admitted `gen:*`, `dapo:*` or other tasks.
+* Scoring constructs its `MathPool` **exclusively from those bundle records**.
+  Both `VllmEvaluator` rollout prompts and grading look up this same pool.
+  Missing tasks, a changed task hash, wrong order or a schema-1 bundle are
+  refused before parent download or serving; no local-pool substitution occurs.
 * Scoring constructs the real `VllmEvaluator`, prepares the verified historical
   parent base with the live `FoldInputs` compatibility path, applies the live
   solo client budget, and calls `VllmEvaluator.score_parent(ticket, deadline=0)`.
@@ -108,10 +120,18 @@ separate output directory for each.
 Export is deliberately supported only for a matching unresolved,
 infrastructure-failed parent confirmation with sealed two-sample null strings.
 It refuses a wrong round, changed seal, missing parent manifest, incomplete
-null evidence, or malformed bundle rather than substituting other evidence.
-The original winner batch is included and hash-verified when available. The
-sealed ticket's draw remains authoritative even when that optional best-effort
-exclusion record is unavailable.
+null evidence, missing historical task evidence, or malformed bundle rather
+than substituting other evidence. The original winner batch is included and
+hash-verified when available. The sealed ticket's draw remains authoritative
+even when that optional best-effort exclusion record is unavailable.
+
+**Re-export every bundle made by commit `23464abd` or an earlier schema-1
+implementation.** Those bundles lack task evidence and are rejected by this
+scorer. The earlier evaluator called `pool_for_draw`, which knows packaged
+current/archive pools but not production rotating-reserve `gen:*` tasks. Its
+reported `task 'gen:5238' is not in the math pool` does not establish that the
+correct generated-task prompt was used. Discard the old bundle and any partial
+rollouts/verdict from that attempt; neither is confirmation evidence.
 
 ## 3. Issue historical parent links on the production box
 
@@ -153,7 +173,17 @@ Do not use a public artifact bucket, an unencrypted copy service, or a shared
 world-readable directory for `links.json`. Issue a fresh file after its six-hour
 TTL rather than extending or publishing the old one.
 
-## 4. Small sanity run, then full score on eight GPUs
+## 4. Small sanity run, then full score
+
+For the waiting single-H200 sanity host, re-export `r000117`, then run:
+
+```bash
+python -m sn120_v2.recheck score \
+  --bundle "$OUT/bundle.json" --work-dir "$OUT/work" \
+  --n-tasks 8 --gpus 1 --links "$OUT/links.json" --out "$OUT/sanity.json"
+```
+
+On eight GPUs, use the same command with `--gpus 8`:
 
 A prefix run tests the installation, exact draw prefix, parent loading and
 scoring plumbing. It uses the first N tasks, the corresponding prefix of every
@@ -202,9 +232,12 @@ retained; do not put links in the evidence archive.
 
 ## Runtime estimate and qualification status
 
-**No GPU run was performed for this change.** No target production bundle was
-exported, no historical parent object was checked on the production store,
-and no target verdict has been produced.
+**No GPU run of this task-evidence fix has been performed by the implementer.**
+The operator's schema-1 run reached serving and rollouts on one H200 but then
+failed task lookup; it was not a successful scoring run. Re-export is required.
+No new target production bundle was exported by the implementer, no historical
+parent object was checked on the production store, and no target verdict has
+been produced for this revision.
 
 There is no measured parent-only full-draw runtime in this checkout. The
 closest recorded serving evidence is an operator-supplied **full multi-model**
