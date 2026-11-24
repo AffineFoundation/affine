@@ -464,7 +464,11 @@ def _open(args: argparse.Namespace) -> int:
             with urllib.request.urlopen(urllib.request.Request(address, headers={"User-Agent": "sn120-v2-links/1"}), timeout=60) as reply:
                 doc = json.loads(reply.read())
     except urllib.error.HTTPError as exc:
-        hint = "no link for this hotkey: it needs a registration, the activation, and an entry that is not evaluated yet"
+        hint = (
+            "no link for this hotkey: it needs a registration, the activation, and an entry that is not evaluated yet; "
+            "or the registration is pending: waits for next snapshot (a mid-round registration or activation waits "
+            "for the next registration sync / next round open, not only for the next reissue interval)"
+        )
         raise InfraError(hint if exc.code == 404 else f"{address} answered {exc.code}") from exc
     except (OSError, ValueError) as exc:
         raise InfraError(f"cannot read the link file {args.file or address}: {type(exc).__name__}") from exc

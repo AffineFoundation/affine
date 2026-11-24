@@ -321,7 +321,11 @@ def test_the_public_address_of_the_link_files_is_a_setting(tmp_path):
     upload = doc["contract"]["upload"]
     assert doc["contract"]["links_url"] == "https://site.example/ff/links" and upload == links.upload_entry("https://site.example/ff/links")
     assert "Where to get the link: https://site.example/ff/links/<hotkey>.json." in flat
-    assert f"A new file is written every {upload['reissue_every_seconds'] // 60} minutes. Each link works for {upload['link_ttl_seconds'] // 3600} hours." in flat
+    assert f"A new file is written every {upload['reissue_every_seconds'] // 60} minutes for a hotkey that already has a seat in the current journal snapshot." in flat
+    assert "pending: waits for next snapshot" in flat
+    assert "This is not the wait after a mid-round registration." in flat
+    assert f"{upload['index']} publishes the writer's current `reissue_every_seconds`; the snapshot field can lag the live writer." in flat
+    assert "Wait for the next registration sync / next round open, not only for the next reissue interval." in flat
     assert "links open --hotkey <ss58> --key <seed file> --links-url https://site.example/ff/links)" in flat
     assert "links activate --wallet <wallet name> --hotkey <hotkey name>" in flat and "The opened URL is a secret." in flat
     with pytest.raises(ConfigError):

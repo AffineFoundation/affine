@@ -170,7 +170,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"After {admission.FAULT_TRIES} counted checks in a row",
         f"Seconds per turn = {queue.SECONDS_PER_DAY} /",
         f"charged in the last {queue.SECONDS_PER_DAY // 3600} hours",
-        f"A new file is written every {publisher.show(upload['reissue_every_seconds'] / 60)} minutes",
+        f"A new file is written every {publisher.show(upload['reissue_every_seconds'] / 60)} minutes for a hotkey that already has a seat in the current",
         f"Each link works for {publisher.show(upload['link_ttl_seconds'] / 3600)} hours",
         f"a text of more than {public.TEXT_LIMIT} characters",
         f"the first {sampling.SEED_BITS} bits of sha256",
@@ -199,6 +199,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "The chain shows it after about 3 minutes",
         "the 32-byte Ed25519 seed of your hotkey as 64 hex characters",
         "HTTP 404 on your link file",
+        "so its link file stays HTTP 404 until the next registration sync",
         "The site can answer HTTP 403 to a read", "HTTP 403 does not say that a file is missing", "a missing file gives HTTP 404",
         "UTF-8 JSON",
         # A formula, a count that is part of a rule, or a step of a list: the digit is a word of the rule.

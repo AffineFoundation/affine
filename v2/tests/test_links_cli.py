@@ -148,7 +148,9 @@ def test_a_miner_gets_its_link_from_the_site_and_uploads_its_batch(bucket, queue
     assert links.main(["open", "--hotkey", A.hotkey, "--key", seed_file(tmp_path, A), "--links-url", address]) == 0
     assert capsys.readouterr().out.strip() == link["put_url"]  # by default: only the upload address
     assert links.main(["open", "--hotkey", B.hotkey, "--key", seed_file(tmp_path, B), "--links-url", address]) == 1
-    assert "no link for this hotkey" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "no link for this hotkey" in error
+    assert "pending: waits for next snapshot" in error
 
 
 def test_a_failed_chain_read_writes_nothing_and_keeps_the_old_links(bucket, queue, site, tmp_path, monkeypatch, capsys):
