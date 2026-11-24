@@ -317,7 +317,12 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "fresh_round": "crown round + 1",
             "comparison": "weighted mean of per-task differences (new-head sample mean - old-parent sample mean), with matched sample seeds; SE from paired differences of sample means",
             "tie_tolerance": TIE_TOLERANCE,
-            "confirm_rule": "delta > tie_tolerance; exact ties and losses fail; SE and z are diagnostics only",
+            "z_bar": params.z_bar if params.crown_gate == "argmax_symmetric" else 0.0,
+            "confirm_rule": "delta > tie_tolerance" + (
+                f" AND fresh paired z > z_bar ({show(params.z_bar)}) AND recorded crown-round z > z_bar ({show(params.z_bar)})"
+                if params.crown_gate == "argmax_symmetric" and params.z_bar > 0 else
+                "; exact ties and losses fail; SE and z are diagnostics only"
+            ),
             "new_samples": params.null_samples,
             "parent_samples": params.null_samples,
             "new_head_null_samples": params.null_samples,
@@ -631,7 +636,7 @@ def _round_time_lines(params: Params) -> list[str]:
         f"  by then is truncated to a whole block of {params.eval_chunk_tasks} tasks; an unfinished block is not used. There are no further looks.",
         f"- At the stop time, with the first look ({first_look} tasks) complete: each open LoRA is judged by the win rule of",
         "  section 6 on the complete cutoff blocks that null M and every open LoRA finished. Those tasks are then the whole",
-        f"  test: z strictly above {show(params.z_bar)} can win. Such an entry is charged, win or lose, as in a full round.",
+        f"  test: {('delta above the tie tolerance and z strictly above ' + show(params.z_bar) + ' can win' if params.z_bar > 0 else 'delta above the tie tolerance can win') if params.crown_gate == 'argmax_symmetric' else 'z strictly above ' + show(params.z_bar) + ' can win'}. Such an entry is charged, win or lose, as in a full round.",
         f"- At the stop time, with fewer than {first_look} tasks scored: each trained LoRA is `{NOT_SCORED}`. You are not charged,",
         "  your seat is first in the next round, and no failure is counted for the seat.",
         f"- The lease ends {show(params.lease_timeout_s / 60)} minutes after it starts. A box result that arrives after the end of the lease is",
@@ -1277,10 +1282,17 @@ def _scoring_lines(params: Params) -> list[str]:
                 "- Argmax-symmetric win rule, in full: duplicates are removed first by the existing dedup, and the round uses one",
                 "  round-wide training seed.",
                 *_no_floor_lines(params),
-                "  Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays",
-                "  if it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are",
-                "  retired. `z_bar` and `z_field_bar` are ignored. Early drops are disabled, so every candidate is scored on the full",
-                "  draw or shared stop-limit prefix. The cap-hit (`cap_hit_floor`/`cap_hit_margin`), full-draw, cover and",
+                *([
+                    "  Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays",
+                    "  if it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are",
+                    "  retired. `z_bar` and `z_field_bar` are ignored. Early drops are disabled, so every candidate is scored on the full",
+                    "  draw or shared stop-limit prefix. The cap-hit (`cap_hit_floor`/`cap_hit_margin`), full-draw, cover and",
+                ] if params.z_bar == 0 else [
+                    "  Merged evaluation is unchanged. A LoRA crowns only with the highest delta among entries with delta above the tie",
+                    f"  tolerance ({show(TIE_TOLERANCE)}) AND z strictly above `z_bar` ({show(params.z_bar)}). `z_field_bar` is ignored. Early",
+                    "  drops are disabled, so every candidate is scored on the full draw or shared stop-limit prefix. The cap-hit",
+                    "  (`cap_hit_floor`/`cap_hit_margin`), full-draw, cover and",
+                ]),
                 "  `min_scored_tasks` checks are anti-gaming pre-filters, not z gates. Here mean pass rate is the HT-weighted mean of",
                 "  per-task pass rates using the draw's sampling weights; each king task rate is the mean of its null runs, and",
                 f"  `{CAP}` counts as not-pass. Threshold calibration is provisional.",
@@ -1300,7 +1312,7 @@ def _scoring_lines(params: Params) -> list[str]:
         "- Win rule, in full. A LoRA is eligible when all of these are true. It has an outcome for every task of the",
         "  draw, or, when the stop time ended the scoring, for every task that null M has an outcome for; a LoRA that",
         "  was dropped at a look does not. n is at least `min_scored_tasks`.",
-        *(["  its delta above the king must be greater than the tie tolerance."] if params.crown_gate == "argmax_symmetric"
+        *(["  its delta above the king must be greater than the tie tolerance" + (f" ({show(TIE_TOLERANCE)}), and its se must be positive and z strictly above `z_bar` ({show(params.z_bar)})." if params.z_bar > 0 else ".")] if params.crown_gate == "argmax_symmetric"
           else ["  z > `z_bar` AND `field_z` > `z_field_bar`."] if params.crown_gate == "field_median" else ["  z > `z_bar`."]),
         "  (its count of",
         *([
@@ -1354,9 +1366,15 @@ def _win_rule_lines(params: Params) -> list[str]:
             "- Win rule (`crown_gate` = `argmax_symmetric`): duplicates are removed first (the existing dedup), and the round has one",
             "  round-wide training seed.",
             *_no_floor_lines(params),
-            "- Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays if",
-            "  it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are retired.",
-            "  `z_bar` and `z_field_bar` are ignored. Early drops are disabled: every candidate is scored on the full draw, or the",
+            *([
+                "- Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays if",
+                "  it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are retired.",
+                "  `z_bar` and `z_field_bar` are ignored. Early drops are disabled: every candidate is scored on the full draw, or the",
+            ] if params.z_bar == 0 else [
+                "- Merged evaluation is unchanged. A LoRA crowns only with the highest delta among entries with delta above the tie tolerance",
+                f"  ({show(TIE_TOLERANCE)}) AND z strictly above `z_bar` ({show(params.z_bar)}). `z_field_bar` is ignored. Early drops are",
+                "  disabled: every candidate is scored on the full draw, or the",
+            ]),
             "  shared stop-limit prefix. The cap-hit (`cap_hit_floor`/`cap_hit_margin`), cover, full-draw and `min_scored_tasks` checks",
             "  are anti-gaming pre-filters, not z gates. Here mean pass rate is the HT-weighted mean of per-task pass rates using",
             f"  the draw's sampling weights; each king task rate is the mean of its null runs, and `{CAP}` counts as not-pass.",
@@ -1467,8 +1485,12 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
             "  For each task, new_mean_t and parent_mean_t average their respective samples; d_t = new_mean_t - parent_mean_t.",
             "  delta is the weighted mean of d_t; SE uses the paired-difference estimator above on those differences of sample means.",
             "  Round r's winner outcomes are never inputs to confirmation.",
-            f"  Confirm only when the weighted mean of new_pass - old_pass exceeds TIE_TOLERANCE ({show(TIE_TOLERANCE)}). Exact ties and losses",
-            "  fail. SE and diagnostic z are published, but neither is a threshold. Missing parent files or parent-scoring failures are unpaid",
+            f"  Confirm only when the weighted mean of new_pass - old_pass exceeds TIE_TOLERANCE ({show(TIE_TOLERANCE)})"
+            + (f", fresh paired z is strictly above `z_bar` ({show(params.z_bar)}), and the pending crown's recorded crown-round z is"
+               f" strictly above `z_bar` ({show(params.z_bar)}). z == `z_bar` fails on both rounds. Exact ties and losses fail."
+               if params.crown_gate == "argmax_symmetric" and params.z_bar > 0 else
+               ". Exact ties and losses fail. SE and diagnostic z are published, but neither is a threshold."),
+            "  Missing parent files or parent-scoring failures are unpaid",
             "  no_decision, not confirmation and not a round failure. A failed or undecided crown stays installed and is the next training base.",
             "  The previous pending crown resolves before a new winner applies; every new crown becomes the next pending crown.",
             "  Only a confirmed king joins the paid set, at its confirmation; the confirming round pays it no back-payment.",
@@ -1702,6 +1724,8 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         ] if params.null_samples_per_task is not None else [
             "round and a null copy of M are scored on the same public tasks with the same seeds. At most one LoRA wins,",
         ]),
+        f"and only if it beats M by more than the tie tolerance" + (f" and has z strictly above {show(params.z_bar)}. " if params.crown_gate == "argmax_symmetric" and params.z_bar > 0 else ". ") + "The winner is applied to the head and"
+        if params.crown_gate == "argmax_symmetric" else
         f"and only if it beats M by more than {show(params.z_bar)} standard error. The winner is applied to the head and",
         "its miner becomes a king. Only kings earn." if not params.confirm_next_round else
         "payout waits for the next round's fresh paired sample-mean confirmation. Only confirmed kings earn.",

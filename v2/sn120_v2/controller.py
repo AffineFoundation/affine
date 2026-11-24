@@ -851,7 +851,9 @@ class Controller:
                 ticket, result = usable[0]
                 try:
                     new_outcomes = result.null_outcomes[:1] if legacy_parent_one_sample(ticket.params, len(result.parent_outcomes)) else result.null_outcomes
-                    fields = score_confirmation(ticket.draw.weights, new_outcomes, result.parent_outcomes)
+                    fields = score_confirmation(ticket.draw.weights, new_outcomes, result.parent_outcomes,
+                                                z_bar=ticket.params.z_bar if ticket.params.crown_gate == "argmax_symmetric" else 0.0,
+                                                crown_z=pending.z)
                 except Exception as exc:  # malformed/unavailable parent evidence can never silently confirm
                     fields = {"reason": f"no_decision: fresh parent comparison failed ({type(exc).__name__})"}
             elif request.manifest is not None:

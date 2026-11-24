@@ -165,10 +165,18 @@ def estimate(weights: Sequence[float], diffs: Sequence[float]) -> tuple[float, f
     return delta, math.sqrt(n / (n - 1) * spread) / total
 
 
-def score_confirmation(weights: Sequence[float], new_outcomes: Sequence[str], parent_outcomes: Sequence[str]) -> dict[str, float | int | bool | str]:
+def score_confirmation(
+    weights: Sequence[float],
+    new_outcomes: Sequence[str],
+    parent_outcomes: Sequence[str],
+    *,
+    z_bar: float = 0.0,
+    crown_z: float | None = None,
+) -> dict[str, float | int | bool | str]:
     """Fresh paired comparison of per-task means over matched new-head and parent samples.
 
-    There is deliberately no z/SE payout threshold: z and SE are diagnostics. Exact ties and losses fail.
+    With a positive z bar, both the recorded crown-round z and this fresh z
+    must be strictly above it. A zero bar retains the delta-only rule.
     """
     _need(new_outcomes and len(new_outcomes) == len(parent_outcomes),
           "confirmation needs the same nonzero number of new-head and parent sample strings")
@@ -177,13 +185,24 @@ def score_confirmation(weights: Sequence[float], new_outcomes: Sequence[str], pa
           "confirmation needs every new-head and parent sample over the same full fresh draw")
     new, old = pass_rates(new_outcomes, n), pass_rates(parent_outcomes, n)
     delta, se = estimate(weights, [a - b for a, b in zip(new, old)])
-    confirmed = delta > TIE_TOLERANCE
+    z = delta / se if se > 0 else 0.0
+    confirmed = delta > TIE_TOLERANCE and (z_bar == 0 or (se > 0 and z > z_bar))
+    if z_bar > 0:
+        confirmed = confirmed and crown_z is not None and crown_z > z_bar
+    if confirmed:
+        reason = "fresh paired sample-mean delta is positive"
+    elif not delta > TIE_TOLERANCE:
+        reason = f"fresh paired sample-mean delta {delta:.6g} does not exceed TIE_TOLERANCE {TIE_TOLERANCE:g}"
+    elif z_bar > 0 and not (se > 0 and z > z_bar):
+        reason = f"fresh paired z {z:.3f} is not above {z_bar:g}"
+    elif z_bar > 0:
+        reason = f"crown-round z {crown_z:.3f} is not above {z_bar:g}" if crown_z is not None else f"crown-round z is not recorded above {z_bar:g}"
+    else:
+        reason = "fresh paired sample-mean delta is positive"  # unreachable with the zero-bar predicate above
     return {
-        "delta": delta, "se": se, "z": delta / se if se > 0 else 0.0,
+        "delta": delta, "se": se, "z": z,
         "new_pass_rate": weighted_mean(weights, new), "old_pass_rate": weighted_mean(weights, old),
-        "n_tasks": n, "confirmed": confirmed,
-        "reason": "fresh paired sample-mean delta is positive" if confirmed
-                  else f"fresh paired sample-mean delta {delta:.6g} does not exceed TIE_TOLERANCE {TIE_TOLERANCE:g}",
+        "n_tasks": n, "confirmed": confirmed, "reason": reason,
     }
 
 
@@ -246,6 +265,8 @@ def score_entry(
     if params.crown_gate == "argmax_symmetric":
         if not delta > TIE_TOLERANCE:
             reasons.append(f"delta {delta:.6g} does not beat the king by more than {TIE_TOLERANCE:g}")
+        if params.z_bar > 0 and not (se > 0 and z > params.z_bar):
+            reasons.append(f"z {z:.3f} is not above {params.z_bar:g}")
     elif not z > params.z_bar:
         reasons.append(f"z {z:.3f} is not above {params.z_bar:g}")
     rollouts = n * len(lora_outcomes)
@@ -519,7 +540,7 @@ def decide(
         entries.append(_entry_decision(seat, entry, status, reason, score))
 
     if winner is not None and params.crown_gate == "argmax_symmetric":
-        why = f"entry {winner} had the highest mean pass rate, above the king"
+        why = f"entry {winner} had the highest mean pass rate, above the king" + (f", with z above {params.z_bar:g}" if params.z_bar > 0 else "")
     elif winner is not None and params.crown_gate == "field_median":
         why = (f"entry {winner} beat M by more than {params.z_bar:g} SE and the field's "
                f"per-task median by more than {params.z_field_bar:g} SE")

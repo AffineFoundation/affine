@@ -1,12 +1,15 @@
 """Symmetric mean-pass-rate crown gate: the king is another competitor."""
 from __future__ import annotations
 
+import dataclasses
+import json
+
 import pytest
 
 from sn120_v2.judging import TIE_TOLERANCE, decide, drop_at_look, score_entry
 from sn120_v2.types import LOST, WINNER
 
-ARGMAX = dict(crown_gate="argmax_symmetric", z_bar=99.0, z_field_bar=99.0, min_scored_tasks=2)
+ARGMAX = dict(crown_gate="argmax_symmetric", z_bar=0.0, z_field_bar=99.0, min_scored_tasks=2)
 LOOKS = dict(looks=(0.5, 1.0))
 
 
@@ -61,9 +64,24 @@ def test_whole_field_below_king_stays(build):
     assert decision.reason == "king had the highest mean pass rate"
 
 
-def test_argmax_ignores_both_z_bars(build):
-    decision = settle(build, "PPFF" * 5, {0: "PPPF" * 5}, z_bar=1e9, z_field_bar=-1e9)
-    assert decision.winner_queue_pos == 0
+def test_argmax_zero_bar_ignores_z_and_positive_bar_is_strict(build):
+    for null, lora in (("F" * 20, "P" * 20), ("P" * 10 + "F" * 10, "P" * 11 + "F" * 9)):
+        params = build.params(**(ARGMAX | {"n_tasks": 20}))
+        old = score_entry((1.0,) * 20, (null,), (lora,), dataclasses.replace(params, z_bar=0.0), n_total=20)
+        new = score_entry((1.0,) * 20, (null,), (lora,), dataclasses.replace(params, z_bar=1.0), n_total=20)
+        assert not old.reasons or "z " not in " ".join(old.reasons)
+        if old.se == 0:
+            assert old.eligible and not new.eligible and new.reasons == ("z 0.000 is not above 1",)
+        elif old.z < 1:
+            assert old.eligible and not new.eligible and new.reasons == (f"z {old.z:.3f} is not above 1",)
+    exact = score_entry((1.0,) * 2, ("FF",), ("PF",), build.params(n_tasks=2, **ARGMAX), n_total=2)
+    assert exact.z == 1.0 and exact.se > 0
+    assert exact.eligible
+    assert not score_entry((1.0,) * 2, ("FF",), ("PF",), build.params(n_tasks=2, **(ARGMAX | {"z_bar": 1.0})), n_total=2).eligible
+    above = score_entry((1.0,) * 3, ("FFF",), ("PPF",), build.params(n_tasks=3, **(ARGMAX | {"z_bar": 1.0})), n_total=3)
+    assert above.z > 1 and above.eligible
+    decision = settle(build, "PPFF" * 5, {0: "PPPF" * 5}, z_field_bar=-1e9)
+    assert decision.winner_queue_pos == 0, "z_field_bar stays ignored"
 
 
 def test_r000095_like_weighted_king_and_cap_outcomes(build):
@@ -76,7 +94,7 @@ def test_r000095_like_weighted_king_and_cap_outcomes(build):
         {0: "P" * 66 + "F" * 27 + "C" * 7, 1: "P" * 64 + "F" * 36},
         weights=tuple(1.0 if task % 2 == 0 else 2.0 for task in range(100)),
         null_samples_per_task=2,
-        z_bar=1e9,
+        z_bar=0.0,
         z_field_bar=1e9,
     )
     assert decision.winner_queue_pos == 0
@@ -104,11 +122,34 @@ def test_publisher_renders_argmax_rule(tmp_path):
     assert "There are no minimum-signal or update-norm floors" in text
     assert "Merged evaluation is unchanged." in text
     assert "Early drops are disabled" in text
-    assert "anti-gaming pre-filters, not z gates" in text
+    assert "anti-gaming pre-filters, not z gates" in " ".join(text.split())
     assert "mean pass rate is the HT-weighted mean of per-task pass rates" in " ".join(text.split())
     assert "each king task rate is the mean of its null runs" in " ".join(text.split())
     assert "`C` counts as not-pass" in " ".join(text.split())
     assert publisher.check_pair(mining, llms, world.params) == []
+
+
+def test_publisher_shows_enabled_crown_and_confirmation_z_bar(tmp_path):
+    from sn120_v2 import publisher, sim
+
+    world = sim.SimWorld(tmp_path / "world", sim.sim_params(**ARGMAX, confirm_next_round=True))
+    world.controller.set_params(dataclasses.replace(world.params, z_bar=1.0), world.clock())
+    mining, llms = publisher.render(__import__("sn120_v2.public", fromlist=["snapshot"]).snapshot(
+        world.controller.state, world.controller.params, world.clock(), {}, 0,
+    ))
+    text = " ".join(llms.decode().split())
+    assert "delta above the tie tolerance (1e-12) AND z strictly above `z_bar` (1)" in text
+    assert "fresh paired z is strictly above `z_bar` (1)" in text
+    assert "pending crown's recorded crown-round z is strictly above `z_bar` (1)" in text
+    assert "z == `z_bar` fails on both rounds" in text
+    assert "`z_bar` and `z_field_bar` are ignored" not in text
+    assert "There is no z threshold" not in text
+    assert "`z_field_bar` is ignored" in text
+    confirmation = json.loads(mining)["contract"]["crown_confirmation"]
+    assert confirmation["z_bar"] == 1.0
+    assert "fresh paired z > z_bar (1)" in confirmation["confirm_rule"]
+    assert "recorded crown-round z > z_bar (1)" in confirmation["confirm_rule"]
+    assert publisher.check_pair(mining, llms, world.controller.params) == []
 
 
 def test_argmax_never_drops_at_early_look(build):

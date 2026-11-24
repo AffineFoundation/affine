@@ -116,6 +116,64 @@ def test_score_confirmation_exact_tie_and_loss_fail_without_a_z_threshold():
     assert score_confirmation((1.0,) * 4, ("PPPP", "PPFF"), ("PPPP", "FFFF"))["delta"] == 0.25
 
 
+def test_score_confirmation_positive_z_bar_requires_both_rounds():
+    weights, new, old = (1.0,) * 4, ("PFFF", "PFFF"), ("FFFF", "FFFF")
+    exact = score_confirmation(weights, new, old, z_bar=1.0, crown_z=2.0)
+    assert exact["delta"] > 0 and exact["z"] == 1.0
+    assert not exact["confirmed"] and exact["reason"] == "fresh paired z 1.000 is not above 1"
+    above = score_confirmation(weights, new, old, z_bar=1.0 - 1e-9, crown_z=2.0)
+    assert above["confirmed"]
+    below = score_confirmation(weights, ("PPFF", "PPFF"), ("FFFF", "FFPP"), z_bar=1.0, crown_z=2.0)
+    assert below["delta"] > 0 and below["se"] > 0 and 0 < below["z"] < 1 and not below["confirmed"]
+    zero_se = score_confirmation(weights, ("PPPP",), ("FFFF",), z_bar=1.0, crown_z=2.0)
+    assert zero_se["delta"] > 0 and zero_se["se"] == 0 and not zero_se["confirmed"]
+    assert zero_se["reason"] == "fresh paired z 0.000 is not above 1"
+    legacy = score_confirmation(weights, ("PPFF", "PFFF"), ("FFFF", "FFFF"), z_bar=1.0, crown_z=1.0)
+    assert legacy["z"] > 1 and not legacy["confirmed"]
+    assert legacy["reason"] == "crown-round z 1.000 is not above 1"
+    for kwargs in ({}, {"z_bar": 0.0, "crown_z": 0.0}):
+        scored = score_confirmation(weights, ("PPPP",), ("FFFF",), **kwargs)
+        assert scored == {
+            "delta": 1.0, "se": 0.0, "z": 0.0, "new_pass_rate": 1.0, "old_pass_rate": 0.0,
+            "n_tasks": 4, "confirmed": True, "reason": "fresh paired sample-mean delta is positive",
+        }
+
+
+def test_confirmation_legacy_low_crown_z_fails_despite_fresh_win(build):
+    params = build.params(confirm_next_round=True, null_samples_per_task=2,
+                          crown_gate="argmax_symmetric", z_bar=1.0, z_field_bar=0.0)
+    parent = build.parent(build.head())
+    parent = dataclasses.replace(parent, pending=dataclasses.replace(parent.pending, z=1.0))
+    ticket = dataclasses.replace(build.ticket(n_entries=1, params=params), parent=parent)
+    result = build.result(ticket, (PASS * 8, PASS * 4 + FAIL * 4), {0: PASS * 8},
+                          parent_outcomes=(FAIL * 8, FAIL * 8))
+    controller = object.__new__(Controller)
+    controller.state = SimpleNamespace(pending_king=parent.pending, round=SimpleNamespace(
+        round_id=ticket.round_id, confirmation=None, parent=parent, excluded_training_prompts=0))
+    events = []
+    controller._log = lambda kind, data, now: events.append((kind, data))
+    controller._resolve_confirmation([(ticket, result)], 1000)
+    confirmation = events[0][1]["confirmation"]
+    assert confirmation["delta"] > 0 and confirmation["z"] > 1
+    assert not confirmation["confirmed"]
+    assert confirmation["reason"] == "crown-round z 1.000 is not above 1"
+
+
+def test_replay_keeps_recorded_confirmation_below_new_z_bar(tmp_path):
+    world = confirming(tmp_path, n_tasks=8, min_scored_tasks=2, looks=(1.0,),
+                       crown_gate="argmax_symmetric", z_bar=0.0, z_field_bar=0.0)
+    first, pending = crown(world)
+    world.evaluator.parent_quality = -0.5
+    world.register(2, -1.0)
+    second = world.round()
+    assert second.confirmation.confirmed and second.confirmation.z < 5
+    world.controller.set_params(dataclasses.replace(world.params, z_bar=5.0), world.clock())
+    replayed = load(world.root / JOURNAL_FILE)
+    assert replayed.kings == [King(pending.uid, pending.hotkey, first.round_id,
+                                   pending.new_version_id, pending.applied_at, pending.z)]
+    assert replayed.rounds[-1].confirmation == second.confirmation
+
+
 def test_clear_win_confirms_later_without_backpaying_the_confirming_round(tmp_path):
     world = confirming(tmp_path)
     first, pending = crown(world)
