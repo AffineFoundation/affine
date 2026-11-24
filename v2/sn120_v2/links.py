@@ -320,8 +320,7 @@ def link_files(
             continue  # not an Ed25519 hotkey: nobody could open a link sealed to it, so it gets none
         files[f"{LINKS_DIR}{hotkey}.json"] = as_json(outer)
     names = sorted(Path(name).stem for name in files)
-    local = time.strftime("%Y-%m-%d %H:%M:%S CR (UTC-6)", time.gmtime(now - 6 * 3600))
-    index = {"issued_at_cr": local, "hotkeys": names, "reissue_every_seconds": reissue_s, "link_file": link_file}
+    index = {"hotkeys": names, "reissue_every_seconds": reissue_s, "link_file": link_file}
     files[INDEX] = as_json(stamp | index)
     return files
 
