@@ -191,7 +191,7 @@ For direct grading, `sn120_v2.envs.math_grader.grade(task, output, capped)` acce
 | Training | `sn120_v2/gpu/trainer.py` `LoraTrainer` starts `python -m sn120_v2.gpu.train_job`. The recipe is the one of mining.json with your `train` values. The seed is `train_seed(round_seed, batch_sha256)`. |
 | Scoring | `sn120_v2/gpu/evaluator.py` `VllmEvaluator`: vLLM servers with the arguments of the box, the request body of the box, the seed `rollout_seed(round_seed, task_id, sample)` for null M and for the LoRA, and the official grader. |
 | The round | `sn120_v2/worker.py` `LocalRunner`: training, then the looks in chunks of `eval_chunk_tasks` tasks, with the early drop of a LoRA that can no longer win. |
-| The decision | `sn120_v2/judging.py` `decide`: delta, standard error, z, the cap-hit and cover rules, the status. |
+| The decision | `sn120_v2/judging.py` `decide`: delta, standard error, z, the cap-hit and cover rules, the status. With `crown_gate` = `argmax_symmetric` and `z_bar` > 0, eligibility needs delta > `TIE_TOLERANCE` AND z strictly above `z_bar` (with se > 0), including `winner` here. |
 | The draw | `sn120_v2/irt.py` `draw_from_snapshot`. |
 | The model cache | `sn120_v2/gpu/resident.py` `Resident`: every file set is hashed before it is used. |
 

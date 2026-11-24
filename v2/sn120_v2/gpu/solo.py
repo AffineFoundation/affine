@@ -22,7 +22,7 @@ from typing import Sequence
 
 from ..errors import InfraError
 from ..judging import drop_at_look, score_entry
-from ..types import NOT_RUN, NOT_SCORED, NULL_MODEL, SCORED, BoxResult, EntryResult, EvalRequest, LoRAArtifact, RoundTicket
+from ..types import KL_FIELDS, NOT_RUN, NOT_SCORED, NULL_MODEL, SCORED, BoxResult, EntryResult, EvalRequest, LoRAArtifact, RoundTicket
 from ..worker import AT_THE_LEASE_S, LocalRunner
 from .evaluator import _Cancelled, _Deadline
 from .plan import log_phase
@@ -90,6 +90,7 @@ class SoloScheduler:
         self.scored: dict[int, list[str]] = {}
         self.judged: set[tuple[int, int]] = set()
         self.cut = False
+        self.confirmation_needed = ticket.parent is not None
         self.failure: BaseException | None = None
         self.training_done = False
         self.seen_results: dict[tuple[str, int, int], str] = {}
@@ -119,7 +120,7 @@ class SoloScheduler:
 
     def _cancel_null_if_unused(self) -> None:
         """No future LoRA can use king work after training and the last drop."""
-        if self.training_done and not self.alive:
+        if self.training_done and not self.alive and not self.confirmation_needed:
             cancel = getattr(self.runner.evaluator.http, "cancel", None)
             if cancel is not None:
                 cancel(NULL_MODEL)
@@ -139,7 +140,7 @@ class SoloScheduler:
     def steal(self, gpu: int, owner: str) -> tuple[str, int, int] | None:
         with self.changed:
             while True:
-                if self.failure is not None or self.cut or (self.training_done and not self.alive):
+                if self.failure is not None or self.cut or (self.training_done and not self.alive and not self.confirmation_needed):
                     return None
                 names = {lora.lora_hash for lora in self.trained.values()}
                 claim = choose_claim(self.remaining, names & {self.trained[pos].lora_hash for pos in self.alive}, self.n, self.runner.settings.steal_block_tasks, owner, own_first=self.params.eval_merged)
@@ -231,11 +232,13 @@ class SoloScheduler:
                 self.null[:] = [text[:common] for text in self.null]
                 for pos in self.alive:
                     self.scored[pos][:] = [text[:common] for text in self.scored[pos]]
-            elif not self.alive:
+            elif not self.alive and not self.confirmation_needed:
                 last = max(self.dropped.values(), default=-1)
                 keep = self.params.look_sizes(self.n)[last] if last >= 0 else 0
                 self.null[:] = [text[:keep] for text in self.null]
             else:
+                if self.confirmation_needed and any(len(text) != self.n for text in self.null):
+                    raise InfraError("confirmation scoring ended before the new-head null completed the full fresh draw")
                 for pos in self.alive:
                     if any(len(text) != self.n for text in self.scored[pos]) or any(len(text) != self.n for text in self.null):
                         raise InfraError("solo scoring ended before null and every live LoRA completed")
@@ -355,7 +358,8 @@ class SoloWorker:
                         raise InfraError(f"the vLLM server on GPU {self.gpu} died during solo scoring")
             finally:
                 if stopped and ((self.deadline and time.time() >= self.deadline)
-                                or (self.scheduler is not None and self.scheduler.training_done and not self.scheduler.alive)):
+                                or (self.scheduler is not None and self.scheduler.training_done and not self.scheduler.alive
+                                    and not self.scheduler.confirmation_needed)):
                     cancel = getattr(self.evaluator.http, "cancel", None)
                     if cancel is not None:
                         cancel(NULL_MODEL)
@@ -403,6 +407,10 @@ class SoloRunner(LocalRunner):
 
     def _solo_run_round(self, ticket: RoundTicket):
         started, params = self.clock(), ticket.params
+        wall_started = time.monotonic()
+        begin_round = getattr(self.evaluator, "begin_round", None)
+        if begin_round is not None:
+            begin_round(ticket)
         if hasattr(self.evaluator, "solo_client_budget"):
             self.evaluator._solo_clients = self.evaluator.solo_client_budget(params.n_gpus, self.evaluator.clients_for(params))
         elif hasattr(self.evaluator, "settings"):
@@ -412,11 +420,13 @@ class SoloRunner(LocalRunner):
         reports: dict[int, object] = {}
         scheduler = SoloScheduler(self, ticket, limit)
         self.evaluator._solo_scheduler = scheduler
+        self._tested = scheduler.tested
         entries = lpt_train_all(ticket.entries)
         training: queue.Queue = queue.Queue()
         for index, entry in enumerate(entries):
             training.put((index, entry))
         train_done = [started]
+        train_done_wall = [wall_started]
         train_lock = threading.Lock()
         failed: queue.Queue = queue.Queue()
         remaining_training = [len(entries)]
@@ -487,6 +497,7 @@ class SoloRunner(LocalRunner):
                     with train_lock:
                         remaining_training[0] -= 1
                         train_done[0] = max(train_done[0], self.clock())
+                        train_done_wall[0] = time.monotonic()
                         if remaining_training[0] == 0:
                             scheduler.training_finished()
                 # Only now can this GPU have no further training assignment.
@@ -516,23 +527,65 @@ class SoloRunner(LocalRunner):
         if not failed.empty():
             raise failed.get()
         outcome = scheduler.finish()
+        if any(len(text.rstrip(NOT_RUN)) != len(ticket.draw.task_ids) for text in outcome[0]):
+            parent_outcomes, parent_error = (), "the new-head null did not complete the full fresh draw"
+        else:
+            parent_outcomes, parent_error = self._score_parent(ticket, limit)
+        tested = dict(scheduler.tested)
+        eval_done = self.clock()
+        eval_wall_s = time.monotonic() - train_done_wall[0]
+        if params.min_kl_seq > 0 and (any(isinstance(report, LoRAArtifact) for report in reports.values()) or outcome[0]):
+            # All vLLM servers must release the cards before torch loads two models.
+            self.evaluator.close()
+            scored_reports = {
+                entry.queue_pos: EntryResult(entry.queue_pos, SCORED, lora=reports[entry.queue_pos], outcomes=outcome[1][entry.queue_pos])
+                for entry in ticket.entries
+                if isinstance(reports[entry.queue_pos], LoRAArtifact) and entry.queue_pos in outcome[1]
+            }
+            measured = self.evaluator.measure_kl(ticket, list(scored_reports.values()), outcome[0], tested)
+            reports.update(self._kl_reports(ticket, reports, measured["entries"], outcome[0], outcome[3]))
+            null_kl = measured.get("null") or {}
+            kl_wall_s = measured["wall_s"]
+            kl_metrics = measured["entries"]
+        else:
+            null_kl, kl_wall_s, kl_metrics = {}, 0.0, {}
         if hasattr(self.evaluator, "config"):
             clients = getattr(self.evaluator, "_solo_clients", self.evaluator.clients_for(params))
             log_phase(
                 self.evaluator.config.work_dir,
                 "solo_eval",
                 round_id=ticket.round_id,
-                wall_s=time.monotonic() - started,
+                wall_s=time.monotonic() - wall_started,
                 train_s=train_done[0] - started,
-                eval_s=time.monotonic() - train_done[0],
+                eval_s=eval_wall_s,
                 n_gpus=params.n_gpus,
                 configured_clients_per_server=self.evaluator.clients_for(params),
                 clients_per_server=clients,
                 open_files_limit=resource.getrlimit(resource.RLIMIT_NOFILE)[0],
             )
-        return self._solo_result(ticket, reports, *outcome, started, train_done[0])
+        return self._solo_result(ticket, reports, *outcome, started, train_done[0], null_kl, kl_wall_s, kl_metrics, eval_done=eval_done,
+                                 parent_outcomes=parent_outcomes, parent_error=parent_error)
 
-    def _solo_result(self, ticket, reports, null, scored, dropped, stopped, started, train_done):
+    @staticmethod
+    def _kl_reports(ticket, reports, measurements, null, stopped):
+        """A per-entry KL failure is uncharged and cannot win; every peer is sealed."""
+        from ..types import NO_DECISION
+
+        first_look = ticket.params.look_sizes(len(ticket.draw.task_ids))[0]
+        n_scored = len(null[0].rstrip(NOT_RUN)) if null else 0
+        updated = {}
+        for pos, report in reports.items():
+            if not isinstance(report, LoRAArtifact):
+                continue
+            if stopped and n_scored < first_look:
+                continue  # _solo_result preserves the ordinary uncharged not_scored outcome.
+            measured = measurements.get(pos)
+            if measured is None or "error" in measured or "kl_seq" not in measured:
+                reason = "KL measurement failed: " + (measured or {}).get("error", "no measurement returned")
+                updated[pos] = EntryResult(pos, NO_DECISION, reason=reason)
+        return updated
+
+    def _solo_result(self, ticket, reports, null, scored, dropped, stopped, started, train_done, null_kl=None, kl_wall_s=0.0, kl_metrics=None, eval_done=None, parent_outcomes=(), parent_error=""):
         params = ticket.params
         first_look = params.look_sizes(len(ticket.draw.task_ids))[0]
         n_scored = len(null[0].rstrip(NOT_RUN)) if null else 0
@@ -542,10 +595,14 @@ class SoloRunner(LocalRunner):
             if isinstance(report, LoRAArtifact) and stopped and n_scored < first_look:
                 report = EntryResult(entry.queue_pos, NOT_SCORED, reason=f"the round's time limit ended the scoring after {n_scored} tasks, before the first look of {first_look}")
             elif isinstance(report, LoRAArtifact):
-                proof = getattr(self.evaluator, "_solo_scheduler", None).tested.get(entry.queue_pos) if params.eval_merged else None
+                scheduler = getattr(self.evaluator, "_solo_scheduler", None) if hasattr(self, "evaluator") else None
+                tested = getattr(self, "_tested", scheduler.tested if scheduler is not None else {})
+                proof = tested.get(entry.queue_pos) if params.eval_merged else None
+                artifact = report
                 report = EntryResult(
-                    entry.queue_pos, SCORED, lora=report, outcomes=scored[entry.queue_pos], eliminated_at_look=dropped.get(entry.queue_pos),
+                    entry.queue_pos, SCORED, lora=artifact, outcomes=scored[entry.queue_pos], eliminated_at_look=dropped.get(entry.queue_pos),
                     tested_base_hash=proof.base_hash if proof else "", tested_fold_kernel=proof.kernel if proof else "",
+                    **{key: (kl_metrics or {}).get(entry.queue_pos, {}).get(key) for key in KL_FIELDS if key in (kl_metrics or {}).get(entry.queue_pos, {})},
                 )
             entries.append(report)
         finished = self.clock()
@@ -561,5 +618,8 @@ class SoloRunner(LocalRunner):
             started_at=started,
             finished_at=finished,
             stopped_at_limit=stopped,
-            phase_s={"training": train_done - started, "evaluation": finished - train_done},
+            phase_s={"training": train_done - started, "evaluation": (finished if eval_done is None else eval_done) - train_done} | ({"kl": max(0, int(kl_wall_s))} if ticket.params.min_kl_seq > 0 else {}),
+            **{f"null_{key}": value for key, value in (null_kl or {}).items()},
+            parent_outcomes=parent_outcomes if ticket.parent is not None else (),
+            parent_error=parent_error if ticket.parent is not None else "",
         )

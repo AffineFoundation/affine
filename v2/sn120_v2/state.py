@@ -20,7 +20,7 @@ from .errors import JournalCorrupt, V2Error
 from .journal import LEADER, JournalRecord, pull, read_journal
 from .params import GenesisSpec, Params
 from .seams import ObjectStore
-from .types import Entry, EntryDecision, HeadManifest, HeadVersion, King, QueueEntry, Registration, RoundDecision, V1Import
+from .types import Confirmation, Entry, EntryDecision, HeadManifest, HeadVersion, King, ParentEval, PendingKing, QueueEntry, Registration, RoundDecision, V1Import
 
 RegKey = tuple[int, int]
 HISTORY = 200  # closed rounds kept in memory for the public snapshot
@@ -39,6 +39,7 @@ LEASE_FAILED = "lease_failed"
 ROUND_SETTLED = "round_settled"
 APPLY_DEFERRED = "apply_deferred"
 HEAD_APPLIED = "head_applied"
+CONFIRMATION_RESOLVED = "confirmation_resolved"
 HEAD_FOLDED = "head_folded"
 ROUND_CLOSED = "round_closed"
 
@@ -82,13 +83,16 @@ class RoundRecord(Record):
     apply_attempts: int = 0
     outcome: str = ""  # empty while the round is open
     closed_at: int = 0
-    LEFT_OUT_AT_DEFAULT = ("rotation", "duplicate_decisions", "duplicate_clusters", "first_seen")
+    LEFT_OUT_AT_DEFAULT = ("rotation", "duplicate_decisions", "duplicate_clusters", "first_seen", "parent", "confirmation", "excluded_training_prompts")
     OMIT_EMPTY_FACTORY_DEFAULTS = ("first_seen",)
     rotation: dict[str, Any] | None = None
     # Stage-A evidence and charged seats are fixed at open. This snapshot also drives stage-B priority at settlement.
     duplicate_decisions: tuple[EntryDecision, ...] = ()
     duplicate_clusters: tuple[dict[str, Any], ...] = ()
     first_seen: dict[str, int] = field(default_factory=dict)
+    parent: ParentEval | None = None  # pinned at open; exactly the previous pending crown, when confirmation is enabled
+    confirmation: Confirmation | None = None  # one settlement, journaled before this round's new winner is applied
+    excluded_training_prompts: int = 0
 
     def lease(self, lease_id: str) -> Lease:
         return next(lease for lease in self.leases if lease.lease_id == lease_id)
@@ -104,7 +108,8 @@ class State:
     queue: dict[RegKey, QueueEntry] = field(default_factory=dict)  # seats that have not had their turn
     served_regs: set[RegKey] = field(default_factory=set)
     served_hotkeys: set[str] = field(default_factory=set)
-    kings: list[King] = field(default_factory=list)  # applied winners, oldest first
+    kings: list[King] = field(default_factory=list)  # confirmed payout winners, oldest first; pending crowns are never here
+    pending_king: PendingKing | None = None  # one installed crown awaiting the next round's fresh paired comparison
     # Judged-null round ids, oldest first. Unlike rounds, this payout history is never trimmed by HISTORY.
     null_rounds: list[str] = field(default_factory=list)
     round: RoundRecord | None = None  # the open round
@@ -216,6 +221,12 @@ def _round_opened(state: State, data: dict, at: int) -> None:
     for entry in record.duplicate_decisions:
         _need((entry.uid, entry.registration_block) in state.queue, "a duplicate seat was not waiting at round open")
     state.round, state.round_seq = record, state.round_seq + 1
+    if record.parent is not None:
+        _need(state.pending_king is not None and record.parent.pending == state.pending_king,
+              "a confirming round's parent does not match the one pending king")
+        if record.parent.manifest is not None:
+            _need(record.parent.manifest.head.version_id == record.parent.pending.parent_version_id,
+                  "a confirming round pinned another parent manifest")
     if record.rotation is not None:
         _need(bool(record.rotation.get("state_sha")) and record.rotation.get("active_sha"), "rotated round lacks pool artifact ids")
         state.rotation_state_sha = record.rotation["state_sha"]
@@ -262,11 +273,40 @@ def _head_applied(state: State, data: dict, at: int) -> None:
     record, parent = _open_round(state, data), state.head
     winner = record.decision.winner if record.decision else None
     _need(winner is not None and not record.applied, "a head was applied without a settled winner, or twice")
-    head, king = _new_head(state, data), King.from_dict(data["king"])
+    head = _new_head(state, data)
     _need(head.parent_version_id == parent.version_id and not head.folded, "an applied head does not follow the current head")
-    _need((king.uid, king.hotkey, king.head_version_id) == (winner.uid, winner.hotkey, head.version_id), "king does not match the winner")
-    state.kings.append(king)
+    if "pending" in data:
+        pending = PendingKing.from_dict(data["pending"])
+        _need(state.pending_king is None and "king" not in data, "a deferred crown needs a free pending slot and no immediate king")
+        _need((pending.uid, pending.hotkey, pending.crown_round_id, pending.parent_version_id, pending.new_version_id) ==
+              (winner.uid, winner.hotkey, record.round_id, parent.version_id, head.version_id), "pending king does not match the winner")
+        state.pending_king = pending
+    else:
+        # Historical journals and confirm_next_round=false keep immediate apply-and-pay exactly.
+        king = King.from_dict(data["king"])
+        _need((king.uid, king.hotkey, king.head_version_id) == (winner.uid, winner.hotkey, head.version_id), "king does not match the winner")
+        state.kings.append(king)
     state.round = replace(record, applied=True)
+
+
+def _confirmation_resolved(state: State, data: dict, at: int) -> None:
+    record, pending = _open_round(state, data), state.pending_king
+    confirmation = Confirmation.from_dict(data["confirmation"])
+    _need(pending is not None and record.confirmation is None and
+          (record.parent is None or record.parent.pending == pending),
+          "a confirmation does not answer the open round's pending king")
+    _need(record.parent is not None or (not confirmation.confirmed and confirmation.reason.startswith("no_decision")),
+          "a confirmation without a pinned parent must be an unpaid no_decision")
+    _need((confirmation.pending_round_id, confirmation.pending_uid, confirmation.parent_version_id, confirmation.new_version_id) ==
+          (pending.crown_round_id, pending.uid, pending.parent_version_id, pending.new_version_id),
+          "confirmation identity does not match the pending king")
+    _need(not confirmation.confirmed or confirmation.delta > 1e-12,
+          "a confirmation requires a strictly positive fresh paired delta")
+    if confirmation.confirmed:
+        # applied_at remains the crown's install time; this record is the later payout commit, with no back-payment.
+        state.kings.append(King(pending.uid, pending.hotkey, pending.crown_round_id, pending.new_version_id, pending.applied_at, pending.z))
+    state.pending_king = None
+    state.round = replace(record, confirmation=confirmation)
 
 
 def _head_folded(state: State, data: dict, at: int) -> None:
@@ -316,6 +356,7 @@ HANDLERS: dict[str, Callable[[State, dict, int], None]] = {
     ROUND_SETTLED: _round_settled,
     APPLY_DEFERRED: _apply_deferred,
     HEAD_APPLIED: _head_applied,
+    CONFIRMATION_RESOLVED: _confirmation_resolved,
     HEAD_FOLDED: _head_folded,
     ROUND_CLOSED: _round_closed,
 }

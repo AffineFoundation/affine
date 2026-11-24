@@ -254,6 +254,17 @@ def object_keys() -> dict[str, str]:
     }
 
 
+def kl_rule(params: Params) -> str:
+    if params.min_kl_seq <= 0:
+        return "measured KL gate off"
+    cap = f" at the first {params.kl_max_tokens} completion tokens" if params.kl_max_tokens else ""
+    return (
+        f"Your LoRA must change the model: the mean KL(new||head){cap} over {params.kl_rollouts} of its own eval rollouts "
+        f"must be at least {show(params.min_kl_seq)} nats per sequence, else the entry is a charged null_update. "
+        "The public round output publishes every entry's kl_seq, kl_seq_se, kl_tok, kl_k and kl_tokens."
+    )
+
+
 def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, Any]:
     """The fixed rules in machine-readable form. Everything is derived from ``params`` and the two public addresses."""
     recipe = params.recipe
@@ -287,6 +298,12 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "null_update_status": NULL_UPDATE,
             "min_signal_rollouts": "min_signal_rollouts; no implicit effective recipe.minibatches floor",
             "min_step_norm": params.min_step_norm,
+            "min_kl_seq": params.min_kl_seq,
+            "kl_rollouts": params.kl_rollouts,
+            "kl_max_tokens": params.kl_max_tokens,
+            "kl_time_limit_s": params.kl_time_limit_s,
+            "min_kl_seq_rule": kl_rule(params),
+            "kl_public_round_entry_fields": ["kl_seq", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens"],
             "min_step_norm_rule": (
                 "static global_norm_cap and stored step_norm must be at least min_step_norm"
                 if params.min_step_norm > 0 else "no minimum norm; only a non-finite stored step_norm is null_update"
@@ -295,6 +312,27 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "stages": DUPLICATE_STAGES,
         },
         "outcome_codes": {"pass": PASS, "fail": FAIL, "token_cap": CAP, "infra_error": ERROR, "not_run": NOT_RUN},
+        "crown_confirmation": {
+            "enabled": params.confirm_next_round,
+            "fresh_round": "crown round + 1",
+            "comparison": "weighted mean of per-task differences (new-head sample mean - old-parent sample mean), with matched sample seeds; SE from paired differences of sample means",
+            "tie_tolerance": TIE_TOLERANCE,
+            "z_bar": params.z_bar if params.crown_gate == "argmax_symmetric" else 0.0,
+            "confirm_rule": "delta > tie_tolerance" + (
+                f" AND fresh paired z > z_bar ({show(params.z_bar)}) AND recorded crown-round z > z_bar ({show(params.z_bar)})"
+                if params.crown_gate == "argmax_symmetric" and params.z_bar > 0 else
+                "; exact ties and losses fail; SE and z are diagnostics only"
+            ),
+            "new_samples": params.null_samples,
+            "parent_samples": params.null_samples,
+            "new_head_null_samples": params.null_samples,
+            "prior_winner_outcomes_used": False,
+            "deferred_payout": True,
+            "no_decision_unpaid": True,
+            "training_prompt_exclusion": "map the pending crown's winner-batch prompts through task.batch_prompt(); skip unmapped prompts; exclude mapped task ids before the shared draw",
+            "public_round_fields": ["parent_outcomes", "parent_error", "confirmation"],
+            "confirmation_fields": ["parent_version_id", "pending_round_id", "pending_uid", "new_version_id", "delta", "se", "z", "new_pass_rate", "old_pass_rate", "new_head_pass_rate", "old_head_pass_rate", "n_tasks", "excluded_training_prompts", "confirmed", "paid", "payout_status", "reason"],
+        } if params.confirm_next_round else {"enabled": False, "payout": "historical immediate apply-and-pay; no parent slot or training-prompt exclusion"},
         "null_model": NULL_MODEL,
         "public_url": public_url,
         "links_url": links_url,
@@ -598,7 +636,7 @@ def _round_time_lines(params: Params) -> list[str]:
         f"  by then is truncated to a whole block of {params.eval_chunk_tasks} tasks; an unfinished block is not used. There are no further looks.",
         f"- At the stop time, with the first look ({first_look} tasks) complete: each open LoRA is judged by the win rule of",
         "  section 6 on the complete cutoff blocks that null M and every open LoRA finished. Those tasks are then the whole",
-        f"  test: z strictly above {show(params.z_bar)} can win. Such an entry is charged, win or lose, as in a full round.",
+        f"  test: {('delta above the tie tolerance and z strictly above ' + show(params.z_bar) + ' can win' if params.z_bar > 0 else 'delta above the tie tolerance can win') if params.crown_gate == 'argmax_symmetric' else 'z strictly above ' + show(params.z_bar) + ' can win'}. Such an entry is charged, win or lose, as in a full round.",
         f"- At the stop time, with fewer than {first_look} tasks scored: each trained LoRA is `{NOT_SCORED}`. You are not charged,",
         "  your seat is first in the next round, and no failure is counted for the seat.",
         f"- The lease ends {show(params.lease_timeout_s / 60)} minutes after it starts. A box result that arrives after the end of the lease is",
@@ -652,7 +690,8 @@ def _duplicate_lines(params: Params) -> list[str]:
         f"- Stored null update: after training, a stored `step_norm` that is not finite is terminal `{NULL_UPDATE}`. It is charged,",
         "  cannot win or be paid, and is not a candidate or keeper in Stage B. There is no minimum norm.",
     ]
-    subfloor = [
+    subfloor = [f"- {kl_rule(params)}"] if params.min_kl_seq > 0 else []
+    subfloor += [
         "- Why a sub-floor update cannot beat M except by luck: the trainer's first-order step changes the head by at most",
         "  its small stored norm. The scoring noise and a favorable task sample can then produce a positive result even",
         "  when the update carries no reproducible improvement. Without the floor, many tiny steps could win by chance",
@@ -1243,10 +1282,17 @@ def _scoring_lines(params: Params) -> list[str]:
                 "- Argmax-symmetric win rule, in full: duplicates are removed first by the existing dedup, and the round uses one",
                 "  round-wide training seed.",
                 *_no_floor_lines(params),
-                "  Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays",
-                "  if it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are",
-                "  retired. `z_bar` and `z_field_bar` are ignored. Early drops are disabled, so every candidate is scored on the full",
-                "  draw or shared stop-limit prefix. The cap-hit (`cap_hit_floor`/`cap_hit_margin`), full-draw, cover and",
+                *([
+                    "  Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays",
+                    "  if it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are",
+                    "  retired. `z_bar` and `z_field_bar` are ignored. Early drops are disabled, so every candidate is scored on the full",
+                    "  draw or shared stop-limit prefix. The cap-hit (`cap_hit_floor`/`cap_hit_margin`), full-draw, cover and",
+                ] if params.z_bar == 0 else [
+                    "  Merged evaluation is unchanged. A LoRA crowns only with the highest delta among entries with delta above the tie",
+                    f"  tolerance ({show(TIE_TOLERANCE)}) AND z strictly above `z_bar` ({show(params.z_bar)}). `z_field_bar` is ignored. Early",
+                    "  drops are disabled, so every candidate is scored on the full draw or shared stop-limit prefix. The cap-hit",
+                    "  (`cap_hit_floor`/`cap_hit_margin`), full-draw, cover and",
+                ]),
                 "  `min_scored_tasks` checks are anti-gaming pre-filters, not z gates. Here mean pass rate is the HT-weighted mean of",
                 "  per-task pass rates using the draw's sampling weights; each king task rate is the mean of its null runs, and",
                 f"  `{CAP}` counts as not-pass. Threshold calibration is provisional.",
@@ -1266,7 +1312,7 @@ def _scoring_lines(params: Params) -> list[str]:
         "- Win rule, in full. A LoRA is eligible when all of these are true. It has an outcome for every task of the",
         "  draw, or, when the stop time ended the scoring, for every task that null M has an outcome for; a LoRA that",
         "  was dropped at a look does not. n is at least `min_scored_tasks`.",
-        *(["  its delta above the king must be greater than the tie tolerance."] if params.crown_gate == "argmax_symmetric"
+        *(["  its delta above the king must be greater than the tie tolerance" + (f" ({show(TIE_TOLERANCE)}), and its se must be positive and z strictly above `z_bar` ({show(params.z_bar)})." if params.z_bar > 0 else ".")] if params.crown_gate == "argmax_symmetric"
           else ["  z > `z_bar` AND `field_z` > `z_field_bar`."] if params.crown_gate == "field_median" else ["  z > `z_bar`."]),
         "  (its count of",
         *([
@@ -1320,9 +1366,15 @@ def _win_rule_lines(params: Params) -> list[str]:
             "- Win rule (`crown_gate` = `argmax_symmetric`): duplicates are removed first (the existing dedup), and the round has one",
             "  round-wide training seed.",
             *_no_floor_lines(params),
-            "- Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays if",
-            "  it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are retired.",
-            "  `z_bar` and `z_field_bar` are ignored. Early drops are disabled: every candidate is scored on the full draw, or the",
+            *([
+                "- Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays if",
+                "  it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are retired.",
+                "  `z_bar` and `z_field_bar` are ignored. Early drops are disabled: every candidate is scored on the full draw, or the",
+            ] if params.z_bar == 0 else [
+                "- Merged evaluation is unchanged. A LoRA crowns only with the highest delta among entries with delta above the tie tolerance",
+                f"  ({show(TIE_TOLERANCE)}) AND z strictly above `z_bar` ({show(params.z_bar)}). `z_field_bar` is ignored. Early drops are",
+                "  disabled: every candidate is scored on the full draw, or the",
+            ]),
             "  shared stop-limit prefix. The cap-hit (`cap_hit_floor`/`cap_hit_margin`), cover, full-draw and `min_scored_tasks` checks",
             "  are anti-gaming pre-filters, not z gates. Here mean pass rate is the HT-weighted mean of per-task pass rates using",
             f"  the draw's sampling weights; each king task rate is the mean of its null runs, and `{CAP}` counts as not-pass.",
@@ -1355,7 +1407,10 @@ def _payout_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         ]
     return [
         f"- From `{params.null_prune_from_round}`, each round with no new king (the king held) removes the oldest king from the paid set, down to one.",
-        f"  A new king joins the paid set (and pushes out the oldest if {params.kings_window} are paid). Pruned kings return only by winning again.",
+        f"  A new king joins the paid set (and pushes out the oldest if {params.kings_window} are paid). Pruned kings return only by winning again."
+        if not params.confirm_next_round else
+        f"  A confirmed king joins the paid set at confirmation (and pushes out the oldest if {params.kings_window} are paid); there is no back-payment.",
+        "  Pruned kings return only by winning and confirming again." if params.confirm_next_round else "",
         "  Rounds without a decision (operator stop, failure) do not prune. Paid kings split the weight equally.",
         "- Current paid set, newest first. Registration of each winning hotkey is checked when the writer sets weights.",
         *(rows_table(paid, ("uid", "round_id")) if paid else ["There is no paid king yet."]),
@@ -1420,7 +1475,31 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         ]),
         *_win_rule_lines(params),
         "- The eligible LoRA with the highest delta wins. A tie goes to the miner that was earlier in the queue.",
-        "  With no eligible LoRA, M stays and there is no king. There is no second confirmation round.",
+        "  With no eligible LoRA, M stays and there is no king. There is no second confirmation round."
+        if not params.confirm_next_round else
+        "  With no eligible LoRA, M stays and there is no new crown.",
+        *([
+            f"- Paired crown confirmation (`confirm_next_round`): a winner of round r is applied, folded and served immediately, but payout waits.",
+            f"  In round r+1, the old parent and the installed new head each run {params.null_samples} fresh samples per task on the same draw.",
+            "  Parent sample k uses exactly the same seed and sampling configuration as new-head null sample k on each task.",
+            "  For each task, new_mean_t and parent_mean_t average their respective samples; d_t = new_mean_t - parent_mean_t.",
+            "  delta is the weighted mean of d_t; SE uses the paired-difference estimator above on those differences of sample means.",
+            "  Round r's winner outcomes are never inputs to confirmation.",
+            f"  Confirm only when the weighted mean of new_pass - old_pass exceeds TIE_TOLERANCE ({show(TIE_TOLERANCE)})"
+            + (f", fresh paired z is strictly above `z_bar` ({show(params.z_bar)}), and the pending crown's recorded crown-round z is"
+               f" strictly above `z_bar` ({show(params.z_bar)}). z == `z_bar` fails on both rounds. Exact ties and losses fail."
+               if params.crown_gate == "argmax_symmetric" and params.z_bar > 0 else
+               ". Exact ties and losses fail. SE and diagnostic z are published, but neither is a threshold."),
+            "  Missing parent files or parent-scoring failures are unpaid",
+            "  no_decision, not confirmation and not a round failure. A failed or undecided crown stays installed and is the next training base.",
+            "  The previous pending crown resolves before a new winner applies; every new crown becomes the next pending crown.",
+            "  Only a confirmed king joins the paid set, at its confirmation; the confirming round pays it no back-payment.",
+            "  The pending crown's winner-batch prompts are mapped with task.batch_prompt() and their task ids are excluded before the shared draw.",
+            "  Unmapped prompts are skipped without blocking round open. With no pending crown the draw is unchanged; disabled mode is immediate apply-and-pay.",
+            "  Every confirming round publishes new_head_pass_rate, old_head_pass_rate, n_tasks, delta, se, diagnostic z, paid and",
+            "  payout_status (paid for a confirmed king, otherwise unpaid) in round.json and mining.json's round/history confirmation",
+            "  block, including unavailable or failed parent cases. parent_outcomes is public too; parent rollout archives are optional.",
+        ] if params.confirm_next_round else []),
         f"- Looks: scores are checked after {show(looks)} tasks. The win rule runs only at the last look. An early",
         "  look can only drop a LoRA that can no longer reach the win bar: after a share t of the tasks, it is",
         f"  dropped when (z + c) / sqrt(t) <= {show(params.z_bar)}. c comes from a Pocock-type alpha-spending function with",
@@ -1443,7 +1522,11 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "## 7. Payout",
         "",
         f"- A king is a round winner that was applied. The window is the last {params.kings_window} distinct king UIDs. A UID that wins",
-        "  again has one place in the window, with its newest win.",
+        "  again has one place in the window, with its newest win."
+        if not params.confirm_next_round else
+        f"- A king is a round winner that was applied and then confirmed in the next round. The window is the last {params.kings_window}",
+        "  distinct king UIDs. Pending and failed crowns are never paid. A confirmed UID that wins again keeps one place, with its newest win."
+        if params.confirm_next_round else "",
         f"- Each {beneficiaries} gets an equal share of all the weight, while the hotkey that won is still registered",
         "  on that UID: 1 / (the number of such kings).",
         "- The share of a paid king that is no longer registered is split among the other registered paid kings."
@@ -1622,7 +1705,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
     numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params)
-               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_")) and getattr(params, f.name) == f.default)]
+               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_") or f.name == "confirm_next_round") and getattr(params, f.name) == f.default)]
     url = doc["contract"]["public_url"]
     where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
@@ -1641,8 +1724,11 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         ] if params.null_samples_per_task is not None else [
             "round and a null copy of M are scored on the same public tasks with the same seeds. At most one LoRA wins,",
         ]),
+        f"and only if it beats M by more than the tie tolerance" + (f" and has z strictly above {show(params.z_bar)}. " if params.crown_gate == "argmax_symmetric" and params.z_bar > 0 else ". ") + "The winner is applied to the head and"
+        if params.crown_gate == "argmax_symmetric" else
         f"and only if it beats M by more than {show(params.z_bar)} standard error. The winner is applied to the head and",
-        "its miner becomes a king. Only kings earn.",
+        "its miner becomes a king. Only kings earn." if not params.confirm_next_round else
+        "payout waits for the next round's fresh paired sample-mean confirmation. Only confirmed kings earn.",
         "",
         "## 1. Network and head",
         "",
@@ -1738,7 +1824,7 @@ def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_tex
         problems.append(f"llms.txt and mining.json are not a pair: llms.txt names snapshot {found and found.group(1)}, mining.json {doc['snapshot_digest']}")
     stated = stated_params(text)
     values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params)
-              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_")) and getattr(params, f.name) == f.default)}
+              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_") or f.name == "confirm_next_round") and getattr(params, f.name) == f.default)}
     for name in sorted(values.keys() | stated.keys()):
         if stated.get(name) != values.get(name):
             problems.append(f"`{name}`: llms.txt states {stated.get(name, 'no value')}, mining.json has {values.get(name, 'no such parameter')}")

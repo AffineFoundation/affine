@@ -46,6 +46,9 @@ ONLY_IN_THE_TABLE = {
     "weights_rate_limit_blocks": "a limit of the weights writer",
     "budget_usd_per_hour": "the operator's budget",
     "max_loras_per_box": "the upper limit of batch_cap; the servers' LoRA table is the batches of the round, not this value",
+    "kl_rollouts": "the gate-off rule is stated; the live gate-on sentence is covered by the KL tests",
+    "kl_max_tokens": "operator cost cap; its zero/full-completion default is in the params table",
+    "kl_time_limit_s": "worker phase cap; not a miner update rule",
 }
 # A recipe field that only the recipe table of section 2 states (with its note), and no sentence.
 ONLY_IN_THE_RECIPE_TABLE = {"method", "dropout", "kl", "image_digests"}
@@ -282,6 +285,7 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     # Opt-in fields are absent at defaults, preserving old Params and llms
     # bytes. Non-default serving and rotation values must still be stated.
     omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if (name == "null_samples_per_task" or name.startswith("rotation_")) and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
+    omitted |= {"confirm_next_round"}
     public_fields = {f.name for f in dataclasses.fields(Params) if not f.name.startswith("_")} - {"recipe"}
     assert set(first) == public_fields - omitted
     assert set(second) == public_fields
