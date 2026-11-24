@@ -139,6 +139,7 @@ def test_solo_servers_prewarm_and_keep_paired_requests(build, tmp_path, monkeypa
     phase = json.loads((tmp_path / "work" / "logs" / "phases.jsonl").read_text().splitlines()[-1])
     assert phase["phase"] == "solo_eval" and phase["clients_per_server"] == 8
     assert phase["configured_clients_per_server"] == 8 and phase["open_files_limit"] == resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+    assert 0 <= phase["train_s"] <= phase["eval_s"] <= phase["wall_s"] < 10
 
 
 def test_solo_server_spawns_and_health_waits_do_not_block_other_gpus(build, tmp_path):

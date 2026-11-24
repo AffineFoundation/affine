@@ -303,39 +303,86 @@ class VllmEvaluator:
         self._confirming_parent = ticket.parent.manifest.head if ticket.parent is not None and ticket.parent.manifest is not None else None
 
     def score_parent(self, ticket: RoundTicket, deadline: int = 0) -> tuple[str, ...]:
-        """Fresh parent samples on GPU 0, matched to every new-head null sample."""
-        if ticket.parent is None or ticket.parent.manifest is None:
-            raise InfraError("the pinned parent manifest is unavailable")
-        if not ticket.params.eval_merged:
-            raise InfraError("production parent confirmation requires merged-model evaluation")
-        parent = ticket.parent.manifest.head
-        base_dir = resident_parent_base(self.resident, ticket.parent.manifest)
-        # One additional merged-base switch is expected. The candidate count/table is unchanged.
-        url = self._serve_one(parent, ticket.params, len(ticket.entries), 0, model="parent", base_dir=base_dir)
-        request = EvalRequest(ticket.round_id, parent, (), ticket.draw.task_ids, ticket.draw.round_seed, 0,
-                              ticket.params, deadline, len(ticket.entries))
+        """Fresh parent samples on every solo GPU, matched to the new-head null samples."""
+        started = time.monotonic()
+        served = started
         jobs = [("parent", sample, index) for sample in range(ticket.params.null_samples) for index in range(len(ticket.draw.task_ids))]
-        written: list[tuple[int, float]] = []
+        replies: list[tuple[str, bool] | None] = [None] * len(jobs)
+        servers: dict[int, str] = {}
+        error = None
         # Parent rollout archives are optional. Do not send an extra model through the existing head/winner archiver.
         capture, self.capture = self.capture, None
         try:
-            def rollout(job):
-                try:
-                    return self._rollout(request, url, job, written)
-                except _Deadline:
-                    return None
+            if ticket.parent is None or ticket.parent.manifest is None:
+                raise InfraError("the pinned parent manifest is unavailable")
+            if not ticket.params.eval_merged:
+                raise InfraError("production parent confirmation requires merged-model evaluation")
+            parent = ticket.parent.manifest.head
+            base_dir = resident_parent_base(self.resident, ticket.parent.manifest)
 
-            with ThreadPoolExecutor(self._solo_clients or self.clients_for(ticket.params)) as threads:
-                replies = list(threads.map(rollout, jobs))
+            def start(gpu: int) -> tuple[int, str | None, Exception | None]:
+                try:
+                    # The candidate count/table is unchanged. A failed card does not discard its healthy peers.
+                    return gpu, self._serve_one(parent, ticket.params, len(ticket.entries), gpu, model="parent", base_dir=base_dir), None
+                except Exception as exc:  # noqa: BLE001 - remaining servers can still complete the identical draw
+                    return gpu, None, exc
+
+            with ThreadPoolExecutor(ticket.params.n_gpus) as threads:
+                started_servers = threads.map(start, range(ticket.params.n_gpus))
+                for gpu, url, startup_error in started_servers:
+                    if startup_error is not None:
+                        print(f"parent vLLM server on GPU {gpu} failed to start: {type(startup_error).__name__}: {startup_error}", file=sys.stderr, flush=True)
+                    elif url is not None:
+                        servers[gpu] = url
+            served = time.monotonic()
+            if not servers:
+                raise InfraError("no parent vLLM server started for confirmation")
+            request = EvalRequest(ticket.round_id, parent, (), ticket.draw.task_ids, ticket.draw.round_seed, 0,
+                                  ticket.params, deadline, len(ticket.entries))
+            written: list[tuple[int, float]] = []
+            work: queue.Queue[tuple[int, tuple[str, int, int]]] = queue.Queue()
+            for position, job in enumerate(jobs):
+                work.put((position, job))
+            stop = threading.Event()
+
+            def client(server: tuple[int, str]) -> None:
+                _, url = server
+                while not stop.is_set():
+                    try:
+                        position, job = work.get_nowait()
+                    except queue.Empty:
+                        return
+                    try:
+                        replies[position] = self._rollout(request, url, job, written)
+                    except _Deadline:
+                        stop.set()
+                        return
+
+            clients = self._solo_clients or self.clients_for(ticket.params)
+            workers = [server for server in servers.items() for _ in range(clients)]
+            with ThreadPoolExecutor(len(workers)) as threads:
+                list(threads.map(client, workers))
             if self.clock_expired(deadline) or any(reply is None for reply in replies):
                 raise InfraError("the parent did not complete all samples on the full fresh draw")
-            if not self._solo_servers[0].alive():
-                raise InfraError("the parent vLLM server died during confirmation")
+            if any(not self._solo_servers[gpu].alive() for gpu in servers):
+                raise InfraError("a parent vLLM server died during confirmation")
             codes = self._grade(request.task_ids, jobs, replies, request)
             return tuple("".join(codes["parent", sample, index] for index in range(len(ticket.draw.task_ids)))
                          for sample in range(ticket.params.null_samples))
+        except BaseException as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            raise
         finally:
             self.capture = capture
+            try:
+                log_phase(
+                    self.config.work_dir, "parent_eval", round_id=ticket.round_id, n_gpus=len(servers),
+                    total=len(jobs), finished=sum(reply is not None for reply in replies),
+                    wall_s=time.monotonic() - started, serve_s=served - started,
+                    deadline_left_s=deadline - time.time() if deadline else None, error=error,
+                )
+            except Exception:  # noqa: BLE001 - an operator log cannot change the outcome
+                pass
 
     @staticmethod
     def clock_expired(deadline: int) -> bool:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -61,7 +62,7 @@ def test_confirm_production_params_exact_identity_and_effective_diffs():
     assert (new.kl_max_tokens, new.kl_rollouts, new.kl_time_limit_s) == (8192, 128, 1200)
     assert new.batch_cap == 6 and new.n_gpus == 8
     assert new.recipe.code_digest == "ab2922c88558afd37e95938773a7e148e88c1a6ec543f96c1ce05483fd1b7941"
-    assert code_digest() == "cd207930a14ac2f653744dcd48ba96ee263bc6803ca4e573902786411a2b70e4"
+    assert code_digest() == "578fac12f8e90a305af24471b07312c298876b75a3ec0f651f4ffb6434f2e81a"
     assert new.recipe.image_digests == live.recipe.image_digests == kl8k.recipe.image_digests == (
         "9a4b16ff282b21baf44350e54c852ed59586b9efb6fe09e5cd2f1e288f4c108a",
     )
@@ -670,14 +671,15 @@ def test_production_parent_uses_exact_merged_manifest_matched_samples_and_no_lor
     calls = []
     evaluator = production.VllmEvaluator.__new__(production.VllmEvaluator)
     evaluator.resident = Resident(store, tmp_path / "work")
+    evaluator.config = SimpleNamespace(work_dir=tmp_path / "work")
     evaluator.capture = SimpleNamespace(close=lambda: None)
     evaluator._solo_clients = 2
-    evaluator._solo_servers = {0: SimpleNamespace(alive=lambda: True)}
+    evaluator._solo_servers = {gpu: SimpleNamespace(alive=lambda: True) for gpu in range(params.n_gpus)}
     evaluator.settings = production.ServeSettings(clients_per_server=2)
     evaluator.pool = SimpleNamespace(task=lambda task: SimpleNamespace(messages=lambda: []))
     evaluator.http = lambda url, body, timeout: {"choices": [{"message": {"content": "answer"}, "finish_reason": "stop"}], "usage": {"completion_tokens": 1}, "request": body}
     monkeypatch.setattr(production.ThreadPoolExecutor, "map", lambda self, fn, jobs: [fn(job) for job in jobs])
-    evaluator._serve_one = lambda head, params, table, gpu, **kwargs: calls.append((head, table, gpu, kwargs)) or "http://parent"
+    evaluator._serve_one = lambda head, params, table, gpu, **kwargs: calls.append((head, table, gpu, kwargs)) or f"http://parent{gpu}"
     def rollout(request, url, job, written):
         assert job[0] == "parent" and 0 <= job[1] < ticket.params.null_samples and request.head == ticket.parent.manifest.head
         assert request.batches == 6 and request.round_seed == ticket.draw.round_seed
@@ -689,7 +691,7 @@ def test_production_parent_uses_exact_merged_manifest_matched_samples_and_no_lor
     original_http = evaluator.http
     def checked_http(url, body, timeout):
         if url.endswith("/v1/chat/completions"):
-            model, sample, index = jobs[len(seeds)]
+            model, sample, index = jobs[-1]
             task = ticket.draw.task_ids[index]
             null_body = production.chat_body(NULL_MODEL, [], rollout_seed(ticket.draw.round_seed, task, sample), params)
             assert body == production.chat_body(model, [], null_body["seed"], params)
@@ -704,6 +706,7 @@ def test_production_parent_uses_exact_merged_manifest_matched_samples_and_no_lor
     evaluator.http = checked_http
     def record_rollout(request, url, job, written):
         jobs.append(job)
+        assert url in {f"http://parent{gpu}" for gpu in range(params.n_gpus)}
         return rollout(request, url, job, written)
     evaluator._rollout = record_rollout
     evaluator._grade = lambda tasks, jobs, replies, request: {job: PASS for job in jobs}
@@ -711,16 +714,129 @@ def test_production_parent_uses_exact_merged_manifest_matched_samples_and_no_lor
     monkeypatch.setattr(production.VllmEvaluator, "clock_expired", staticmethod(lambda deadline: False))
     assert evaluator.score_parent(ticket, 0) == (PASS * 8, PASS * 8)
     assert evaluator.capture is not None
-    assert len(calls) == 1 and calls[0][0] == ticket.parent.manifest.head
-    assert calls[0][1:3] == (6, 0) and calls[0][3] == {"model": "parent", "base_dir": parent_path}
-    assert jobs == [("parent", sample, index) for sample in range(params.null_samples) for index in range(8)]
-    assert ticket.params.batch_cap == 6 and len(ticket.entries) == 6 and len(seeds) == 16
+    assert len(calls) == params.n_gpus
+    assert [call[2] for call in calls] == list(range(params.n_gpus))
+    assert all(call[0] == ticket.parent.manifest.head for call in calls)
+    assert all(call[1] == 6 and call[3] == {"model": "parent", "base_dir": parent_path} for call in calls)
+    expected_jobs = [("parent", sample, index) for sample in range(params.null_samples) for index in range(8)]
+    assert sorted(jobs) == expected_jobs and len(set(jobs)) == len(jobs)
+    assert ticket.params.batch_cap == 6 and len(ticket.entries) == 6 and sorted(seeds) == sorted(
+        rollout_seed(ticket.draw.round_seed, task, sample) for sample in range(params.null_samples) for task in ticket.draw.task_ids
+    )
+    phase = json.loads((tmp_path / "work" / "logs" / "phases.jsonl").read_text().splitlines()[-1])
+    assert phase["phase"] == "parent_eval" and phase["round_id"] == ticket.round_id
+    assert phase["n_gpus"] == params.n_gpus and phase["total"] == phase["finished"] == 16
+    assert phase["error"] is None and phase["deadline_left_s"] is None
+    assert phase["wall_s"] >= phase["serve_s"] >= 0
     assert evaluator._confirming_parent == ticket.parent.manifest.head
     ticket_without_parent = dataclasses.replace(ticket, parent=None)
     with pytest.raises(InfraError, match="manifest is unavailable"):
         evaluator.score_parent(ticket_without_parent, ticket.expires_at)
     with pytest.raises(InfraError, match="manifest is unavailable"):
         evaluator.score_parent(dataclasses.replace(ticket, parent=build.parent(build.head(), manifest=None)), ticket.expires_at)
+
+
+def parent_evaluator(ticket, tmp_path, *, failed_gpus=(), reply=None):
+    from sn120_v2.gpu import evaluator as production
+    from sn120_v2.gpu.evaluator import VllmEvaluator
+
+    evaluator = VllmEvaluator.__new__(VllmEvaluator)
+    evaluator.resident = SimpleNamespace()
+    evaluator.config = SimpleNamespace(work_dir=tmp_path)
+    evaluator.capture = SimpleNamespace(close=lambda: None)
+    evaluator.settings = SimpleNamespace(clients_per_server=1, retries=0)
+    evaluator._solo_clients = 1
+    evaluator._solo_servers = {}
+    evaluator.pool = SimpleNamespace(task=lambda task: SimpleNamespace(messages=lambda: []))
+    calls, jobs = [], []
+
+    def serve(head, params, table, gpu, **kwargs):
+        calls.append((head, table, gpu, kwargs))
+        if gpu in failed_gpus:
+            raise InfraError(f"GPU {gpu} unavailable")
+        evaluator._solo_servers[gpu] = SimpleNamespace(alive=lambda: True)
+        return f"http://parent{gpu}"
+
+    def rollout(request, url, job, written):
+        jobs.append((job, url))
+        if job[2] == 0:
+            time.sleep(0.1)  # Keep the first job busy so another healthy server claims work.
+        body = production.chat_body(job[0], evaluator.pool.task(request.task_ids[job[2]]).messages(),
+                                    rollout_seed(request.round_seed, request.task_ids[job[2]], job[1]), request.params)
+        return reply(request, url, job, body) if reply is not None else (f"{url}/{body['seed']}", False)
+
+    evaluator._serve_one = serve
+    evaluator._rollout = rollout
+    evaluator._grade = lambda tasks, jobs, replies, request: {job: reply[0][-1] for job, reply in zip(jobs, replies)}
+    evaluator.begin_round(ticket)
+    return evaluator, calls, jobs
+
+
+def test_parent_shared_queue_matches_one_server_outputs_and_survives_startup_failure(build, tmp_path, monkeypatch, capsys):
+    from sn120_v2.gpu import evaluator as production
+
+    params = build.params(confirm_next_round=True, eval_merged=True, n_gpus=3, n_tasks=8, null_samples_per_task=2)
+    ticket = dataclasses.replace(build.ticket(n_entries=1, n_tasks=8, params=params), parent=build.parent(build.head()))
+    parent_base = tmp_path / "parent-base"
+    monkeypatch.setattr(production, "resident_parent_base", lambda resident, manifest: parent_base)
+    monkeypatch.setattr(production.VllmEvaluator, "clock_expired", staticmethod(lambda deadline: False))
+    single, one_calls, _ = parent_evaluator(dataclasses.replace(ticket, params=dataclasses.replace(params, n_gpus=1)), tmp_path / "single")
+    multiple, calls, jobs = parent_evaluator(ticket, tmp_path / "multiple", failed_gpus=(1,))
+    assert single.score_parent(dataclasses.replace(ticket, params=dataclasses.replace(params, n_gpus=1)), 0) == multiple.score_parent(ticket, 0)
+    assert len(one_calls) == 1 and len(calls) == 3
+    assert [call[2] for call in calls] == [0, 1, 2]
+    assert all(call[0] == ticket.parent.manifest.head and call[1] == 1 for call in calls)
+    assert all(call[3] == {"model": "parent", "base_dir": parent_base} for call in calls)
+    assert {url for _, url in jobs} == {"http://parent0", "http://parent2"}
+    assert sorted(job for job, _ in jobs) == [("parent", sample, index) for sample in range(2) for index in range(8)]
+    assert len({job for job, _ in jobs}) == 16
+    assert "GPU 1 unavailable" in capsys.readouterr().err
+    phase = json.loads((tmp_path / "multiple" / "logs" / "phases.jsonl").read_text().splitlines()[-1])
+    assert phase["phase"] == "parent_eval" and phase["n_gpus"] == 2 and phase["total"] == phase["finished"] == 16
+
+
+def test_parent_missing_reply_fails_closed_and_logs_phase_without_decision(build, tmp_path, monkeypatch):
+    from sn120_v2.gpu import evaluator as production
+
+    params = build.params(confirm_next_round=True, eval_merged=True, n_gpus=2, n_tasks=8, null_samples_per_task=2)
+    ticket = dataclasses.replace(build.ticket(n_entries=1, n_tasks=8, params=params), parent=build.parent(build.head()))
+    monkeypatch.setattr(production, "resident_parent_base", lambda resident, manifest: tmp_path / "parent-base")
+    evaluator, _, jobs = parent_evaluator(ticket, tmp_path, reply=lambda request, url, job, body: None if job[2] == 3 else ("answer", False))
+    deadline = ticket.expires_at + 100
+    with pytest.raises(InfraError, match="did not complete all samples"):
+        evaluator.score_parent(ticket, deadline)
+    assert len(jobs) == 16
+    phase = json.loads((tmp_path / "logs" / "phases.jsonl").read_text().splitlines()[-1])
+    assert phase["phase"] == "parent_eval" and phase["finished"] == 14 and phase["total"] == 16
+    assert phase["deadline_left_s"] == pytest.approx(deadline - time.time(), abs=2)
+    assert "InfraError" in phase["error"]
+    runner = SimpleNamespace(evaluator=evaluator)
+    assert SoloRunner._score_parent(runner, ticket, deadline)[0] == ()
+    world = confirming(tmp_path / "world")
+    crown(world)
+    world.evaluator.score_parent = lambda ticket, deadline: (_ for _ in ()).throw(InfraError("did not complete all samples"))
+    world.register(2, -1.0)
+    record = world.round()
+    assert record.outcome == "null" and not record.confirmation.confirmed and record.confirmation.reason.startswith("no_decision")
+
+
+def test_parent_deadline_stop_and_log_failure_never_change_the_outcome(build, tmp_path, monkeypatch):
+    from sn120_v2.gpu import evaluator as production
+
+    params = build.params(confirm_next_round=True, eval_merged=True, n_gpus=2, n_tasks=8)
+    ticket = dataclasses.replace(build.ticket(n_entries=1, n_tasks=8, params=params), parent=build.parent(build.head()))
+    monkeypatch.setattr(production, "resident_parent_base", lambda resident, manifest: tmp_path / "parent-base")
+    evaluator, _, _ = parent_evaluator(ticket, tmp_path, reply=lambda request, url, job, body: (_ for _ in ()).throw(production._Deadline()))
+    with pytest.raises(InfraError, match="did not complete all samples"):
+        evaluator.score_parent(ticket, ticket.expires_at)
+    phase = json.loads((tmp_path / "logs" / "phases.jsonl").read_text().splitlines()[-1])
+    assert phase["phase"] == "parent_eval" and phase["finished"] == 0 and phase["error"] is not None
+    monkeypatch.setattr(production, "log_phase", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")))
+    healthy, _, _ = parent_evaluator(ticket, tmp_path)
+    monkeypatch.setattr(production.VllmEvaluator, "clock_expired", staticmethod(lambda deadline: False))
+    assert healthy.score_parent(ticket, 0)
+    with pytest.raises(InfraError, match="no parent vLLM server started"):
+        parent_evaluator(ticket, tmp_path, failed_gpus=(0, 1))[0].score_parent(ticket, 0)
 
 
 def test_parent_close_retains_current_and_confirming_base_identities(build, tmp_path):
