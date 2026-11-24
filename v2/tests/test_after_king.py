@@ -34,6 +34,7 @@ from sn120_v2.gpu.resident import hash_tree  # noqa: E402
 from sn120_v2.headchain import CHAIN, check_chain, checkpoints, heads_of  # noqa: E402
 from sn120_v2.headfold import READ_BACK, inline  # noqa: E402
 from sn120_v2.journal import JOURNAL_FILE, read_journal  # noqa: E402
+from sn120_v2.queue import SECONDS_PER_DAY as DAY  # noqa: E402
 from sn120_v2.sampling import make_round_seed  # noqa: E402
 from sn120_v2.sim import sim_params  # noqa: E402
 from sn120_v2.state import APPLY_DEFERRED, HEAD_APPLIED, HEAD_FOLDED, LEASE_FAILED, ROUND_CLOSED, ROUND_OPENED, ROUND_SETTLED  # noqa: E402
@@ -522,7 +523,7 @@ def test_a_file_that_a_miner_stores_while_the_fold_runs_keeps_his_old_seat_as_wi
     """The squat rule moves an old seat with no valid file to the back. It must see the files of the open, not those of the decision."""
 
     def story(order):
-        world = ChainWorld(tmp_path / order, sim_params(batch_cap=2, squat_min_wait_s=1), order=order)
+        world = ChainWorld(tmp_path / order, sim_params(batch_cap=2, squat_min_wait_s=DAY), order=order)
         world.start(CHAIN)
         for uid, quality in ((2, 0.3), (3, 0.0), (4, None), (5, 0.0), (6, 0.0)):
             world.register(uid, quality)
