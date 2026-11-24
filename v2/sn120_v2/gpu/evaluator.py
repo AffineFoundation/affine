@@ -364,7 +364,7 @@ class VllmEvaluator:
                 list(threads.map(client, workers))
             if self.clock_expired(deadline) or any(reply is None for reply in replies):
                 raise InfraError("the parent did not complete all samples on the full fresh draw")
-            if any(not self._solo_servers[gpu].alive() for gpu in servers):
+            if any((server := self._solo_servers.get(gpu)) is None or not server.alive() for gpu in servers):
                 raise InfraError("a parent vLLM server died during confirmation")
             codes = self._grade(request.task_ids, jobs, replies, request)
             return tuple("".join(codes["parent", sample, index] for index in range(len(ticket.draw.task_ids)))

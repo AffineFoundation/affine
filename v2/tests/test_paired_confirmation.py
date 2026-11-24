@@ -62,7 +62,7 @@ def test_confirm_production_params_exact_identity_and_effective_diffs():
     assert (new.kl_max_tokens, new.kl_rollouts, new.kl_time_limit_s) == (8192, 128, 1200)
     assert new.batch_cap == 6 and new.n_gpus == 8
     assert new.recipe.code_digest == "ab2922c88558afd37e95938773a7e148e88c1a6ec543f96c1ce05483fd1b7941"
-    assert code_digest() == "578fac12f8e90a305af24471b07312c298876b75a3ec0f651f4ffb6434f2e81a"
+    assert code_digest() == "d46b54e9891355fef71becb3b860c0e355804cb414353a11e66966ac2454c5d8"
     assert new.recipe.image_digests == live.recipe.image_digests == kl8k.recipe.image_digests == (
         "9a4b16ff282b21baf44350e54c852ed59586b9efb6fe09e5cd2f1e288f4c108a",
     )
@@ -818,6 +818,25 @@ def test_parent_missing_reply_fails_closed_and_logs_phase_without_decision(build
     world.register(2, -1.0)
     record = world.round()
     assert record.outcome == "null" and not record.confirmation.confirmed and record.confirmation.reason.startswith("no_decision")
+
+
+def test_vanished_parent_server_is_a_confirmation_infra_failure(build, tmp_path, monkeypatch):
+    from sn120_v2.gpu import evaluator as production
+
+    params = build.params(confirm_next_round=True, eval_merged=True, n_gpus=1)
+    ticket = dataclasses.replace(build.ticket(n_entries=1, params=params), parent=build.parent(build.head()))
+    monkeypatch.setattr(production, "resident_parent_base", lambda resident, manifest: tmp_path / "parent-base")
+
+    def vanish(request, url, job, body):
+        evaluator._solo_servers.pop(0, None)
+        return "answer", False
+
+    evaluator, _, _ = parent_evaluator(ticket, tmp_path, reply=vanish)
+    with pytest.raises(InfraError, match="^a parent vLLM server died during confirmation$"):
+        evaluator.score_parent(ticket, 0)
+    phase = json.loads((tmp_path / "logs" / "phases.jsonl").read_text().splitlines()[-1])
+    assert phase["phase"] == "parent_eval" and phase["total"] == phase["finished"] == 8
+    assert phase["error"] == "InfraError: a parent vLLM server died during confirmation"
 
 
 def test_parent_deadline_stop_and_log_failure_never_change_the_outcome(build, tmp_path, monkeypatch):
