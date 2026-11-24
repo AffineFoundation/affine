@@ -382,7 +382,8 @@ class ConfirmationCorrection(Record):
     ``original`` is never replaced. The verdict is a normal ``Confirmation``
     with its paired outcome strings added: the journal retains those strings
     and the raw verdict and evidence bundle hashes, not private model files.
-    ``git_HEAD`` follows the offline verdict's field name.
+    Durable ``git_HEAD`` and ``new_outcomes`` are normalized from the real
+    offline verdict's lowercase ``git_head`` and ``null_outcomes`` fields.
     """
 
     pending: PendingKing

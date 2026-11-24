@@ -861,13 +861,14 @@ class Controller:
                 raise ContractError("the original new-head null did not complete the full fresh draw")
         except ContractError as exc:
             raise V2Error("the original new-head evidence failed; this is not a parent-only infrastructure no_decision") from exc
-        if legacy_parent_one_sample(ticket.params, 1):
-            raise V2Error("a historical one-sample parent confirmation is not a complete paired re-check")
-        n_samples = evidence.verdict.get("new_outcomes")
+        n_samples = evidence.verdict.get("null_outcomes")
         n_parent_samples = evidence.verdict.get("parent_outcomes")
         if (not isinstance(n_samples, list) or not isinstance(n_parent_samples, list)
-                or len(n_samples) != ticket.params.null_samples or len(n_parent_samples) != ticket.params.null_samples):
-            raise V2Error("offline re-check must have exactly the confirming ticket's new and parent sample counts")
+                or len(n_samples) != ticket.params.null_samples or len(n_parent_samples) != ticket.params.null_samples
+                or tuple(n_samples) != result.null_outcomes
+                or (result.parent_outcomes and tuple(n_parent_samples) != result.parent_outcomes)
+                or evidence.ticket != ticket):
+            raise V2Error("offline re-check must preserve the confirming ticket and its complete new-head samples")
         correction = prepare(self.state, evidence, draw, approved_by, ticket.params, result)
         if correction is not None:
             self._log(CONFIRMATION_CORRECTED, {"correction": correction.to_dict()}, now)

@@ -15,9 +15,10 @@ from typing import Any
 
 from .canonical import sha256_hex
 from .errors import ContractError, JournalCorrupt, V2Error
-from .judging import TIE_TOLERANCE, legacy_parent_one_sample, score_confirmation
+from .judging import TIE_TOLERANCE, score_confirmation
 from .params import Params
-from .types import NOT_RUN, BoxResult, Confirmation, ConfirmationCorrection, Draw, King, PendingKing, check_outcomes
+from .recheck import VERDICT_SCHEMA, bundle_sha256, load_bundle
+from .types import NOT_RUN, BoxResult, Confirmation, ConfirmationCorrection, Draw, King, PendingKing, RoundTicket, check_outcomes
 
 REASON = "offline re-check after infra no_decision"
 # Only failures to obtain or compare parent-side fresh evidence are eligible.
@@ -31,9 +32,11 @@ INFRA_REASON_PREFIXES = (
     "no_decision: the new-head null did not complete the full fresh draw",
 )
 REQUIRED_FIELDS = frozenset({
-    "schema", "crown_round_id", "uid", "hotkey", "new_version_id", "parent_version_id",
-    "delta", "se", "z", "n_tasks", "confirmed", "new_outcomes", "parent_outcomes",
-    "code_digest", "git_HEAD", "bundle_sha256",
+    "schema", "round_id", "crown_round_id", "uid", "hotkey", "new_version_id", "parent_version_id",
+    "delta", "se", "z", "new_pass_rate", "old_pass_rate", "n_tasks", "confirmed",
+    "null_outcomes", "parent_outcomes", "null_samples", "parent_samples", "sanity",
+    "code_digest", "confirmation_code_digest", "code_identity_matches", "git_head",
+    "excluded_training_prompts", "existing_confirmation", "bundle_sha256",
 })
 
 
@@ -52,11 +55,13 @@ class Evidence:
     verdict: dict[str, Any]
     verdict_sha256: str
     bundle_sha256: str
-    bundle: dict[str, Any]
+    body: dict[str, Any]
+    ticket: RoundTicket
+    null_outcomes: tuple[str, ...]
 
 
 def read_evidence(verdict_path: str | Path, bundle_path: str | Path | None = None) -> Evidence:
-    """Read the approved verdict and the evidence bundle it certifies.
+    """Read the real writer's verdict and verify its self-contained sealed bundle.
 
     ``--bundle`` is explicit. With only ``--verdict``, ``bundle.json`` beside
     it is read. Neither path is taken from the verdict's content.
@@ -72,25 +77,37 @@ def read_evidence(verdict_path: str | Path, bundle_path: str | Path | None = Non
     missing = sorted(REQUIRED_FIELDS - verdict.keys())
     if missing:
         raise V2Error(f"approved verdict is missing required fields: {', '.join(missing)}")
-    if verdict["schema"] != "sn120-v2-confirmation-recheck-1":
-        raise V2Error("approved verdict schema must be sn120-v2-confirmation-recheck-1")
-    bundle = Path(bundle_path) if bundle_path is not None else verdict_path.parent / "bundle.json"
-    try:
-        bundle_raw = bundle.read_bytes()
-        bundle_json = json.loads(bundle_raw)
-    except (OSError, ValueError) as exc:
-        raise V2Error(f"cannot read evidence bundle {bundle}: {exc}") from exc
-    if not isinstance(bundle_json, dict):
-        raise V2Error("evidence bundle must be one JSON object")
-    bundle_sha256 = sha256_hex(bundle_raw)
-    if "bundle_sha256" in verdict and _field(verdict, "bundle_sha256", str) != bundle_sha256:
-        raise V2Error("the evidence bundle does not match the approved verdict's bundle_sha256")
-    for name in REQUIRED_FIELDS:
-        if name not in bundle_json:
-            raise V2Error(f"evidence bundle is missing required field: {name}")
-        if name != "bundle_sha256" and bundle_json[name] != verdict[name]:
-            raise V2Error(f"evidence bundle {name} does not match the approved verdict")
-    return Evidence(raw, verdict, sha256_hex(raw), bundle_sha256, bundle_json)
+    if verdict["schema"] != VERDICT_SCHEMA:
+        raise V2Error(f"approved verdict schema must be {VERDICT_SCHEMA}")
+    for name in ("sanity", "confirmed", "code_identity_matches"):
+        _field(verdict, name, bool)
+    if verdict["sanity"]:
+        raise V2Error("a sanity-prefix offline re-check cannot correct a confirmation")
+    path = Path(bundle_path) if bundle_path is not None else verdict_path.parent / "bundle.json"
+    body, ticket, null_outcomes = load_bundle(path)
+    digest = bundle_sha256(body)
+    if _field(verdict, "bundle_sha256", str) != digest:
+        raise V2Error("the evidence bundle does not match the approved verdict's canonical bundle_sha256")
+    pending = ticket.parent.pending if ticket.parent is not None else None
+    if pending is None:
+        raise V2Error("the evidence bundle has no original pending crown")
+    for name, expected in (
+        ("round_id", ticket.round_id),
+        ("crown_round_id", pending.crown_round_id),
+        ("uid", pending.uid),
+        ("hotkey", pending.hotkey),
+        ("new_version_id", pending.new_version_id),
+        ("parent_version_id", pending.parent_version_id),
+        ("null_outcomes", list(null_outcomes)),
+        ("n_tasks", len(ticket.draw.task_ids)),
+        ("null_samples", ticket.params.null_samples),
+        ("existing_confirmation", body["confirmation_resolved"]),
+        ("excluded_training_prompts", body["exclusions"]["excluded_training_prompts"]),
+        ("confirmation_code_digest", ticket.params.recipe.code_digest),
+    ):
+        if verdict[name] != expected:
+            raise V2Error(f"approved verdict {name} does not match its verified evidence bundle")
+    return Evidence(raw, verdict, sha256_hex(raw), digest, body, ticket, null_outcomes)
 
 
 def _field(data: dict[str, Any], name: str, kind: type) -> Any:
@@ -118,11 +135,17 @@ def prepare(state: Any, evidence: Evidence, draw: Draw, approved_by: str, origin
         raise V2Error("the target crown needs one confirmation round with its original pinned pending crown")
     record = resolved[0]
     pending = record.parent.pending
+    if _field(data, "existing_confirmation", dict) != record.confirmation.to_dict():
+        raise V2Error("approved verdict does not preserve the original confirmation_resolved")
     if (pending.crown_round_id, pending.uid, pending.hotkey, pending.parent_version_id, pending.new_version_id) != (
             identities["crown_round_id"], uid, identities["hotkey"], identities["parent_version_id"], identities["new_version_id"]):
         raise V2Error("approved verdict does not match the original pending crown")
-    new_outcomes = tuple(_field(data, "new_outcomes", list))
+    new_outcomes = tuple(_field(data, "null_outcomes", list))
     parent_outcomes = tuple(_field(data, "parent_outcomes", list))
+    null_samples = _field(data, "null_samples", int)
+    parent_samples = _field(data, "parent_samples", int)
+    if null_samples != len(new_outcomes) or parent_samples != len(parent_outcomes):
+        raise V2Error("approved verdict sample counts do not match its outcome strings")
     if any(type(text) is not str for text in (*new_outcomes, *parent_outcomes)):
         raise V2Error("approved verdict outcome entries must be strings")
     try:
@@ -142,6 +165,7 @@ def prepare(state: Any, evidence: Evidence, draw: Draw, approved_by: str, origin
             delta=scored["delta"], se=scored["se"], z=scored["z"],
             new_pass_rate=scored["new_pass_rate"], old_pass_rate=scored["old_pass_rate"],
             n_tasks=scored["n_tasks"], confirmed=True, reason=REASON,
+            excluded_training_prompts=_field(data, "excluded_training_prompts", int),
         )
         correction = ConfirmationCorrection(
             pending=pending,
@@ -153,7 +177,7 @@ def prepare(state: Any, evidence: Evidence, draw: Draw, approved_by: str, origin
             original_parent_outcomes=original_result.parent_outcomes,
             original_result_sha256=original_result.digest(),
             verdict_sha256=evidence.verdict_sha256, bundle_sha256=evidence.bundle_sha256,
-            code_digest=_field(data, "code_digest", str), git_HEAD=_field(data, "git_HEAD", str),
+            code_digest=_field(data, "code_digest", str), git_HEAD=_field(data, "git_head", str),
             approved_by=approved_by.strip(),
         )
     except ContractError as exc:
@@ -225,8 +249,6 @@ def check_correction(state: Any, correction: ConfirmationCorrection) -> None:
         raise V2Error("offline re-check must retain exactly the original ticket's new and parent sample counts")
     if original.reason.startswith("no_decision: fresh parent comparison failed (") and not correction.original_parent_outcomes:
         raise V2Error("paired-scoring no_decision must retain the original parent's outcome evidence")
-    if legacy_parent_one_sample(correction.original_params, len(correction.parent_outcomes)):
-        raise V2Error("a historical one-sample parent confirmation is not a complete paired re-check")
     if (correction.draw.snapshot_id, correction.draw.round_seed, len(correction.draw.task_ids)) != (
             record.snapshot_id, record.round_seed, record.n_tasks) or not record.leases:
         raise JournalCorrupt("correction draw does not match the original confirmation round")
@@ -241,6 +263,10 @@ def check_correction(state: Any, correction: ConfirmationCorrection) -> None:
         if (len(correction.original_new_outcomes) != correction.original_params.null_samples
                 or any(NOT_RUN in text for text in correction.original_new_outcomes)):
             raise ContractError("the original new head did not complete the full fresh draw")
+        if correction.new_outcomes != correction.original_new_outcomes:
+            raise JournalCorrupt("correction does not preserve the original sealed new-head outcomes")
+        if correction.original_parent_outcomes and correction.parent_outcomes != correction.original_parent_outcomes:
+            raise JournalCorrupt("correction does not preserve the original sealed parent outcomes")
         scored = score_confirmation(correction.draw.weights, correction.new_outcomes, correction.parent_outcomes)
     except (ContractError, TypeError) as exc:
         raise V2Error(f"approved verdict's paired outcome strings do not pass sanity checks: {exc}") from exc
@@ -249,6 +275,12 @@ def check_correction(state: Any, correction: ConfirmationCorrection) -> None:
     for name in ("delta", "se", "z", "new_pass_rate", "old_pass_rate"):
         if getattr(verdict, name) != scored[name]:
             raise V2Error(f"approved verdict {name} does not match its paired outcome strings")
+    if len(record.leases) != 1:
+        raise JournalCorrupt("correction needs one unambiguous parent-bearing sealed ticket")
+    if record.leases[0].result_digest != correction.original_result_sha256:
+        raise JournalCorrupt("correction does not preserve the original sealed result digest")
+    if verdict.excluded_training_prompts != original.excluded_training_prompts:
+        raise JournalCorrupt("correction does not preserve the original training-prompt exclusions")
     if verdict.reason != REASON:
         raise V2Error("correction verdict reason is not the offline re-check reason")
     if correction.king != King(pending.uid, pending.hotkey, pending.crown_round_id, pending.new_version_id, pending.applied_at, pending.z):

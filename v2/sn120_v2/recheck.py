@@ -42,6 +42,7 @@ from .store import LocalStore
 from .types import BoxResult, Confirmation, RoundTicket
 
 BUNDLE_SCHEMA = "sn120-v2-offline-recheck-2"
+VERDICT_SCHEMA = "sn120-v2-offline-recheck-verdict-1"
 TASK_SCHEMA = "sn120-v2-task-record-1"
 LINKS_SCHEMA = "sn120-v2-read-links-1"
 PUBLIC_ROOT = "https://affine.io"
@@ -439,7 +440,7 @@ def _export_body(state_dir: str | Path, round_id: str, store: Any, *, task_loade
 def export_bundle(state_dir: str | Path, round_id: str, out: str | Path, *, store: Any = None, task_loader: Callable[[Any, RoundRecord, Any], dict[str, Any]] | None = None) -> dict[str, Any]:
     """Write a deterministic, self-contained bundle without writing to ``state_dir``."""
     body = _export_body(state_dir, round_id, _evidence_store(state_dir) if store is None else store, task_loader=task_loader)
-    envelope = {"schema": BUNDLE_SCHEMA, "body": body, "sha256": sha256_hex(canonical_json(body))}
+    envelope = {"schema": BUNDLE_SCHEMA, "body": body, "sha256": bundle_sha256(body)}
     _write_json(out, envelope)
     return envelope
 
@@ -485,13 +486,18 @@ def issue_links(state_dir: str | Path, round_id: str, out: str | Path, ttl: int 
     return document
 
 
+def bundle_sha256(body: Mapping[str, Any]) -> str:
+    """Canonical content identity of an offline bundle, not its file-byte hash."""
+    return sha256_hex(canonical_json(body))
+
+
 def load_bundle(path: str | Path) -> tuple[dict[str, Any], RoundTicket, tuple[str, ...]]:
     """Verify the bundle seal and every duplicated ticket identity before using it."""
     envelope = _json(path)
     if envelope.get("schema") != BUNDLE_SCHEMA or set(envelope) != {"schema", "body", "sha256"}:
         raise VerifyError("not an offline re-check bundle")
     body = envelope["body"]
-    if not isinstance(body, dict) or envelope["sha256"] != sha256_hex(canonical_json(body)):
+    if not isinstance(body, dict) or envelope["sha256"] != bundle_sha256(body):
         raise VerifyError("offline re-check bundle sha256 does not match its body")
     try:
         evidence = body["sealed_evidence"]
@@ -740,7 +746,7 @@ def score_bundle(
     fields = score_confirmation(draw.weights, nulls, parent_outcomes)
     notes = [body["crown_design"].get("note") or "", SANITY_NOTE if sanity else ""]
     verdict = {
-        "schema": "sn120-v2-offline-recheck-verdict-1",
+        "schema": VERDICT_SCHEMA,
         "round_id": original.round_id,
         "uid": original.parent.pending.uid,
         "hotkey": original.parent.pending.hotkey,
@@ -758,7 +764,7 @@ def score_bundle(
             "outcome_strings": "one outcome code per task, in the sealed draw order",
             "tasks_per_string": used,
         },
-        "bundle_sha256": _json(bundle_path)["sha256"],
+        "bundle_sha256": bundle_sha256(body),
         "code_digest": digest,
         "confirmation_code_digest": pinned_digest,
         "code_identity_matches": code_identity_matches,
