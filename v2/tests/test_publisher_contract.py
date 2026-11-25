@@ -224,6 +224,18 @@ def test_both_files_come_from_one_snapshot_and_change_together(tmp_path):
     assert "- phase: IDLE" in text2 and doc["snapshot_digest"] not in text2
 
 
+def test_local_delta_se_is_measured_and_bounded(tmp_path):
+    """One stable docs line, sourced from public history, plus a UTC-only changelog."""
+    doc, text, _ = published(world(tmp_path).publisher.snapshots[-1])
+    flat = " ".join(text.split())
+    assert flat.count(publisher.LOCAL_DELTA_SE) == 1
+    assert "about 5.3 percentage points" in publisher.LOCAL_DELTA_SE
+    assert "public 2000-task SE scaled by √(n/100)" in publisher.LOCAL_DELTA_SE
+    changelog = next(line for line in publisher.RULE_CHANGELOG if "local-delta measurement guidance" in line)
+    assert "2026-11-25" in changelog and "5.3 percentage points" in changelog
+    assert "Costa Rica" not in changelog and "UTC-6" not in changelog
+
+
 def test_service_state_reasons_coarse_utc_and_public_vocabulary(tmp_path):
     made = world(tmp_path, play=True)
     running, idle = made.publisher.snapshots[-2:]

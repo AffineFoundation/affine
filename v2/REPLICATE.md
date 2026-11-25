@@ -269,6 +269,8 @@ python v2/miner/affine_miner.py reproduce --mining-json mining.json --hotkey <ss
 
 That command runs with the params of mining.json as they are. So the box code refuses the run unless your machine has the pinned install, the pinned code and `n_gpus` GPUs. In practice that is the box only. Use `python -m sn120_v2.replicate run` on every other machine. The backend needs the base files in the cache of the work directory. So pass `--work DIR` to the miner tool, and run the `fetch` command above with the same `--work DIR` first. Without `--work` the miner tool uses a new temporary directory, which has no base files.
 
+Optional `--null-cache DIR` stores the full null-M outcomes in `DIR/manifest.json`. The manifest binds the ordered draw, complete head, params hash and scoring settings. The first run fills it; later matching runs reuse exactly those outcomes and generate only the candidate. Use a new directory for another draw, head or scoring configuration: a nonempty, missing, invalid or mismatched cache is refused, never silently recomputed or mixed. Cache writes are atomic and do not overwrite a filled cache. The flag belongs only to `reproduce`; `check` and `upload` are unchanged. On a fill, null scoring continues after an early candidate drop, within the normal deadline, so the cache covers the whole draw. The no-flag runner and results are unchanged. The standard local and solo/merged backends are covered by CPU tests; real GPU cache execution has not been qualified.
+
 ## 8. What has been verified
 
 On real GPUs:
