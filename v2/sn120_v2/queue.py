@@ -163,11 +163,7 @@ def plan_front(queue: Queue, served_hotkeys: Iterable[str], hotkeys: Iterable[st
 
 @dataclass(frozen=True)
 class SyncPlan:
-    """Changes that bring the queue in line with one chain snapshot.
-
-    ``rehotkeyed`` is the existing journal field for all registration
-    refreshes: a hotkey change, a coldkey change, or both.
-    """
+    """Changes that bring the queue in line with one chain snapshot."""
 
     added: tuple[Registration, ...]
     removed: tuple[RegKey, ...]
@@ -193,8 +189,6 @@ def plan_sync(
     A registration enters the queue once. A seat that already had its turn,
     or a hotkey that already had its turn, never enters again. A seat whose
     registration left the chain is removed, unless it is in an open round.
-    A non-leased seat's hotkey or coldkey is refreshed; a leased seat keeps
-    the registration it was synced with until its round ends.
 
     A bad chain read must not empty the paid queue. So an empty snapshot, a
     snapshot of another subnet, or a plan that removes more than
@@ -211,11 +205,7 @@ def plan_sync(
             on_chain[reg.key] = reg
     added = [reg for key, reg in on_chain.items() if key not in queue]
     rehotkeyed = [
-        reg
-        for key, reg in on_chain.items()
-        if key in queue
-        and not queue[key].leased
-        and (queue[key].reg.hotkey != reg.hotkey or queue[key].reg.coldkey != reg.coldkey)
+        reg for key, reg in on_chain.items() if key in queue and not queue[key].leased and queue[key].reg.hotkey != reg.hotkey
     ]
     removed = [key for key, seat in queue.items() if key not in on_chain and not seat.leased]
     if not force and len(queue) >= 8 and len(removed) > max_remove_frac * len(queue):
