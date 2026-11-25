@@ -163,9 +163,12 @@ RULE_CHANGELOG = (
     "- 2026-11-25 / local-delta measurement guidance / undocumented → a 100-task local delta has an SE of about 5.3 percentage points.",
     "- 2026-11-25 / per-round seating / the one-entry-per-round rule is hotkey-only; there is no coldkey seat limit.",
     "- 2026-11-25 / `z_bar` / `z_bar=1` → `z_bar=0.5`: crown needs strict `z > 0.5`, pending the paired next-round confirmation (fresh paired `z > 0.5`) before any payout.",
-) + (
+)
+
+V4_RULE_CHANGELOG = (
     "- 2026-11-25 / `affine-batch-v4` / flat GRPO batches only → 1–`max_stages` ordered GRPO/SFT stages, official SFT verification and summed per-stage training cost.",
 )
+RULE_CHANGELOG += V4_RULE_CHANGELOG
 
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
