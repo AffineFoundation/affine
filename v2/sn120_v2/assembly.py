@@ -23,12 +23,16 @@ Every setting comes from the environment. A missing one is an error.
                             Not set: 1, one file after the other. The verdicts are the same for each count.
                             Read by each command that makes the live check: ``run``, ``status``, ``publish``
                             and ``bootstrap``
+  SN120_CHECK_WORKERS (optional) how many waiting files are checked in isolated processes, 1 to 64.
+                            Not set: 1, the original serial path. Result application stays in queue order.
+                            Read by each command that makes the live check: ``run``, ``status``, ``publish``
+                            and ``bootstrap``
   SN120_AFTER_KING (optional)  "serial" (the default): after a king, each step waits for the one before it.
                             "overlap": the fold and the check of the waiting files are before the next open; the
                             other steps run beside the fold or after the open (``afterking.py``). Only with
                             SN120_HEAD_PUBLISH=chain; read by ``run`` only
 
-``run`` prints one line at its start for each of SN120_HEAD_PUBLISH, SN120_CHECK_STREAMS and SN120_AFTER_KING,
+``run`` prints one line at its start for each of SN120_HEAD_PUBLISH, SN120_CHECK_STREAMS, SN120_CHECK_WORKERS and SN120_AFTER_KING,
 with the words NOT SET when the shell does not hold the variable. It prints no line for another setting.
 
 The box holds no wallet. It only reads the chain.
@@ -46,7 +50,7 @@ from typing import Callable
 from transformers import AutoTokenizer
 
 from . import layout
-from .admission import SERIAL_STREAMS, STREAMS_ENV, HFTokens, LazyPool, StoreAdmission, check_batch, check_streams, pool_grader
+from .admission import SERIAL_STREAMS, STREAMS_ENV, WORKERS_ENV, HFTokens, LazyPool, StoreAdmission, check_batch, check_streams, check_workers, pool_grader
 from .afterking import ORDER_ENV, OVERLAP, after_king
 from .canonical import file_sha256
 from .chain import Feed, SubtensorClient
@@ -78,6 +82,50 @@ ADMISSION_GRADE_WORKERS = min(8, os.cpu_count() or 1)
 ADMISSION_GRADE_TIMEOUT_S = 20.0
 WEIGHT_SUFFIX = ".safetensors"
 BOX_COMMANDS = ("run", "checkpoint")  # the commands that work on the local head of the box
+
+
+class BoxTokens:
+    """The same verified head tokenizer, constructed independently in a child."""
+
+    def __init__(self, cache: Path, manifest: HeadManifest) -> None:
+        self.cache, self.manifest = cache, manifest
+
+    def load(self) -> HFTokens:
+        directory = self.cache / self.manifest.head.base_hash
+        for name, sha in sorted(self.manifest.base_files.items()):
+            if name.endswith(WEIGHT_SUFFIX):
+                continue
+            path = directory / name
+            if not path.is_file() or file_sha256(path) != sha:
+                raise VerifyError(f"the cached {name} of base {self.manifest.head.base_hash[:16]} does not match the head manifest")
+        return HFTokens(AutoTokenizer.from_pretrained(str(directory), local_files_only=True))
+
+
+class BoxCheckWorker:
+    """Picklable recipe for one spawned file-check process."""
+
+    def __init__(self, tokens: HeadTokens, pool: Any, grade_workers: int) -> None:
+        manifest = tokens.journal_manifest
+        if manifest is None:
+            raise ConfigError("the parallel file check needs the head manifest")
+        # Ensure the tokenizer cache is complete in the parent. Children only
+        # read these verified local files and never inherit a tokenizer object.
+        tokens._load()
+        self.tokens = BoxTokens(tokens.cache, manifest)
+        admission_pool = getattr(pool, "admission_pool", pool)
+        task_ids = tuple(admission_pool.task_ids)
+        self.tasks = tuple(admission_pool.task(task_id) for task_id in task_ids)
+        self.grade_workers = grade_workers
+
+    def start(self, params: Params):
+        from .checkpool import checked
+        from .envs.math_pool import MathPool
+
+        pool = MathPool(self.tasks, "parallel-admission")
+        tokens = self.tokens.load()
+        grades = LazyPool(lambda: GradePool(workers=self.grade_workers, timeout_s=ADMISSION_GRADE_TIMEOUT_S))
+        grader = pool_grader(pool, grades, chunk=self.grade_workers)
+        return lambda raw, hotkey: checked(raw, hotkey, params, tokens, grader)
 
 
 class HeadTokens:
@@ -172,13 +220,16 @@ def stack(context: StackContext) -> Stack:
     grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
     # One chunk is one row for each worker: a file whose rows all hang costs one time limit, not several.
     streams = check_streams()
-    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool_runtime if pool_runtime else pool, grades, chunk=ADMISSION_GRADE_WORKERS), streams=streams)
+    workers = check_workers()
+    worker = BoxCheckWorker(tokens, pool_runtime if pool_runtime else pool, ADMISSION_GRADE_WORKERS) if workers > 1 else None
+    admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool_runtime if pool_runtime else pool, grades, chunk=ADMISSION_GRADE_WORKERS), streams=streams, workers=workers, worker=worker)
     order = after_king()
     if order == OVERLAP and mode() != CHAIN:
         raise ConfigError(f"{ORDER_ENV}={OVERLAP} needs {MODE_ENV}={CHAIN}: in the mode {mode()!r} the upload of the folded head is the wait, and this order does not move it")
     shown = (
         setting(MODE_ENV, f"the head goes public in the mode {mode()!r}"),
         setting(STREAMS_ENV, "the check of the waiting files reads " + ("one file after the other" if streams == SERIAL_STREAMS else f"{streams} files at one time")),
+        setting(WORKERS_ENV, "the check of the waiting files uses " + ("the original serial path" if workers == 1 else f"{workers} isolated processes")),
         setting(ORDER_ENV, "after a king, " + ("only the fold is before the next open (the order 'overlap')" if order == OVERLAP else "each step waits for the one before it (the order 'serial')")),
     )
     sampler = IRTSampler(pool_runtime.active_ids if pool_runtime else pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))

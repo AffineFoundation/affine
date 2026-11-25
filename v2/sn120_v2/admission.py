@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import dataclasses
 import itertools
 import json
 import math
@@ -113,6 +114,23 @@ STREAMS_ENV, SERIAL_STREAMS, MAX_STREAMS = "SN120_CHECK_STREAMS", 1, 32
 # to ``int()``: ``str.isdigit()`` is true for characters that ``int()`` cannot read (a superscript two), and for
 # digits of other scripts that it reads (a full-width eight).
 STREAM_COUNTS = {str(count): count for count in range(SERIAL_STREAMS, MAX_STREAMS + 1)}
+# Optional process isolation and parallel checking of independent files. The
+# default follows the original serial code path exactly. Downloads remain
+# bounded independently by streams; a worker receives at most max_batch_bytes.
+WORKERS_ENV, SERIAL_WORKERS, MAX_WORKERS = "SN120_CHECK_WORKERS", 1, 64
+WORKER_COUNTS = {str(count): count for count in range(SERIAL_WORKERS, MAX_WORKERS + 1)}
+
+
+def check_workers(environ: Mapping[str, str] = os.environ) -> int:
+    """How many waiting files are checked in processes. Not set: serial, exactly as before."""
+    text = environ.get(WORKERS_ENV, "").strip()
+    if not text:
+        return SERIAL_WORKERS
+    if text not in WORKER_COUNTS:
+        raise ConfigError(
+            f"{WORKERS_ENV} must be a whole number from {SERIAL_WORKERS} to {MAX_WORKERS}, written in the digits 0 to 9 with no zero in front (8, not 08)"
+        )
+    return WORKER_COUNTS[text]
 
 
 def check_streams(environ: Mapping[str, str] = os.environ) -> int:
@@ -1051,7 +1069,10 @@ class _Fetched:
     tag: tuple[str, str] | None  # (stored sha256 or "oversized", params hash) at the hash call; None when there is no object
     read: bool = False  # the object was also downloaded, because the memory had no verdict for this tag
     raw: bytes | Invalid | None = None  # with ``read``: the bytes; the verdict of an oversized object; None when the object is gone
+    file_id: str = ""  # sha256 of the downloaded bytes, without retaining them for the parent
     error: BaseException | None = None  # with ``read``: the download failed with this
+    hotkey: str = ""  # the owner, retained when the worker returns without raw bytes
+    needs_check: bool = False  # an expired hold: raw may still need downloading at this file's ordered turn
 
 
 class StoreAdmission:
@@ -1069,9 +1090,11 @@ class StoreAdmission:
     def __init__(
         self, store: ObjectStore, params: Params, *, tokens: Tokens, grader: Grader | None, clock: Callable[[], float] = time.time,
         streams: int = SERIAL_STREAMS, timer: Callable[[], float] = time.monotonic,
+        workers: int = SERIAL_WORKERS, worker: Any = None,
     ) -> None:
         self.store, self.params, self.tokens, self.grader, self.clock = store, params, tokens, grader, clock
         self.streams = max(SERIAL_STREAMS, int(streams))
+        self.workers, self.worker = max(SERIAL_WORKERS, int(workers)), worker
         self.timer = timer  # seconds that only go forward: the time that a second try of the freeze takes
         self._second_used = 0.0  # seconds that the second tries of the freeze have used since the last call of ``verdicts``
         self._seen: dict[str, tuple[tuple[str, str], Verdict]] = {}  # hotkey -> ((sha256 of the checked bytes or "oversized", params hash), verdict)
@@ -1155,6 +1178,162 @@ class StoreAdmission:
             pool.shutdown(wait=True, cancel_futures=True)  # no read of this call goes on after the call ended
 
     def verdicts(self, hotkeys: Sequence[str]) -> Mapping[str, Verdict]:
+        if self.workers <= SERIAL_WORKERS:
+            return self._verdicts_serial(hotkeys)
+        return self._verdicts_parallel(hotkeys)
+
+    def _jobs(self, hotkeys: Sequence[str]) -> Iterator[tuple[str, bytes | None, _Fetched]]:
+        """Read at most one file per stream, as serial does, before its check.
+
+        A held or missing file has no worker input. Its metadata retains the
+        original serial handling, including object removal between the hash
+        and the download.
+        """
+        for hotkey, fetch in self._ahead(hotkeys):
+            try:
+                fetched = dataclasses.replace(fetch(), hotkey=hotkey)
+            except Exception as exc:
+                # As in serial, the size/hash failure reaches the parent at
+                # this hotkey's position, after all earlier file verdicts.
+                yield hotkey, None, _Fetched(None, error=exc, hotkey=hotkey)
+                continue
+            if fetched.tag is None:
+                yield hotkey, None, fetched
+                continue
+            kept, held = self._seen.get(hotkey), self._held.get(hotkey)
+            if kept is not None and kept[0] == fetched.tag:
+                yield hotkey, None, fetched
+                continue
+            if held is not None and held[0] == fetched.tag:
+                # Defer the hold's clock read to _verdicts_parallel. When it
+                # has expired _fetch supplies the bytes for a fresh worker.
+                yield hotkey, None, dataclasses.replace(fetched, needs_check=True)
+                continue
+            raw = fetched.raw
+            if raw is None and not fetched.read:
+                # The hold expired after _fetch looked at its tag. Download
+                # here, never judge these bytes in the parent process.
+                try:
+                    raw = self._raw(layout.miner_object(hotkey))
+                except Exception as exc:
+                    yield hotkey, None, dataclasses.replace(fetched, error=exc)
+                    continue
+            if isinstance(raw, Invalid):
+                yield hotkey, None, dataclasses.replace(fetched, raw=raw)
+            elif raw is not None:
+                fetched = dataclasses.replace(fetched, raw=None, file_id=sha256_hex(bytes(raw)))
+                # _load's size rule is checked again in the worker. Never send
+                # more than the published cap, even for a nonstandard store.
+                if len(raw) > self.params.max_batch_bytes:
+                    yield hotkey, None, dataclasses.replace(fetched, raw=Invalid("size", f"file must be 1..{self.params.max_batch_bytes} bytes"))
+                else:
+                    yield hotkey, raw, fetched
+            else:
+                yield hotkey, None, fetched
+
+    def _deferred(self, fetched: _Fetched) -> tuple[str, bytes | None, _Fetched]:
+        """Download an expired hold at its ordered turn, never judge it here."""
+        hotkey = fetched.hotkey
+        held = self._held.get(hotkey)
+        if held is not None and held[0] == fetched.tag and 0 <= self.clock() - held[2] < FAULT_HOLD_S:
+            return hotkey, None, dataclasses.replace(fetched, needs_check=False)
+        if fetched.error is not None:
+            return hotkey, None, fetched
+        try:
+            raw = fetched.raw if fetched.read else self._raw(layout.miner_object(hotkey))
+        except Exception as exc:
+            return hotkey, None, dataclasses.replace(fetched, error=exc)
+        if isinstance(raw, Invalid):
+            return hotkey, None, dataclasses.replace(fetched, raw=raw, needs_check=False)
+        if raw is None:
+            return hotkey, None, dataclasses.replace(fetched, needs_check=False)
+        fetched = dataclasses.replace(fetched, raw=None, file_id=sha256_hex(bytes(raw)))
+        if len(raw) > self.params.max_batch_bytes:
+            return hotkey, None, dataclasses.replace(fetched, raw=Invalid("size", f"file must be 1..{self.params.max_batch_bytes} bytes"), needs_check=False)
+        return hotkey, raw, fetched
+
+    def _verdicts_parallel(self, hotkeys: Sequence[str]) -> Mapping[str, Verdict]:
+        """The ordered cache/journal view of checks performed by child processes.
+
+        No worker owns a clock, a fault counter, a store or a journal. This
+        parent applies compact verdicts in the same order as the serial path.
+        A crashed worker is an unproven CHECK_FAULT, so it is held for the
+        normal retry hold without ever counting toward FAULT_TRIES.
+        """
+        from .checkpool import InputWorker, judged
+
+        self._second_used = 0.0
+        out: dict[str, Verdict] = {}
+        recipe = self.worker or InputWorker(self.tokens, self.grader)
+        started = self.timer()
+        checked = 0
+        slowest = 0.0
+        try:
+            for fetched, result, took in judged(recipe, self.params, self.workers, self._jobs(hotkeys), timer=self.timer, deferred=self._deferred):
+                hotkey = fetched.hotkey
+                tag = fetched.tag
+                if tag is None and fetched.error is not None:
+                    raise fetched.error
+                if tag is None:
+                    for memory in (self._seen, self._tries, self._held):
+                        memory.pop(hotkey, None)
+                    continue
+                kept, held = self._seen.get(hotkey), self._held.get(hotkey)
+                if held is not None and held[0] == tag and 0 <= self.clock() - held[2] < FAULT_HOLD_S:
+                    kept = held[:2]
+                elif kept is None or kept[0] != tag:
+                    if fetched.error is not None:
+                        raise fetched.error
+                    if result is None:
+                        # No worker was needed: an oversized object or an
+                        # object that vanished before its download.
+                        raw = fetched.raw if fetched.read or isinstance(fetched.raw, Invalid) else self._raw(layout.miner_object(hotkey))
+                        print(f"PARENT {hotkey} needs={fetched.needs_check} read={fetched.read} raw={type(raw).__name__}", file=sys.stderr, flush=True)
+                        found = self._judged(hotkey, raw)
+                        if found is None:
+                            continue
+                        checked += 1
+                        tag = ("oversized" if isinstance(raw, Invalid) else sha256_hex(found[0]), tag[1])
+                        judged_result, final = self._tried(hotkey, tag, found[1])
+                        now = self.clock()
+                        kept = (tag, _verdict(hotkey, found[0], judged_result, int(now)))
+                    else:
+                        checked += 1
+                        tag = ("oversized" if not result.file_id else result.file_id, tag[1])
+                        fault = result.fault
+                        if result.verdict.valid:
+                            judged_result = Batch(result.file_id, 0, result.verdict.format, (), 0, {}, ("format", "tokens", "grader"))
+                        elif fault is not None:
+                            judged_result = Invalid(fault[0], fault[1], proven=fault[2])
+                        else:
+                            judged_result = Invalid(result.verdict.rule, result.verdict.reason)
+                        judged_result, final = self._tried(hotkey, tag, judged_result)
+                        now = self.clock()
+                        shown = dataclasses.replace(
+                            result.verdict,
+                            reason="" if result.verdict.valid else str(judged_result),
+                            checked_at=int(now),
+                            rule="" if result.verdict.valid else judged_result.rule,
+                        )
+                        kept = (tag, shown)
+                    self._seen.pop(hotkey, None)
+                    self._held.pop(hotkey, None)
+                    if final:
+                        self._seen[hotkey] = kept
+                    else:
+                        self._held[hotkey] = (*kept, now)
+                out[hotkey] = kept[1]
+                slowest = max(slowest, took)
+        finally:
+            elapsed = max(0.0, self.timer() - started)
+            print(
+                f"files: parallel check: {checked} files checked, {self.workers} workers, "
+                f"{elapsed:.3f} wall seconds, {slowest:.3f} max seconds for one file",
+                file=sys.stderr, flush=True,
+            )
+        return out
+
+    def _verdicts_serial(self, hotkeys: Sequence[str]) -> Mapping[str, Verdict]:
         """The live check of each hotkey's stored file. A file is checked again only when its bytes or the params change.
 
         A verdict in ``TRANSIENT`` (a grader time limit, or a fault of the grader, the tokenizer or the checker)

@@ -121,6 +121,7 @@ class Line:
     streams: int
     build: type
     pause_s: float = 0.0
+    workers: int = 1
 
     def __post_init__(self) -> None:
         self.store, self.clock = Store(self.pause_s), Ticks()
@@ -128,7 +129,7 @@ class Line:
             raw = stored(KINDS[n % len(KINDS)], hotkey)
             if raw is not None:
                 self.store.put(layout.miner_object(hotkey), raw)
-        self.adm = StoreAdmission(self.store, self.build.params(max_batch_bytes=LIMIT), tokens=WordTokens(), grader=grade, clock=self.clock, streams=self.streams)
+        self.adm = StoreAdmission(self.store, self.build.params(max_batch_bytes=LIMIT), tokens=WordTokens(), grader=grade, clock=self.clock, streams=self.streams, workers=self.workers)
 
     def check(self, hotkeys=HOTKEYS) -> list[tuple[str, bytes]]:
         """The verdicts as the bytes of their records, in the order of the answer."""
@@ -143,8 +144,8 @@ class Line:
         return str(caught.value)
 
 
-def both(build, pause_s: float = 0.0) -> tuple[Line, Line]:
-    return Line(SERIAL_STREAMS, build, pause_s), Line(STREAMS, build, pause_s)
+def both(build, pause_s: float = 0.0, workers: int = 1) -> tuple[Line, Line]:
+    return Line(SERIAL_STREAMS, build, pause_s), Line(STREAMS, build, pause_s, workers)
 
 
 def same(serial: Line, many: Line, got: tuple) -> None:
@@ -154,8 +155,9 @@ def same(serial: Line, many: Line, got: tuple) -> None:
     assert serial.clock.now == many.clock.now, "the clock was read more or less often"
 
 
-def test_the_verdicts_with_many_streams_are_byte_for_byte_the_verdicts_of_one_stream(build):
-    serial, many = lines = both(build)
+@pytest.mark.parametrize("workers", [1, 4], ids=["threads", "processes"])
+def test_the_verdicts_with_many_streams_are_byte_for_byte_the_verdicts_of_one_stream(build, workers):
+    serial, many = lines = both(build, workers=workers)
     first = tuple(line.check() for line in lines)
     same(serial, many, first)
     by_hotkey = dict(first[1])
@@ -187,10 +189,11 @@ def test_the_verdicts_with_many_streams_are_byte_for_byte_the_verdicts_of_one_st
     assert len(serial.store.threads) == 1 and len(many.store.threads) > 1, "one stream calls the store from the caller's thread only"
 
 
+@pytest.mark.parametrize("workers", [1, 4], ids=["threads", "processes"])
 @pytest.mark.parametrize("call, at", [("size", 1), ("sha256", 1), ("size", 2), ("get", 1)])
-def test_a_store_call_that_fails_ends_the_check_as_with_one_stream(build, call, at):
+def test_a_store_call_that_fails_ends_the_check_as_with_one_stream(build, call, at, workers):
     """``at`` is the count of the call for that file: the second size call is the one before the download."""
-    serial, many = lines = both(build)
+    serial, many = lines = both(build, workers=workers)
     broken = layout.miner_object(HOTKEYS[18])  # a valid file in the middle of the line
     for line in lines:
         line.store.fail[(call, broken, at)] = InfraError(f"the store is down at {call}")
@@ -205,8 +208,9 @@ def test_a_store_call_that_fails_ends_the_check_as_with_one_stream(build, call, 
     assert got[0] == got[1] and serial.memory() == many.memory() and HOTKEYS[18] in dict(got[1])
 
 
-def test_a_file_that_goes_away_between_the_hash_and_the_download_has_no_verdict_as_with_one_stream(build):
-    serial, many = lines = both(build)
+@pytest.mark.parametrize("workers", [1, 4], ids=["threads", "processes"])
+def test_a_file_that_goes_away_between_the_hash_and_the_download_has_no_verdict_as_with_one_stream(build, workers):
+    serial, many = lines = both(build, workers=workers)
     gone = layout.miner_object(HOTKEYS[18])
     for line in lines:
         line.store.fail[("get", gone)] = KeyError(gone)
@@ -217,7 +221,7 @@ def test_a_file_that_goes_away_between_the_hash_and_the_download_has_no_verdict_
 
 def test_a_failed_download_is_no_error_when_the_check_does_not_need_it(build):
     """A hotkey that is named two times: the read ahead of its second place may download the file, and the check then has the verdict already."""
-    many = Line(STREAMS, build)
+    many = Line(STREAMS, build, workers=4)
     many.store.fail[("get", layout.miner_object(HOTKEYS[0]), 2)] = InfraError("the second download fails")
     got = many.check([HOTKEYS[0]] + HOTKEYS[6:12] + [HOTKEYS[0]])
     serial = Line(SERIAL_STREAMS, build)
