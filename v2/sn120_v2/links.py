@@ -43,7 +43,7 @@ a timer for the job.
 Commands:
 ``issue``     the operator's job: write the link files (see ``--help``)
 ``activate``  the miner's one-time chain write (dry run without ``--execute``)
-``open``      the miner opens its link and prints the upload address
+``open``      the miner opens its link and prints the upload address (also ``open_link``)
 """
 
 from __future__ import annotations
@@ -320,8 +320,7 @@ def link_files(
             continue  # not an Ed25519 hotkey: nobody could open a link sealed to it, so it gets none
         files[f"{LINKS_DIR}{hotkey}.json"] = as_json(outer)
     names = sorted(Path(name).stem for name in files)
-    local = time.strftime("%Y-%m-%d %H:%M:%S CR (UTC-6)", time.gmtime(now - 6 * 3600))
-    index = {"issued_at_cr": local, "hotkeys": names, "reissue_every_seconds": reissue_s, "link_file": link_file}
+    index = {"hotkeys": names, "reissue_every_seconds": reissue_s, "link_file": link_file}
     files[INDEX] = as_json(stamp | index)
     return files
 
@@ -512,7 +511,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     act.add_argument("--execute", action="store_true", help="write the activation to the chain; without it, only print it")
     act.set_defaults(run=_activate)
 
-    opened = commands.add_parser("open", help="miner: open your link and print the upload address (a secret: do not share it)")
+    open_help = (
+        "miner: open your link and print the upload address (a secret: do not share it); "
+        "open_link is an alias, also the name of the Python function that opens the sealed link"
+    )
+    opened = commands.add_parser("open", aliases=["open_link"], help=open_help, description=open_help)
     opened.add_argument("--hotkey", required=True, help="your hotkey, as an SS58 address")
     opened.add_argument("--key", required=True, help="a file with the hotkey's Ed25519 seed (64 hex characters), or the bittensor hotkey file")
     opened.add_argument("--links-url", default="", help="the public address of the link files, as llms.txt gives it")

@@ -47,7 +47,7 @@ from .journal import JOURNAL_FILE, Journal, pull
 from .judging import check_result, decide, duplicate_decision, legacy_parent_one_sample, score_confirmation
 from .params import GenesisSpec, Params
 from .payout import payees
-from .public import public_text, round_report, snapshot
+from .public import public_text, round_report, snapshot, winner_stats
 from .queue import SyncPlan, plan_sync, select_round, split_among_boxes, squat_trim, waiting
 from .sampling import make_round_seed, train_seed
 from .seams import Admission, Folder, ObjectStore, Publisher, RoundRunner, TaskSampler
@@ -164,9 +164,13 @@ class Stack:
     entropy_now: Callable[[], str] | None = None  # the hash of the newest block, in one read: the round's entropy with ``overlap``
 
 
-def public_snapshot(head: HeadPublish, state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None, checked_at: int | None = None) -> dict[str, Any]:
-    """The public snapshot. In chain mode the chain file is written first, and the snapshot shows its newest part."""
-    shown = snapshot(state, params, now, verdicts, checked_at)
+def public_snapshot(head: HeadPublish, state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None,
+                    checked_at: int | None = None, chain: ChainSnapshot | None = None) -> dict[str, Any]:
+    """The public snapshot. ``chain`` is an existing validated read; no chain I/O or journal lock happens here."""
+    shown = snapshot(state, params, now, verdicts, checked_at, chain)
+    # In-memory input for StorePublisher, removed before mining.json is rendered. It carries only the crowned
+    # winner's already-public facts, never a private lease or batch location. No State reaches the publisher.
+    shown["winner_stats"] = winner_stats(state, now)
     if head.chain is not None and state.heads:
         shown["head_chain"] = head.chain(state)
     return shown
@@ -233,6 +237,7 @@ class Controller:
         self._retry_at = 0
         self._verdicts: dict[str, Verdict] = {}  # admission's last check of the waiting files, for the public snapshot
         self._verdicts_at: int | None = None
+        self._registrations: ChainSnapshot | None = None  # latest already-read chain view, for pending rows only
         self._file_notes: dict[str, str] = {}  # what the log last said of each seat's file, by hotkey; this process only
         self._published: object = None  # what the last snapshot showed of the queue and its files
         self._published_at: int | None = None  # how many records the journal had at the last snapshot that reached the store
@@ -358,6 +363,9 @@ class Controller:
         """Bring the queue in line with the chain. A suspicious read is refused unless ``force``."""
         state = self.state
         plan = plan_sync(state.queue, state.served_regs, state.served_hotkeys, chain, self.params.netuid, self.params.burn_uid, force=force)
+        # No new chain read, second queue, or extra publication. The normal publish cadence uses this
+        # already-validated snapshot; registrations seated by this sync are waiting, not pending.
+        self._registrations = chain
         if not plan.empty:
             data = {
                 "block": chain.block,
@@ -1136,14 +1144,14 @@ class Controller:
     def _shown(self) -> object:
         """What a snapshot shows of the queue and its files. A change here is a reason to publish between rounds."""
         seats = [(seat.reg.key, seat.front, seat.demoted, seat.held) for seat in waiting(self.state.queue)]
-        return seats, {hotkey: (verdict.valid, verdict.batch_sha256) for hotkey, verdict in self._verdicts.items()}
+        return seats, {hotkey: (verdict.valid, verdict.batch_sha256, verdict.checked_at) for hotkey, verdict in self._verdicts.items()}, self._registrations
 
     def _publish(self, now: int) -> None:
         if self.publisher is None:
             return
         shown, records = self._shown(), len(self.journal.records)
         try:
-            self.publisher.publish(public_snapshot(self.head, self.state, self.params, now, self._verdicts, self._verdicts_at))
+            self.publisher.publish(public_snapshot(self.head, self.state, self.params, now, self._verdicts, self._verdicts_at, self._registrations))
             self._published, self._published_at = shown, records
         except InfraError as exc:
             self.last_error = f"publish failed: {exc}"

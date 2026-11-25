@@ -175,6 +175,10 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"A new file is written every {publisher.show(upload['reissue_every_seconds'] / 60)} minutes",
         f"Each link works for {publisher.show(upload['link_ttl_seconds'] / 3600)} hours",
         f"a text of more than {public.TEXT_LIMIT} characters",
+        f"this {public.QUEUE_PREVIEW}-row preview, and `queue.next` is its first {public.QUEUE_PREVIEW} rows.",
+        "Otherwise `batch_sha256` is the 64-lowercase-hex",  # a SHA256 digest is always 64 hex characters
+        f"- `{layout.WINNER_STATS}` is `{public.WINNER_STATS_SCHEMA}`: integer Unix UTC `generated_at` and a newest-first",
+        f"`winners` list covering the same last {public.HISTORY_PREVIEW} closed rounds as `mining.json` (not an all-time archive). Each row",
         f"the first {sampling.SEED_BITS} bits of sha256",
         publisher.OPTIMIZER,  # typed in the publisher; a test below compares it with the training job
         publisher.GRADER_VERSION,  # the same, with the grader
@@ -278,6 +282,9 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     missing = [phrase for phrase in phrases if phrase not in text]
     assert not missing, f"fixed_phrases names a phrase that the text does not hold: {missing}"
     spans = [found.span() for phrase in phrases for found in re.finditer(re.escape(phrase), text)]
+    # The changelog is a dated history, not a statement of current numeric parameters.
+    # Its activation numbers must not change with a simulation's current Params.
+    spans += [match.span() for line in publisher.RULE_CHANGELOG for match in re.finditer(re.escape(line), text)]
     spans += [found.span() for pattern in (SECTION, re.compile(r"## \d+\. ")) for found in pattern.finditer(text)]
     typed = [f"...{text[max(0, at - 70) : at]}>>{text[at : at + 30]}..." for at in digits if not any(low <= at < high for low, high in spans)]
     assert not typed, "a number in llms.txt that no parameter and no named constant gives:\n" + "\n".join(typed)
@@ -338,9 +345,20 @@ def test_llms_txt_is_the_same_text_from_the_snapshot_and_from_the_mining_json_th
         phases.add(snap["phase"])
     assert phases >= {"IDLE", "RUNNING"} and snap["kings"] and snap["queue"]["next"]
     text = llms.decode()
-    assert "| position | uid | hotkey | registration_block | file_valid | front | demoted | held |" in text  # the order of public.snapshot
+    assert "| " + " | ".join(publisher.QUEUE_COLUMNS) + " |" in text  # the order of public.snapshot
     assert "| uid | hotkey | round_id | head_version_id | applied_at | z |" in text
     assert tuple(snap["queue"]["next"][0]) == publisher.QUEUE_COLUMNS and tuple(snap["kings"][0]) == publisher.KING_COLUMNS
+    changelog = """## Rule changelog
+
+Date (UTC) / field / old → new. Dates identify shipped commits; the parameter table is the current contract.
+- 2026-11-24 / `min_kl_seq` + `min_kl_tok` / `min_kl_seq=10` → `min_kl_seq=0`, `min_kl_tok=0.0014` nats per token.
+- 2026-11-24 / `z_bar` + paired next-round confirmation / no z bar → crown and paid confirmation both require strict `z > 1`.
+- 2026-11-24 / squat trim / queue-rate-stretched wait → flat 6h cap (`squat_min_wait_s=10800`, `squat_age_factor=2`), retaining the zero-turn guard.
+- 2026-11-24 / confirming-round king + old-parent samples / inherited `1` → matched `2` per task (`null_samples_per_task=2`).
+"""
+    assert "\n".join(publisher.reflow(changelog.splitlines())) + "\n" in text
+    assert text.count("- 2026-11-24 /") == 4 and "UTC-6" not in text
+    assert "min_kl_seq=10" in text and "squat_min_wait_s=10800" in text and "old-parent samples / inherited `1`" in text
     running = next(snap for snap in world.publisher.snapshots if snap["phase"] == "RUNNING")
     assert [key for key, value in running["round"].items() if not isinstance(value, (dict, list))] == list(publisher.ROUND_FIELDS[:12])
     assert publisher.in_order({"z": 1, "uid": 2, "a": 3}, publisher.KING_COLUMNS) == ["uid", "z", "a"]

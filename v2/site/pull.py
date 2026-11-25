@@ -26,7 +26,8 @@ One run does this, in this order:
 
 1. Copies ``public/mining.json`` and ``public/llms.txt`` to the path of their
    key, and also to ``mining.json`` and ``llms.txt`` at the root of the site.
-   The two files are taken only as a pair of the same snapshot.
+   The two files are taken only as a pair of the same snapshot. The crowned-only
+   ``public/winner-stats.json`` is then checked against that snapshot and copied.
 2. Copies the head pointer (``layout.CURRENT``), and writes ``LINKS``: signed
    read links for the weight files of the current head, with the expiry time
    and the sha256 and size of each file. Weight files are never copied.
@@ -73,6 +74,8 @@ from sn120_v2 import layout
 from sn120_v2.errors import ContractError, V2Error
 from sn120_v2.headchain import chain_links, check_chain, heads_of
 from sn120_v2.r2 import MAX_PRESIGN_S, R2Store
+from sn120_v2.public import validate_winner_stats, winner_stats_from_snapshot
+from sn120_v2.publisher import refuse_private
 from sn120_v2.r2_names import store_env
 from sn120_v2.types import HeadManifest
 
@@ -91,7 +94,7 @@ ROLLOUT_INDEX = layout.ROLLOUT_INDEX  # the one adoptable hand-written path
 BACKFILL_INDEX = "public/rollouts/backfill_index.json"  # never read from the store, never owned
 ROLLOUT_INDEX_SCHEMA = "sn120-v2-rollouts-index-2"
 ROUND_FILES = (layout.round_file, layout.round_scores, layout.winner_batch)
-FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN,
+FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.WINNER_STATS, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN,
          layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS, layout.POOL_SUMMARY)
 RECHECK_ROUNDS = 2  # the newest round files are read again: a restart of the controller may write one twice
 PAIR_TRIES, PAIR_WAIT_S = 3, 1.0
@@ -174,8 +177,9 @@ class Pull:
     """One run. ``store`` is any ``ObjectStore`` that can also sign read links (``Presigner``)."""
 
     def __init__(self, store: Any, site: Path, now: int, keep_rounds: int = 200, max_bytes: int = 128 << 20,
-                 max_rollout_bytes: int = 512 << 20, keep_rollout_rounds: int = 0) -> None:
+                 max_rollout_bytes: int = 512 << 20, keep_rollout_rounds: int = 0, public_url: str = "") -> None:
         self.store, self.site, self.now, self.keep, self.max_bytes = store, site, now, keep_rounds, max_bytes
+        self.public_url = public_url.rstrip("/")
         self.max_rollout_bytes, self.keep_rollout_rounds = max_rollout_bytes, keep_rollout_rounds
         self.owned = self._load_index()
         self.saved = set(self.owned)
@@ -312,6 +316,21 @@ class Pull:
         for name, data in (("mining.json", mining), ("llms.txt", llms)):
             self.put(ROOT_COPIES[name], data)
             build.write(self.site / name, data)
+
+    def winner_stats(self) -> None:
+        """Crowned-only history, checked before its first mirror. A legacy store gets the safe public projection."""
+        mining = json.loads((self.site / layout.MINING_JSON).read_bytes())
+        try:
+            data = self.store.get(layout.WINNER_STATS)
+        except KeyError:
+            # An older publisher has no separate file yet. Do not stall its public site; never
+            # invent batch counts or train knobs which are absent from the public snapshot.
+            data = json.dumps(winner_stats_from_snapshot(mining, self.public_url)).encode()
+        else:
+            checked = json.loads(data)
+            validate_winner_stats(mining, checked, self.public_url)
+            refuse_private(checked, "winner-stats")
+        self.put(layout.WINNER_STATS, data)
 
     def head(self, ttl_s: int) -> None:
         """The head pointer, and the signed read links for the weight files of that head."""
@@ -621,9 +640,10 @@ def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, m
         ready()
         build.build_static(site, link)
 
-    pull = Pull(store, site, now, keep_rounds, max_bytes, max_rollout_bytes, keep_rollout_rounds)
+    pull = Pull(store, site, now, keep_rounds, max_bytes, max_rollout_bytes, keep_rollout_rounds, public_url)
     pull.step("clean", pull.clean)
     pull.step("llms.txt and mining.json", pull.contract)
+    pull.step("winner stats", pull.winner_stats)
     pull.step("head and read links", lambda: pull.head(ttl_s))
     pull.step("heads", pull.heads)
     pull.step("rounds", pull.rounds)

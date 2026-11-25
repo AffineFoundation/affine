@@ -122,6 +122,16 @@ def chain_with(monkeypatch, rows=None, error=None):
     monkeypatch.setattr(links.SubtensorClient, "connect", classmethod(lambda cls, netuid, network: client))
 
 
+def test_open_link_alias_is_explained_in_help(capsys):
+    for args in (["--help"], ["open_link", "--help"]):
+        with pytest.raises(SystemExit) as caught:
+            links.main(args)
+        assert caught.value.code == 0
+        printed = capsys.readouterr()
+        assert printed.err == "" and "open_link" in printed.out
+        assert "alias" in printed.out and "Python function" in printed.out
+
+
 def test_a_miner_gets_its_link_from_the_site_and_uploads_its_batch(bucket, queue, site, tmp_path, monkeypatch, capsys):
     root, address = site
     chain_with(monkeypatch, rows=[(A.hotkey, [("a\x02" + A.activation(), 1)]), (B.hotkey, [('{"model": "x"}', 1)])])
@@ -130,7 +140,11 @@ def test_a_miner_gets_its_link_from_the_site_and_uploads_its_batch(bucket, queue
     assert "issued 1 of 2 waiting hotkeys (not activated 1, not Ed25519 0), removed 0" in printed.out
     assert "X-Amz" not in printed.out + printed.err and "http" not in printed.out  # the job never prints an address
     assert sorted(path.name for path in (root / "ff" / "links").iterdir()) == [f"{A.hotkey}.json"]  # B is not activated
-    assert json.loads((root / "ff" / "links.json").read_text())["hotkeys"] == [A.hotkey]
+    index = json.loads((root / "ff" / "links.json").read_text())
+    assert index["hotkeys"] == [A.hotkey]
+    assert set(index) == {"version", "issued_at", "expires_at", "hotkeys", "reissue_every_seconds", "link_file"}
+    assert all(type(index[key]) is int for key in ("issued_at", "expires_at"))  # Unix seconds, UTC; no location-bearing stamp
+    assert "issued_at_cr" not in index and "CR (UTC-6)" not in (root / "ff" / "links.json").read_text()
 
     assert links.main(["open", "--hotkey", A.hotkey, "--key", seed_file(tmp_path, A), "--links-url", address, "--json"]) == 0
     link = json.loads(capsys.readouterr().out)
@@ -145,8 +159,8 @@ def test_a_miner_gets_its_link_from_the_site_and_uploads_its_batch(bucket, queue
     assert "X-Amz-SignedHeaders=content-type%3Bhost" in link["put_url"] and f"/{key}?" in link["put_url"]
     assert bucket.keys() == [key]
 
-    assert links.main(["open", "--hotkey", A.hotkey, "--key", seed_file(tmp_path, A), "--links-url", address]) == 0
-    assert capsys.readouterr().out.strip() == link["put_url"]  # by default: only the upload address
+    assert links.main(["open_link", "--hotkey", A.hotkey, "--key", seed_file(tmp_path, A), "--links-url", address]) == 0
+    assert capsys.readouterr().out.strip() == link["put_url"]  # argparse alias: same real HTTP open, same Python function name
     assert links.main(["open", "--hotkey", B.hotkey, "--key", seed_file(tmp_path, B), "--links-url", address]) == 1
     assert "no link for this hotkey" in capsys.readouterr().err
 
