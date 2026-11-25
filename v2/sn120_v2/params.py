@@ -57,8 +57,11 @@ class MinerBound(Record):
     """One recipe field that a miner may set under ``train`` in the batch file.
 
     A number must be inside [``low``, ``high``], both ends included. A list
-    must be a non-empty subset of ``choices``. ``decided`` is False while the
-    bound is a placeholder that waits for a decision.
+    must be a non-empty subset of ``choices``. ``decided`` means the bound is
+    frozen into ``recipe_id``; it does not lock the recipe field's value. A
+    miner may set that value anywhere inside the published range. False means
+    the bound itself is not frozen into ``recipe_id``; the value is still
+    miner-settable in range.
     """
 
     key: str  # the recipe field, and the key under "train"

@@ -88,6 +88,14 @@ REBUILD_COST = (
     "time of one weight shape). `--device cuda:0` runs the product on a GPU; that time is not measured."
 )
 LORA_TABLE = "<batches of the round>"  # what llms.txt prints for --max-loras
+# Worked arithmetic for the train-cost rule, not a per-installation contract value.
+# The current contract's cap and the bounds table remain the authority for a miner.
+TRAIN_COST_EXAMPLE = (
+    "Worked example of the live cap 22,130,000: with steps=16 the token budget is 1,383,125 (integer floor). "
+    "Official check --tokenizer rejects a large/long mixed-reward batch whose steps × kept trained tokens exceeds "
+    "that cap, even if the same file would pass at default steps=1. Do not add long rollouts for KL margin without "
+    "rechecking train_cost with your chosen steps."
+)
 LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt does not print: the local address of the box
 # Two texts of modules that the publisher may not import: the training job needs torch and the grader needs sympy,
 # and the publisher runs with the standard library alone. Each is typed here; a test compares it with its source.
@@ -443,6 +451,10 @@ def _recipe_lines(params: Params) -> list[str]:
         "",
         "- These are the bounds for launch. The bounds are part of the recipe: a change of a bound gives a new",
         "  `recipe_id`.",
+        "- `decided` means the bound is frozen into `recipe_id`, not that you cannot set the value. You may still set",
+        "  `minibatches`, `rank`, `global_norm_cap` and every other field anywhere in its published range above. These",
+        "  bounds, not the decided flag alone, are the authority. A bound not yet frozen still leaves the value yours",
+        "  to set in range.",
         "- Every key is optional. A key that you do not set keeps its default.",
         "- Values are never clamped. A value outside its bound, a value of the wrong type, or any other key under",
         "  `train` makes the whole file invalid.",
@@ -944,7 +956,8 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  prompt tokens plus its output tokens. room = min({recipe.train_max_output_tokens},",
         f"  {recipe.train_max_context_tokens} - prompt tokens). An output shorter than the room counts its tokens + 1",
         "  (the end-of-turn token). An output as long as the room or longer counts the room. A rollout with advantage",
-        "  0 counts 0.",
+        "  0 counts 0. Thus `max_train_token_steps = steps x tokens`, summed over the kept training rows.",
+        *textwrap.wrap("- " + TRAIN_COST_EXAMPLE, width=118, subsequent_indent="  "),
         *cost_cap,
         f"- Two limits keep the training of a round short: the training time of the round ({show(params.train_time_budget_s / 60)} minutes for",
         f"  all batches, section 3) and this cost cap for one file ({f'{show(params.max_train_token_steps)} token-steps' if params.max_train_token_steps > 0 else 'no cap now'}).",
@@ -1583,15 +1596,37 @@ def _replicate_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"is not the box. The document of the tool is `{REPLICATE_DOC}` in the code: {REPO}/blob/v2/{REPLICATE_DOC}. It has",
         "every argument, the fields of the report, and the complete list of what differs from the box.",
         "",
-        "- Install, in `v2/` of a copy of the code (section 2): `uv pip install -e \".[gpu,envs,miner]\"`. The",
-        "  document has the complete steps. Run each command below in `v2/`. N is the number of your GPUs.",
+        "- Fresh clone, from the repository root: `git clone https://github.com/AffineFoundation/affine`, then",
+        "  `cd affine && git checkout v2`. In a clean Python 3.12 venv, `python -m pip install -e './v2[gpu,envs,r2]'`.",
+        "  Run each command below at that repository root; the editable install makes `sn120_v2` importable. If an old",
+        "  torch pin conflicts, use a clean venv: `vllm==0.32.0` requires torch 2.13. No secrets are needed for these",
+        "  public reads. N is the number of your GPUs.",
         f"- `{tool} compare --mining-json {mining} --gpus <N>` prints what differs between your machine and the box.",
         "  It starts nothing and needs no GPU.",
         f"- `{tool} fetch --mining-json {mining} --work <directory>` gets the base files of head M through the signed",
-        "  links of section 1 and checks each file against the head manifest.",
+        "  links of section 1 and checks each file against the head manifest. With `eval_merged=true`, it also downloads",
+        "  and verifies the real fp32 king master, tens of GB, from `master` / `master_files`. Both sets are staged and",
+        "  renamed into cache only when complete. A later fetch retains correct files. The report gives base and master",
+        "  digests, directories, file counts and bytes. `--master-from <directory>` can supply the master with `--from`;",
+        "  it is never replaced by an upcast bf16 base. The master is optional only when `eval_merged=false`.",
+        f"- `python v2/miner/affine_miner.py check --mining-json {mining} --hotkey <ss58> --tokenizer <directory>/cache",
+        "  --grade batch.json` checks your actual file and its token/reward rules before upload.",
         f"- `{tool} run --mining-json {mining} --hotkey <ss58> --work <directory> --gpus <N> batch.json` checks the",
-        "  file, trains, scores and judges. It prints one report. With no other argument it takes the seed and the",
-        "  draw of the open round, or of the last closed round when none is open.",
+        "  file, trains, scores and judges. For merged evaluation it verifies the master before training, uses `SoloRunner`",
+        "  to build the fp32-master + LoRA candidate, scores it against null M, then runs the official `gpu/kl.py` path.",
+        "  A missing or corrupt master fails before training. A prod-like measurement uses up to `kl_rollouts` (default",
+        "  128) of the entry's scored, non-error sample-0 rollouts, at most the first `kl_max_tokens` (currently 8192)",
+        f"  completion tokens, and compares mean `kl_seq` with `params.min_kl_seq` (currently {params.min_kl_seq:g}).",
+        "  The report gives `kl_seq`, `kl_seq_se`, `kl_k`, `kl_tokens`, the floor and pass/fail in `kl_gate`, cap-hit",
+        "  details in `cap_hit`, and the one-batch result in `win_vs_null`. Add `--first-tasks <N>` for a one-GPU smoke",
+        "  test; fewer than `min_scored_tasks` cannot produce a winner. With no round argument it uses the open round,",
+        "  or the last closed round when none is open. There is no separate `replicate kl` subcommand.",
+        "- **The file check does NOT train and does NOT measure `kl_seq`; a passing file check is NOT a passing KL",
+        "  gate.** Use `replicate run` above for the trained merged candidate and full live gate. The official floor",
+        "  is `params.min_kl_seq`, not a fixed number in the miner tool.",
+        "- **Training cost:** `max_train_token_steps = steps x tokens`, summed over kept training rows; minibatches do",
+        "  NOT multiply it. Worked example: cap 22,130,000 with steps=16 gives 1,383,125 tokens (integer floor). A bound's",
+        "  `decided` flag freezes the bound into `recipe_id`; you may still choose its value within the published range.",
         "- What differs from the box. The report of `run` names each difference under `differences`. Your install:",
         "  the list of the packages of the box, with their versions, is not published, so in practice your install has",
         "  another digest than the pinned one, and its versions of torch and vLLM can differ. The number of GPUs, when it is not",
@@ -1629,8 +1664,8 @@ def _weight_lines(doc: Mapping[str, Any], where: str) -> list[str]:
             "- Weight files are not served under the public address. Signed download links for the files of the current",
             f"  head (the base, the stacked LoRAs and the fp32 master) are in {where}/{READ_LINKS}. Each link works until",
             "  `expires_at`; fetch the file again for new links. Check each file against its `sha256` and `size`.",
-            "  `head_version_id` in that file names the head of the links. To mine you need the `base` and the `loras`.",
-            "  You do not need the `master`: it is only for a check of a fold.",
+            "  `head_version_id` in that file names the head of the links. Ordinary mining/sampling needs the `base` and the",
+            "  `loras`; local `replicate run` with `eval_merged=true` also requires the real fp32 `master` (section 10).",
         ]
     start, steps = chain["start"], chain["steps"]
     kernels = ", ".join(f"`{kernel}`" for kernel in sorted({str(step["kernel"]) for step in steps}))
