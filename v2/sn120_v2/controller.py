@@ -1153,8 +1153,9 @@ class Controller:
         try:
             self.publisher.publish(public_snapshot(self.head, self.state, self.params, now, self._verdicts, self._verdicts_at, self._registrations))
             self._published, self._published_at = shown, records
-        except InfraError as exc:
+        except Exception as exc:
             self.last_error = f"publish failed: {exc}"
+            print(f"publish: {self.last_error}", file=sys.stderr, flush=True)
 
     def publish(self, now: int, check_files: bool = False, only_changes: bool = False) -> bool:
         """Publish the public snapshot outside a round's own steps. Returns True when it published.

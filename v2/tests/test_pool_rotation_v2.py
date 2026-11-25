@@ -282,6 +282,63 @@ def test_mining_snapshot_repairs_only_missing_active_bytes_and_fails_closed(tmp_
             verify_public_pool_snapshot(broken, snap)
 
 
+def test_mining_snapshot_compares_reserve_shards_without_the_withdrawn_pointer(tmp_path):
+    def manifest_bytes(shards, withdrawn=()):
+        raw = b"".join(canonical_json(row) + b"\n" for row in withdrawn)
+        rows = [*shards, {"withdrawn": {"sha256": sha256_hex(raw), "count": len(withdrawn)}}]
+        return b"".join(canonical_json(row) + b"\n" for row in rows)
+
+    shard_rows = [
+        {"shard": f"{i:04d}-test.jsonl", "sha256": sha256_hex(f"shard {i}".encode()), "count": 1, "added_at": "2026-11-19"}
+        for i in range(2)
+    ]
+    withdrawn_rows = [{"id": "old:0", "reason": "bad", "added_at": "2026-11-19"}]
+    manifest = manifest_bytes(shard_rows)
+    old_manifest = manifest_bytes(shard_rows[:1])
+    active = {"a:0": [0.0, 0.25, 4]}
+    decision = rotate_info("r000071", active, snapshot(active), {}, reserve(), info_params(rotation_active_size=1))
+    current = Rotation.from_dict(decision.to_dict() | {
+        "reserve_manifest_sha": sha256_hex(manifest), "opened_at": 71,
+        "reserve_history": {"shards": shard_rows, "withdrawn": []},
+    })
+    older = Rotation.from_dict(decision.to_dict() | {
+        "round_id": "r000070", "reserve_manifest_sha": sha256_hex(old_manifest), "opened_at": 70,
+        "reserve_history": {"shards": shard_rows[:1], "withdrawn": []},
+    })
+    store = LocalStore(tmp_path)
+    for row in shard_rows:
+        store.put(layout.reserve_shard(row["shard"], row["sha256"]), f"shard {shard_rows.index(row)}".encode())
+    for rotation in (older, current):
+        store.put(layout.pool_rotation(rotation.round_id), rotation.to_json())
+    store.put(layout.active_pool(current.active_sha), canonical_json(list(current.active_ids)))
+    store.put(layout.RESERVE_MANIFEST, manifest)
+    store.put(layout.RESERVE_WITHDRAWN, b"")
+    snap = {
+        "round": {"round_id": current.round_id, "pool": current.pool_block()},
+        "history": [{"round_id": older.round_id, "pool": older.pool_block()}],
+    }
+
+    # The old pointer follows its first shard; the new second shard is inserted before the new pointer.
+    verify_public_pool_snapshot(store, snap)
+
+    changed = dict(shard_rows[0], sha256=sha256_hex(b"changed"))
+    store.put(layout.RESERVE_MANIFEST, manifest_bytes([changed, shard_rows[1]]))
+    with pytest.raises(VerifyError, match="does not extend a referenced rotation"):
+        verify_public_pool_snapshot(store, snap)
+
+    # Withdrawal history must also remain append-only when the shard prefix is intact.
+    old_withdrawn = manifest_bytes(shard_rows[:1], withdrawn_rows)
+    older = Rotation.from_dict(older.to_dict() | {
+        "reserve_manifest_sha": sha256_hex(old_withdrawn),
+        "reserve_history": {"shards": shard_rows[:1], "withdrawn": withdrawn_rows},
+    })
+    store.put(layout.pool_rotation(older.round_id), older.to_json())
+    store.put(layout.RESERVE_MANIFEST, manifest)
+    snap["history"] = [{"round_id": older.round_id, "pool": older.pool_block()}]
+    with pytest.raises(VerifyError, match="does not extend a referenced rotation"):
+        verify_public_pool_snapshot(store, snap)
+
+
 def test_churn_max_and_empty_outside_are_safe():
     active = {f"a:{i}": [0.0, 0.25, 4] for i in range(4)}
     empty = rotate_info("r000070", active, snapshot(active), {}, reserve(), info_params(rotation_active_size=4))
