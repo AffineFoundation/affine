@@ -375,6 +375,52 @@ class ParentEval(Record):
 
 
 @dataclass(frozen=True)
+class ConfirmationCorrection(Record):
+    """An operator-approved offline re-check of one infrastructure-only confirmation failure.
+
+    ``pending`` and ``king`` keep the original crown and install identities.
+    ``original`` is never replaced. The verdict is a normal ``Confirmation``
+    with its paired outcome strings added: the journal retains those strings
+    and the raw verdict and evidence bundle hashes, not private model files.
+    Durable ``git_HEAD`` and ``new_outcomes`` are normalized from the real
+    offline verdict's lowercase ``git_head`` and ``null_outcomes`` fields.
+    """
+
+    pending: PendingKing
+    king: King
+    confirmation_round_id: str
+    original: Confirmation
+    verdict: Confirmation
+    new_outcomes: tuple[str, ...]
+    parent_outcomes: tuple[str, ...]
+    original_new_outcomes: tuple[str, ...]
+    original_parent_outcomes: tuple[str, ...]
+    original_result_sha256: str
+    draw: Draw
+    original_params: Params
+    draw_sha256: str
+    verdict_sha256: str
+    bundle_sha256: str
+    code_digest: str
+    git_HEAD: str
+    approved_by: str
+
+    def __post_init__(self) -> None:
+        _need(self.confirmation_round_id != self.pending.crown_round_id, "a correction needs a later confirmation round")
+        _need(self.original_params.confirm_next_round, "the original confirmation round must pin paired confirmation")
+        _need(not self.original.confirmed and self.original.reason.startswith("no_decision"), "only an unpaid no_decision can be corrected")
+        _need(self.verdict.confirmed, "a correction needs a confirmed offline verdict")
+        _need(is_sha256(self.draw_sha256) and is_sha256(self.verdict_sha256) and is_sha256(self.bundle_sha256) and is_sha256(self.original_result_sha256), "correction evidence hashes must be sha256")
+        _need(is_sha256(self.code_digest), "correction code_digest must be sha256")
+        _need(len(self.git_HEAD) == 40 and set(self.git_HEAD) <= set("0123456789abcdef"), "correction git_HEAD must be a lowercase commit id")
+        _need(bool(self.approved_by.strip()), "a correction needs a non-empty approved_by")
+        _need(self.pending.new_version_id == self.king.head_version_id and self.pending.uid == self.king.uid and self.pending.hotkey == self.king.hotkey,
+              "correction king does not match the pending crown")
+        _need(self.pending.crown_round_id == self.king.round_id and self.pending.applied_at == self.king.applied_at,
+              "correction king does not preserve the crown round and install time")
+
+
+@dataclass(frozen=True)
 class Confirmation(Record):
     """Public, fresh matched-sample comparison of the installed new head and its old parent."""
 

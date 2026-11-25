@@ -8,6 +8,7 @@ winner's LoRA and training batch are public.
 
 from __future__ import annotations
 
+import datetime
 import ipaddress
 import os
 import re
@@ -18,7 +19,7 @@ from .params import Params
 from .payout import paid_set, payees
 from .queue import waiting
 from .state import RoundRecord, State
-from .types import KL_FIELDS, NOT_SCORED, NOT_TRAINED, WINNER, BoxResult, EntryDecision, QueueEntry, RoundTicket, Verdict
+from .types import KL_FIELDS, NOT_SCORED, NOT_TRAINED, WINNER, BoxResult, ConfirmationCorrection, EntryDecision, QueueEntry, RoundTicket, Verdict
 
 SCHEMA = "sn120-v2-public-1"
 QUEUE_PREVIEW = 50
@@ -119,7 +120,42 @@ def confirmation_view(confirmation: Any) -> dict[str, Any]:
     }
 
 
-def round_view(record: RoundRecord) -> dict[str, Any]:
+def correction_view(correction: ConfirmationCorrection, corrected_at: int) -> dict[str, Any]:
+    """The separate, additive record of an approved payment correction."""
+    verdict = correction.verdict
+    return {
+        "crown_round_id": correction.pending.crown_round_id,
+        "confirmation_round_id": correction.confirmation_round_id,
+        "uid": correction.pending.uid,
+        "hotkey": correction.pending.hotkey,
+        "new_version_id": correction.pending.new_version_id,
+        "parent_version_id": correction.pending.parent_version_id,
+        "delta": verdict.delta, "se": verdict.se, "z": verdict.z, "n_tasks": verdict.n_tasks,
+        "confirmed": True, "paid": True, "payout_status": "paid",
+        "reason": "offline re-check after infra no_decision",
+        "corrected_at": corrected_at,
+        "corrected_at_utc": datetime.datetime.fromtimestamp(corrected_at, datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "original_confirmation": confirmation_view(correction.original),
+        "verdict_sha256": correction.verdict_sha256,
+        "bundle_sha256": correction.bundle_sha256,
+        "draw_sha256": correction.draw_sha256,
+        "original_result_sha256": correction.original_result_sha256,
+        "code_digest": correction.code_digest,
+        "git_HEAD": correction.git_HEAD,
+        "approved_by": public_text(correction.approved_by),
+    }
+
+
+def correction_for(state: State, record: RoundRecord) -> ConfirmationCorrection | None:
+    if record.confirmation is None:
+        return None
+    identity = (record.confirmation.pending_round_id, record.confirmation.pending_uid,
+                record.confirmation.parent_version_id, record.confirmation.new_version_id)
+    return next((item for item in state.corrections
+                 if (item.pending.crown_round_id, item.pending.uid, item.pending.parent_version_id, item.pending.new_version_id) == identity), None)
+
+
+def round_view(record: RoundRecord, correction: ConfirmationCorrection | None = None, corrected_at: int = 0) -> dict[str, Any]:
     seats = [entry for lease in record.leases for entry in lease.entries]
     view: dict[str, Any] = {
         "round_id": record.round_id,
@@ -149,6 +185,8 @@ def round_view(record: RoundRecord) -> dict[str, Any]:
         view |= {"winner_uid": decision.winner.uid if decision.winner else None, "reason": public_text(decision.reason), "null_pass_rate": decision.null_pass_rate, "null_cap_rate": decision.null_cap_rate}
         view["duplicate_clusters"] = [*record.duplicate_clusters, *decision.duplicate_clusters]
         view["duplicates"] = [entry_view(entry) | {"reason": public_text(entry.reason)} for entry in decision.entries if entry.status == "duplicate"]
+    if correction is not None:
+        view["confirmation_correction"] = correction_view(correction, corrected_at)
     if record.rotation is not None:
         from . import layout
 
@@ -232,7 +270,8 @@ def snapshot(
         "recipe_id": params.recipe_id,
         "irt_snapshot_id": state.snapshot_id,
         "round": round_view(state.round) if state.round else None,
-        "history": [round_view(record) for record in state.rounds[-HISTORY_PREVIEW:]],
+        "history": [round_view(record, correction_for(state, record), state.correction_times.get(record.confirmation.pending_round_id, 0)
+                               if record.confirmation is not None else 0) for record in state.rounds[-HISTORY_PREVIEW:]],
         "queue": {
             "length": len(line),
             "files_checked_at": files_checked_at,
@@ -254,16 +293,18 @@ def snapshot(
         "kings": [king.to_dict() for king in payees(state.kings, params.kings_window)],
         "paid_kings": [{"uid": king.uid, "round_id": king.round_id} for king in paid_set(state.kings, state.null_rounds, params)],
         "null_prune_from_round": params.null_prune_from_round,
+        **({"confirmation_corrections": [correction_view(item, state.correction_times[item.pending.crown_round_id]) for item in state.corrections]} if state.corrections else {}),
     }
 
 
-def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxResult]]) -> dict[str, Any]:
+def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxResult]],
+                 correction: ConfirmationCorrection | None = None, corrected_at: int = 0) -> dict[str, Any]:
     """The public file of a settled round: the draw and all scored eval outcomes.
 
     ``entry_outcomes`` is in queue order and omits entries without outcome
     strings. Null M and the winner keep their original, separate fields.
     """
-    report = round_view(record)
+    report = round_view(record, correction, corrected_at)
     winner = record.decision.winner if record.decision else None
     if leases:
         draw = leases[0][0].draw

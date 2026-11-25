@@ -16,11 +16,11 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .canonical import Record
-from .errors import JournalCorrupt, V2Error
+from .errors import ContractError, JournalCorrupt, V2Error
 from .journal import LEADER, JournalRecord, pull, read_journal
 from .params import GenesisSpec, Params
 from .seams import ObjectStore
-from .types import Confirmation, Entry, EntryDecision, HeadManifest, HeadVersion, King, ParentEval, PendingKing, QueueEntry, Registration, RoundDecision, V1Import
+from .types import Confirmation, ConfirmationCorrection, Entry, EntryDecision, HeadManifest, HeadVersion, King, ParentEval, PendingKing, QueueEntry, Registration, RoundDecision, V1Import
 
 RegKey = tuple[int, int]
 HISTORY = 200  # closed rounds kept in memory for the public snapshot
@@ -40,6 +40,7 @@ ROUND_SETTLED = "round_settled"
 APPLY_DEFERRED = "apply_deferred"
 HEAD_APPLIED = "head_applied"
 CONFIRMATION_RESOLVED = "confirmation_resolved"
+CONFIRMATION_CORRECTED = "confirmation_corrected"
 HEAD_FOLDED = "head_folded"
 ROUND_CLOSED = "round_closed"
 
@@ -109,6 +110,11 @@ class State:
     served_regs: set[RegKey] = field(default_factory=set)
     served_hotkeys: set[str] = field(default_factory=set)
     kings: list[King] = field(default_factory=list)  # confirmed payout winners, oldest first; pending crowns are never here
+    corrections: list[ConfirmationCorrection] = field(default_factory=list)  # approved offline re-checks; never trimmed with public history
+    correction_draws: dict[str, str] = field(default_factory=dict)  # confirmation round -> exact ticket draw digest
+    correction_times: dict[str, int] = field(default_factory=dict)  # crown round -> the journal's UTC approval time
+    # Permanent evidence index. Public round history stays bounded; replay never discards correction inputs.
+    correction_evidence: dict[str, RoundRecord] = field(default_factory=dict)
     pending_king: PendingKing | None = None  # one installed crown awaiting the next round's fresh paired comparison
     # Judged-null round ids, oldest first. Unlike rounds, this payout history is never trimmed by HISTORY.
     null_rounds: list[str] = field(default_factory=list)
@@ -309,6 +315,33 @@ def _confirmation_resolved(state: State, data: dict, at: int) -> None:
     state.round = replace(record, confirmation=confirmation)
 
 
+def _confirmation_corrected(state: State, data: dict, at: int) -> None:
+    """Pay one crown whose only confirmation failure was parent infrastructure.
+
+    This is deliberately not a rewrite of the original confirmation. The
+    correction joins the kings list at its original crown position: a late
+    approval does not jump ahead of crowns confirmed in the meantime.
+    """
+    _need(state.round is None, "a confirmation can only be corrected between rounds")
+    correction = ConfirmationCorrection.from_dict(data["correction"])
+    from .correction import check_correction
+
+    check_correction(state, correction)
+    insert = next((i for i, king in enumerate(state.kings)
+                   if not king.round_id.startswith("v1-e") and king.round_id > correction.king.round_id), len(state.kings))
+    state.kings.insert(insert, correction.king)
+    state.corrections.append(correction)
+    state.correction_draws[correction.confirmation_round_id] = correction.draw_sha256
+    state.correction_times[correction.pending.crown_round_id] = at
+    from .correction import evidence_rounds
+
+    records = {record.round_id: record for record in evidence_rounds(state)}
+    for round_id in (correction.pending.crown_round_id, correction.confirmation_round_id):
+        if round_id not in records:
+            raise JournalCorrupt("confirmation correction evidence rounds are missing from replay")
+        state.correction_evidence[round_id] = records[round_id]
+
+
 def _head_folded(state: State, data: dict, at: int) -> None:
     parent = state.head
     head = _new_head(state, data)
@@ -357,6 +390,7 @@ HANDLERS: dict[str, Callable[[State, dict, int], None]] = {
     APPLY_DEFERRED: _apply_deferred,
     HEAD_APPLIED: _head_applied,
     CONFIRMATION_RESOLVED: _confirmation_resolved,
+    CONFIRMATION_CORRECTED: _confirmation_corrected,
     HEAD_FOLDED: _head_folded,
     ROUND_CLOSED: _round_closed,
 }
@@ -373,8 +407,10 @@ def apply(state: State, record: JournalRecord) -> None:
         _need(record.kind == GENESIS or bool(state.heads), "the journal must start with a genesis record")
         try:
             handler(state, record.data, record.at)
-        except (KeyError, StopIteration, TypeError) as exc:
+        except (KeyError, StopIteration, TypeError, ValueError, ContractError) as exc:
             raise JournalCorrupt(f"journal record {record.seq} ({record.kind}) is malformed: {exc!r}") from exc
+        except V2Error as exc:
+            raise JournalCorrupt(f"journal record {record.seq} ({record.kind}) is invalid: {exc}") from exc
     state.last_seq = record.seq
 
 

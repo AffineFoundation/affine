@@ -41,10 +41,10 @@ from .admission import FORMATS, SHA_SHOWN, freeze_log, verdict_log, verdict_note
 from .afterking import PUBLISH, Beside, Overlap
 from .canonical import canonical_json, is_sha256, sha256_hex, to_jsonable
 from .dedup import cluster_entries, cluster_past_kings, normalized_rollouts, stage_b
-from .errors import BatchRejected, ConfigError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
+from .errors import BatchRejected, ConfigError, ContractError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
 from .headlog import apply_lora, fold_due, fold_head, genesis_head, lora_ref
 from .journal import JOURNAL_FILE, Journal, pull
-from .judging import check_result, decide, duplicate_decision, legacy_parent_one_sample, score_confirmation
+from .judging import check_outcomes, check_result, decide, duplicate_decision, legacy_parent_one_sample, score_confirmation
 from .params import GenesisSpec, Params
 from .payout import payees
 from .public import public_text, round_report, snapshot
@@ -55,6 +55,7 @@ from .state import (
     ABANDONED,
     APPLIED,
     APPLY_DEFERRED,
+    CONFIRMATION_CORRECTED,
     CONFIRMATION_RESOLVED,
     GENESIS,
     HEAD_APPLIED,
@@ -81,6 +82,7 @@ from .state import (
 from .store import delete_pending, get_record, log_time, promote_fold, promote_lora, publish_head, put_record, timed
 from .types import NO_DECISION as ENTRY_NO_DECISION
 from .types import (
+    NOT_RUN,
     NOT_SCORED,
     NULL_MODEL,
     Confirmation,
@@ -813,6 +815,89 @@ class Controller:
         self._log(ROUND_SETTLED, {"round_id": record.round_id, "decision": decision.to_dict(), "results": results}, now)
         self._finish(now)
 
+    def correct_confirmation(self, evidence: Any, approved_by: str, now: int) -> Any:
+        """Append an approved offline re-check after all original evidence is verified.
+
+        Publication follows the journal commit. It can fail without losing the
+        correction; ``publish_correction_reports`` retries the derived files.
+        """
+        from .correction import evidence_rounds, prepare
+        from .types import Draw
+
+        if self.state.round is not None:
+            raise V2Error(f"round {self.state.round.round_id} is open; correct a confirmation only between rounds")
+        identity = (evidence.verdict.get("crown_round_id"), evidence.verdict.get("uid"),
+                    evidence.verdict.get("parent_version_id"), evidence.verdict.get("new_version_id"))
+        records = [record for record in evidence_rounds(self.state) if record.confirmation is not None and
+                   (record.confirmation.pending_round_id, record.confirmation.pending_uid,
+                    record.confirmation.parent_version_id, record.confirmation.new_version_id) == identity]
+        if len(records) != 1:
+            raise V2Error("the target crown has no unique retained confirmation round")
+        record = records[0]
+        if record.parent is None:
+            raise V2Error("the confirming round has no pinned original pending crown")
+        try:
+            raw = json.loads(self.store.get(layout.round_file(record.round_id)))
+            draw = Draw.from_dict(raw["draw"])
+        except (OSError, KeyError, ValueError, TypeError, ContractError) as exc:
+            raise V2Error(f"the original public round report has no readable full draw: {exc}") from exc
+        expected = self.state.correction_draws.get(record.round_id)
+        if expected is not None and draw.digest() != expected:
+            raise V2Error("the stored confirmation draw changed; no correction was written")
+        if len(record.leases) != 1:
+            raise V2Error("offline correction needs one unambiguous parent-bearing sealed ticket")
+        lease = record.leases[0]
+        ticket = self._ticket(record, lease)
+        result = get_record(self.store, layout.sealed_result(record.round_id, lease.lease_id), BoxResult)
+        if lease.status != "done" or lease.result_digest != result.digest():
+            raise V2Error("the original sealed result does not match its journal lease")
+        check_result(ticket, result)
+        if ticket.draw != draw or ticket.parent != record.parent:
+            raise V2Error("the round report's draw or pending crown differs from its sealed ticket")
+        try:
+            check_outcomes(result.null_outcomes, record.n_tasks, "original new head")
+            if (len(result.null_outcomes) != ticket.params.null_samples
+                    or any(NOT_RUN in text for text in result.null_outcomes)):
+                raise ContractError("the original new-head null did not complete the full fresh draw")
+        except ContractError as exc:
+            raise V2Error("the original new-head evidence failed; this is not a parent-only infrastructure no_decision") from exc
+        n_samples = evidence.verdict.get("null_outcomes")
+        n_parent_samples = evidence.verdict.get("parent_outcomes")
+        if (not isinstance(n_samples, list) or not isinstance(n_parent_samples, list)
+                or len(n_samples) != ticket.params.null_samples or len(n_parent_samples) != ticket.params.null_samples
+                or tuple(n_samples) != result.null_outcomes
+                or (result.parent_outcomes and tuple(n_parent_samples) != result.parent_outcomes)
+                or evidence.ticket != ticket):
+            raise V2Error("offline re-check must preserve the confirming ticket and its complete new-head samples")
+        correction = prepare(self.state, evidence, draw, approved_by, ticket.params, result)
+        if correction is not None:
+            self._log(CONFIRMATION_CORRECTED, {"correction": correction.to_dict()}, now)
+        self.publish_correction_reports(now)
+        return correction
+
+    def publish_correction_reports(self, now: int) -> None:
+        """Republish the derived public evidence of replayed corrections."""
+        self._publish_correction_reports()
+        self._publish_snapshot(now)
+
+    def _publish_correction_reports(self) -> None:
+        from .public import correction_view
+
+        if self.last_error.startswith("correction report of "):
+            self.last_error = ""
+        for correction in self.state.corrections:
+            record = self.state.correction_evidence.get(correction.confirmation_round_id)
+            if record is None:
+                continue  # old journal readers retain only the public snapshot correction table
+            view = correction_view(correction, self.state.correction_times[correction.pending.crown_round_id])
+            try:
+                key = layout.round_file(record.round_id)
+                report = json.loads(self.store.get(key))
+                if report.get("confirmation_correction") != view:
+                    self.store.put(key, canonical_json(report | {"confirmation_correction": view}))
+            except (OSError, KeyError, TypeError, ValueError, ContractError, InfraError) as exc:
+                self.last_error = f"correction report of {record.round_id} not published yet: {exc}"
+
     # ------------------------------------------------------------ apply, fold, close
 
     def _resolve_confirmation(self, pairs: Leases, now: int) -> None:
@@ -1122,6 +1207,12 @@ class Controller:
 
     # ------------------------------------------------------------ publish
 
+    def _publish(self, now: int) -> None:
+        if self.state.corrections:
+            # Publication is derived and retryable; the journal correction remains authoritative.
+            self._publish_correction_reports()
+        self._publish_snapshot(now)
+
     def _sync_pointer(self) -> None:
         """Make the store's head manifest and ``current`` pointer follow the journal."""
         manifest = self.state.manifest
@@ -1136,7 +1227,7 @@ class Controller:
         seats = [(seat.reg.key, seat.front, seat.demoted, seat.held) for seat in waiting(self.state.queue)]
         return seats, {hotkey: (verdict.valid, verdict.batch_sha256) for hotkey, verdict in self._verdicts.items()}
 
-    def _publish(self, now: int) -> None:
+    def _publish_snapshot(self, now: int) -> None:
         if self.publisher is None:
             return
         shown, records = self._shown(), len(self.journal.records)
@@ -1188,6 +1279,8 @@ class Controller:
                 delete_pending(self.store, layout.pending_round_prefix(self.state.rounds[-1].round_id))
             if self._published_at != len(self.journal.records) or self._shown() != self._published:
                 self._publish(now)  # the public files do not show the journal as it is now
+            else:
+                self._publish_correction_reports()
         except InfraError as exc:
             self.last_error = f"the store did not answer: {exc}"
         problem, self.last_error = self.last_error, self.last_error or before

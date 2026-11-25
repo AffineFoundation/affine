@@ -11,6 +11,9 @@
   round       print the summary of a closed round as a short text to paste
   dedup-dryrun  offline analysis of explicit frozen batches and optional LoRA directories; writes nothing
   set-params  pin new parameters (stop ``run`` first: this command takes over the journal)
+  correct-confirmation  pay one approved offline re-check of a parent-infrastructure confirmation no_decision;
+              between rounds only. Reads verdict.json and its bundle.json, checks the original sealed ticket and
+              full paired draw, and takes over the journal. A genuine loss or tie can never be corrected.
   end-round   end the open round now with no decision, when its box is dead: nobody is charged, and its
               seats are first in the next round (this command takes over the journal). With a box result
               of that round in the store it ends nothing and exits with 3: ``run`` judges that result
@@ -44,17 +47,18 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import layout
+from .canonical import canonical_json
 from .afterking import Overlap
 from .controller import Controller, Stack, StackContext, check_env_pin, public_snapshot
 from .errors import ConfigError, FencedError, HeadLost, InfraError, V2Error
 from .journal import JOURNAL_FILE, Journal, Mirror
 from .params import GenesisSpec, Params, Recipe, load_params
 from .payout import paid_set, payees
-from .public import phase, round_text
+from .public import correction_view, phase, round_text
 from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
 from .dedup import dryrun
-from .state import SEATS_FRONTED, State, load
+from .state import CONFIRMATION_CORRECTED, SEATS_FRONTED, State, load
 from .stopafter import SAID, StopRequest, say, stamp
 from .store import timed, verify_files
 from .types import ChainSnapshot, V1Import, Verdict
@@ -311,6 +315,15 @@ def cmd_publish(args: argparse.Namespace) -> int:
         raise ConfigError("this stack has no publisher")
     checked = now()  # this reads the file of every waiting seat
     verdicts = stack.admission.verdicts([seat.reg.hotkey for seat in waiting(state.queue)])
+    for correction in state.corrections:
+        if correction.confirmation_round_id not in state.correction_evidence:
+            continue  # mining.json retains the permanent correction table
+        key = layout.round_file(correction.confirmation_round_id)
+        report = json.loads(stack.store.get(key))
+        report["confirmation_correction"] = correction_view(
+            correction, state.correction_times[correction.pending.crown_round_id]
+        )
+        stack.store.put(key, canonical_json(report))
     stack.publisher.publish(public_snapshot(stack.head, state, params, now(), verdicts, checked))
     valid = sum(verdict.valid for verdict in verdicts.values())
     print(json.dumps({"published": True, "head": state.head.version_id, "queue": len(state.queue), "valid_files": valid}))
@@ -340,6 +353,38 @@ def changed_params(before: Params, after: Params) -> dict[str, dict[str, Any]]:
 
     old, new = flat(before), flat(after)
     return {name: {"before": old[name], "after": new[name]} for name in old.keys() | new.keys() if old[name] != new[name]}
+
+
+def cmd_correct_confirmation(args: argparse.Namespace) -> int:
+    """One approved correction, committed only through the normal fenced writer."""
+    from .correction import read_evidence
+
+    approved_by = args.approved_by.strip()
+    if not approved_by:
+        raise V2Error("--approved-by must not be empty")
+    evidence = read_evidence(args.verdict, args.bundle)
+    controller, _ = open_controller(args, "correct-confirmation")
+    before = controller.state.last_seq
+    correction = controller.correct_confirmation(evidence, approved_by, now())
+    written = correction is not None
+    replayed = load(Path(args.state_dir) / JOURNAL_FILE)
+    stored = correction or next((item for item in replayed.corrections if item.verdict_sha256 == evidence.verdict_sha256), None)
+    if stored is None:
+        raise V2Error("the correction was not found after journal replay")
+    replay_matches = (replayed.kings == controller.state.kings and replayed.corrections == controller.state.corrections
+                      and replayed.correction_draws == controller.state.correction_draws)
+    result = {
+        "written": written, "idempotent": not written,
+        "journal_record": controller.state.last_seq if written else before,
+        "replay_matches": replay_matches,
+        "correction": correction_view(stored, replayed.correction_times[stored.pending.crown_round_id]),
+        "publication_error": controller.last_error,
+    }
+    print(json.dumps(result, indent=2))
+    if written:
+        print(f"written: journal record {controller.state.last_seq} ({CONFIRMATION_CORRECTED}). "
+              "Every journal reader must understand this record kind before it can read the new journal.", file=sys.stderr)
+    return 0 if replay_matches and not controller.last_error else 1
 
 
 def cmd_set_params(args: argparse.Namespace) -> int:
@@ -601,6 +646,10 @@ def main(argv: list[str] | None = None) -> int:
     dry.add_argument("--lora", action="append", help="directory with adapter_model.safetensors and train_report.json, in batch order")
     dry.add_argument("--params", help="optional JSON parameter overrides; defaults to the new production defaults")
     dry.add_argument("--first-seen", type=int, action="append", help="optional UTC first-seen per batch, in batch order; default queue order")
+    correct = command("correct-confirmation", cmd_correct_confirmation, stack=True)
+    correct.add_argument("--verdict", required=True, help="approved offline verdict JSON; all measurements and full paired outcomes")
+    correct.add_argument("--bundle", help="retained evidence bundle (default: bundle.json beside --verdict)")
+    correct.add_argument("--approved-by", required=True, help="nonempty operator approval identity or reference")
     setp = command("set-params", cmd_set_params, stack=True)
     setp.add_argument("--params", required=True, help="JSON file of parameter overrides on the defaults; the result replaces the pinned set")
     end = command("end-round", cmd_end_round, stack=True)
