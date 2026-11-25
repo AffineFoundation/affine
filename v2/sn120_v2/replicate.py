@@ -452,7 +452,7 @@ def round_notes(contract: Contract, the: Round) -> list[dict[str, str]]:
     if shown["scored_tasks"] != shown["n_tasks"]:
         least = contract.params.min_scored_tasks
         few = f" With fewer than {least} scored tasks no LoRA can win." if shown["scored_tasks"] < least else ""
-        notes.append({"what": "first-tasks", "text": f"Only the first {shown['scored_tasks']} of the {shown['n_tasks']} tasks of the draw are scored, in the order of the round. The looks are shares of {shown['scored_tasks']}.{few}"})
+        notes.append({"what": "first-tasks", "text": f"Only the first {shown['scored_tasks']} of the {shown['n_tasks']} tasks of the draw are scored, in the order of the round. The looks are shares of {shown['scored_tasks']}. null_pass_rate, pass_rate, delta, se and z describe this scored prefix only, not the official full draw; the prefix null pass rate can differ from the full-draw rate. winner or lost here is not a forecast of the official {shown['n_tasks']}-task decision.{few}"})
     return notes
 
 

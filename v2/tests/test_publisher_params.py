@@ -258,6 +258,26 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "`kl_rollouts` (default 128)",
         "sample-0 rollouts, at most the first `kl_max_tokens` (currently 8192)",
         "minibatches do NOT multiply it. Worked example: cap 22,130,000 with steps=16 gives 1,383,125 tokens (integer floor).",
+        # Fixed public-history examples in the replication guidance, not contract parameters or recommended settings.
+        "- **A first-tasks result is for the scored prefix only.** `pass_rate`, `null_pass_rate`, `delta`, `se` and `z` "
+        "are not full-draw values. The first N are exactly `task_ids[:N]` with `weights[:N]`, not a fresh draw. Their "
+        "null pass rate can differ substantially from the official full draw. At N=160 a representative paired-delta SE "
+        "is about 4 percentage points, larger than typical official winning margins of 1–3 points. A local `winner` or "
+        "`lost` on a shortened run does not forecast the official 2000-task decision.",
+        "Null M is freshly scored each run: two null samples per task at temperature 1.0, using "
+        "`rollout_seed(round_seed, task_id, sample)`; the model id is not in the seed and sample 0 pairs with every LoRA. "
+        "Public r000120 example: weighted null passed 54.84% of all 2000 tasks but 61.10% of the first 160. The official "
+        "winner passed 57.16% overall (+2.32 points, z=1.94) versus 56.98% on the prefix (-4.12 points, z=-1.00).",
+        "A reported several hundred nats/sequence is not a nats-vs-nats/token units bug, but it is far above recent official "
+        "winners: r000114/115/116/118/120 measured 14.48–51.20 nats/sequence with `kl_k=128`. These historical values were "
+        "well above the 10-nat/sequence floor but far below hundreds; they are not a fixed typical range or a new threshold.",
+        "- **Public winner examples, not required settings:** only winning batches are public, at "
+        "`<public address>/public/rounds/<round_id>/batch.json`. Recent applied winners used unique math-style "
+        "boxed-answer prompts and mixed-reward GRPO groups: r000114/115/116/120 had 82–207 prompts, 2 rollouts and mean "
+        "reward 0.50; r000118 had 45 prompts, 8 rollouts and mean reward 0.56; every group was mixed. They set `lora_lr` "
+        "from 1e-4 to 3e-4; r000118 set only that key, while the others also set rank 16 and alpha 32. Cap-hit rates were "
+        "6.6–10.3% (floor 0.33). They omitted `steps` and `global_norm_cap`, so `Recipe.for_miner` kept their round's "
+        "defaults: steps=1, minibatches=1, group_size=0 (the file's groups), global_norm_cap=1e6.",
     ]  # fmt: skip
 
 

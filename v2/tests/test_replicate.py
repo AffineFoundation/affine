@@ -428,6 +428,10 @@ def test_first_tasks_is_a_prefix_of_the_round_and_a_seed_of_your_choice_needs_a_
     assert (the.draw.task_ids, the.draw.weights) == (whole.task_ids[:3], whole.weights[:3])  # what the box scores first, not a new draw of 3
     assert the.draw.task_ids != draw_from_snapshot(world.snapshot, "seed-7", 3).task_ids or the.draw.weights != draw_from_snapshot(world.snapshot, "seed-7", 3).weights
     assert the.shown["n_tasks"] == 8 and the.shown["scored_tasks"] == 3 and [n["what"] for n in replicate.round_notes(contract, the)] == ["first-tasks"]
+    note = replicate.round_notes(contract, the)[0]["text"]
+    assert "null_pass_rate" in note and "delta" in note and "scored prefix only" in note and "not a forecast" in note
+    assert "prefix null pass rate can differ from the full-draw rate" in note
+    assert "null_pass_rate equals the full-draw" not in note and "null_pass_rate is the full-draw" not in note
     for bad in (0, 9):
         with pytest.raises(ConfigError, match="from 1 to 8"):
             replicate.the_round(contract, first_tasks=bad)
@@ -841,8 +845,19 @@ def test_the_document_names_every_command_option_and_difference(world):
         "params.min_kl_seq", "kl_rollouts` (default **128**)", "kl_max_tokens` (**8192**", "sample-0",
         "win_vs_null", "cap_hit", "--first-tasks N", "one-GPU smoke test", "decided: true", "recipe_id",
         "vllm==0.32.0", "torch 2.13", "clean virtual environment", "eval_merged=false",
+        "task_ids[:N]", "weights[:N]", "about **4 percentage points**", "**1–3 points**", "not a forecast of the official 2000-task decision",
+        "--round-file https://affine.io/public/rounds/<round_id>/round.json", "54.84%", "61.10%", "+2.32", "−4.12",
+        "nats/sequence", "nats/token", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens", "14.48–51.20", "not a fixed acceptable range",
+        "https://affine.io/public/rounds/<round_id>/batch.json", "`Recipe.for_miner`", "not a recommended step count",
+        "This is a historical observation", "not a prescribed learning rate or step count",
     ):
         assert warning in text
+    assert "null_pass_rate equals the full-draw" not in text
+    assert "null_pass_rate is the full-draw" not in text
+    assert "null_pass_rate` is the same as" not in text
+    assert "null_pass_rate` equals" not in text
+    assert "prefix has the same null pass rate as the full draw" not in text
+    assert "same null_pass_rate as the full" not in text
     assert "no-master" not in text and "this tool never folds" not in text
     documented_check = "python v2/miner/affine_miner.py check --mining-json https://affine.io/mining.json --hotkey <ss58> --tokenizer /data/affine/cache --grade batch.json"
     assert documented_check in text
