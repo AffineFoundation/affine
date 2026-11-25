@@ -154,7 +154,6 @@ RULE_CHANGELOG = (
     "- 2026-11-24 / `z_bar` + paired next-round confirmation / no z bar → crown and paid confirmation both require strict `z > 1`.",
     "- 2026-11-24 / squat trim / queue-rate-stretched wait → flat 6h cap (`squat_min_wait_s=10800`, `squat_age_factor=2`), retaining the zero-turn guard.",
     "- 2026-11-24 / confirming-round king + old-parent samples / inherited `1` → matched `2` per task (`null_samples_per_task=2`).",
-    "- 2026-11-24 / `null_samples_per_task` / king samples `2` → `4` per task; confirming-round old-parent samples remain matched.",
 )
 
 RECIPE_NOTES = {

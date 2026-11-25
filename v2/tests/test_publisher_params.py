@@ -355,10 +355,9 @@ Date (UTC) / field / old → new. Dates identify shipped commits; the parameter 
 - 2026-11-24 / `z_bar` + paired next-round confirmation / no z bar → crown and paid confirmation both require strict `z > 1`.
 - 2026-11-24 / squat trim / queue-rate-stretched wait → flat 6h cap (`squat_min_wait_s=10800`, `squat_age_factor=2`), retaining the zero-turn guard.
 - 2026-11-24 / confirming-round king + old-parent samples / inherited `1` → matched `2` per task (`null_samples_per_task=2`).
-- 2026-11-24 / `null_samples_per_task` / king samples `2` → `4` per task; confirming-round old-parent samples remain matched.
 """
     assert "\n".join(publisher.reflow(changelog.splitlines())) + "\n" in text
-    assert text.count("- 2026-11-24 /") == 5 and "UTC-6" not in text
+    assert text.count("- 2026-11-24 /") == 4 and "UTC-6" not in text
     assert "min_kl_seq=10" in text and "squat_min_wait_s=10800" in text and "old-parent samples / inherited `1`" in text
     running = next(snap for snap in world.publisher.snapshots if snap["phase"] == "RUNNING")
     assert [key for key, value in running["round"].items() if not isinstance(value, (dict, list))] == list(publisher.ROUND_FIELDS[:12])
