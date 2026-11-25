@@ -347,6 +347,56 @@ def test_live_pool_remote_check_maps_base_and_public_reserve_prompts(build, tmp_
     assert sum(key.startswith("public/pool/reserve/shards/") for key, _ in requests) >= 1
 
 
+def test_official_grade_uses_the_full_public_catalog_for_reserve_sft(build, tmp_path, monkeypatch, capsys):
+    pytest.importorskip("math_verify")
+    from test_live_pool import public_files, mocked_public, tool as live_pool  # sn120-standalone-source-path
+    from sn120_v2.admission import FORMAT_V4
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "miner"))
+    monkeypatch.setitem(sys.modules, "live_pool", live_pool)
+    mocked_public(monkeypatch, public_files(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    source = "https://files.example/public/mining.json"
+    catalog = tool.full_grading_catalog(source)
+    task = catalog.task("gen:9")  # a verified reserve body, not in the bundled pool or active IDs
+    assert task.task_id.startswith("gen:") and tool.load_pool().task_for_prompt(task.batch_prompt()) is None
+    raw = json.dumps({"version": FORMAT_V4, "hotkey": HOTKEY, "stages": [{"sft": [{
+        "prompt": task.batch_prompt(), "output": "step " * 40 + f"\\boxed{{{task.answer}}}",
+    }]}]}).encode()
+    report = tool.check(raw, HOTKEY, build.params(), WordTokens(), tool.official_grader(build.params(), catalog))
+    assert report["valid"] and report["rules_not_run"] == []
+    with pytest.raises(Invalid) as caught:
+        tool.check(raw, HOTKEY, build.params(), WordTokens(), tool.official_grader(build.params()))
+    assert caught.value.rule == "sft_unverified"
+
+    base = tool.load_pool().task("math:0")
+    bundled = json.dumps({"version": FORMAT_V4, "hotkey": HOTKEY, "stages": [{"sft": [{
+        "prompt": base.batch_prompt(), "output": "step " * 40 + f"\\boxed{{{base.answer}}}",
+    }]}]}).encode()
+    for pool in (tool.load_pool(), catalog):
+        assert tool.check(bundled, HOTKEY, build.params(), WordTokens(), tool.official_grader(build.params(), pool))["valid"]
+
+    contract = mining_json(build, tmp_path)
+    path = tmp_path / "reserve-sft.json"
+    path.write_bytes(raw)
+    monkeypatch.setattr(tool, "full_grading_catalog", lambda source, **kwargs: catalog)
+    monkeypatch.setattr(tool, "load_tokens", lambda *args: WordTokens())
+    code, out = cli(capsys, "check", "--no-live-pool", "--grade", "--tokenizer", "fake", "--mining-json", contract,
+                    "--hotkey", HOTKEY, str(path))
+    assert code == 0 and json.loads(out)["valid"]
+
+
+def test_official_grade_catalog_failure_never_silently_falls_back(build, monkeypatch):
+    from test_live_pool import tool as live_pool  # sn120-standalone-source-path
+    from sn120_v2.errors import V2Error
+
+    monkeypatch.setitem(sys.modules, "live_pool", live_pool)
+    monkeypatch.setattr(tool, "grading_public_url", lambda source: "https://files.example")
+    monkeypatch.setattr(live_pool, "_pointer", lambda public_url: (_ for _ in ()).throw(V2Error("public catalog unavailable")))
+    with pytest.raises(ConfigError, match=r"reserve gen: traces cannot be verified.*Refusing to fall back"):
+        tool.full_grading_catalog("unused")
+
+
 def test_live_pool_fetch_failure_adds_only_a_warning(build, monkeypatch):
     from sn120_v2.admission import check_batch
     batch = check_batch(batch_bytes(), HOTKEY, build.params())
@@ -638,9 +688,20 @@ def test_the_live_public_params_and_future_fields_are_readable_only_by_the_publi
     future.update(min_kl_seq=0.0, min_kl_tok=0.0, confirm_next_round=False)
     future["recipe"]["future_recipe"] = {"anything": [1, 2]}
     future["recipe"]["miner_bounds"][0]["future_bound"] = "new"
-    with pytest.raises(ContractError, match="unknown field"):
+    future["recipe"]["miner_bounds"].append({"key": "future_weight", "low": 0, "high": 1})
+    with pytest.raises(ContractError, match="unknown field|miner_bounds"):
         Params.from_dict(future)
     assert Params.from_public_dict(future) == params
+    assert Params.from_public_dict(future).params_hash == params.params_hash
+    known_bounds_only = copy.deepcopy(future)
+    known_bounds_only["recipe"].pop("future_recipe")
+    known_bounds_only["recipe"]["miner_bounds"] = known_bounds_only["recipe"]["miner_bounds"][:-1]
+    known_bounds_only["recipe"]["miner_bounds"][0].pop("future_bound")
+    assert Params.from_dict(known_bounds_only).params_hash == params.params_hash
+    with pytest.raises(ConfigError, match="git fetch origin affine/king4-kltok"):
+        Recipe.from_dict(known_bounds_only["recipe"] | {
+            "miner_bounds": [*known_bounds_only["recipe"]["miner_bounds"], known_bounds_only["recipe"]["miner_bounds"][0]],
+        })
     with pytest.raises(ContractError, match="expected an integer"):
         Params.from_public_dict(raw | {"n_tasks": "2000"})
 

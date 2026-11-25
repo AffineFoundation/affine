@@ -380,6 +380,41 @@ def test_batches_train_at_the_same_time_on_separate_gpu_slots(tmp_path):
 # ------------------------------------------------------------ pinned parameters
 
 
+def test_set_params_publishes_now_and_idle_change_detection_sees_contract_transitions(tmp_path):
+    from sn120_v2.afterking import Overlap
+
+    world = SimWorld(tmp_path, sim_params())
+    before = len(world.publisher.snapshots)
+    world.controller.set_params(replace(world.params, z_bar=0.75), world.clock())
+    assert len(world.publisher.snapshots) == before + 1
+    assert world.publisher.snapshots[-1]["params_hash"] == world.controller.params.params_hash
+    assert not world.controller.publish(world.clock(), only_changes=True)
+
+    world.register(1, 0.3)
+    original = world.controller._publish
+    world.controller._publish = lambda now: None  # simulate a missed open publication; _shown must not hide the transition
+    try:
+        assert world.controller.open_round(world.clock(), "entropy")
+        assert world.controller.publish(world.clock(), only_changes=True), "open round id and phase must defeat an idle skip"
+    finally:
+        world.controller._publish = original
+    shown = world.controller._shown()
+    world.controller.state.round = None
+    assert world.controller._shown() != shown, "phase and open-round identity are publication state"
+
+    world = SimWorld(tmp_path / "overlap", sim_params())
+    before = len(world.publisher.snapshots)
+    world.controller.use_overlap(Overlap())
+    assert len(world.publisher.snapshots) == before + 1, "run start publishes current params and phase immediately"
+
+
+def test_set_params_without_a_publisher_keeps_the_compatibility_noop(tmp_path):
+    world = SimWorld(tmp_path, sim_params())
+    world.controller.publisher = None
+    world.controller.set_params(replace(world.params, z_bar=0.75), world.clock())
+    assert world.controller.params.z_bar == 0.75
+
+
 def test_the_parameters_are_pinned_in_the_journal_at_the_first_start(tmp_path):
     capped = sim_params()
     capped = replace(capped, recipe=replace(capped.recipe, global_norm_cap=2.5))

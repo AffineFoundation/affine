@@ -302,6 +302,21 @@ def pending_registrations(state: State, chain: ChainSnapshot | None, params: Par
     ]
 
 
+def visible_params(params: Params) -> dict[str, Any]:
+    """Public display form; canonical ``to_dict`` remains the hash/stored form.
+
+    A reader may need the effective defaults even though old records omit them.
+    Feeding this projection back through either Params decoder restores exactly
+    the same canonical record and therefore the same params_hash and recipe_id.
+    """
+    shown = params.to_dict()
+    shown.setdefault("max_stages", params.max_stages)
+    recipe = dict(shown.get("recipe") or {})
+    recipe.setdefault("sft_weight", params.recipe.sft_weight)
+    shown["recipe"] = recipe
+    return shown
+
+
 def snapshot(
     state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None, files_checked_at: int | None = None,
     chain: ChainSnapshot | None = None, *, stop_asked: bool = False, close_publish_pending: bool = False,
@@ -329,7 +344,7 @@ def snapshot(
                                 waiting_for_seats=waiting_for_seats),
         "head": state.manifest.to_dict() if state.manifest else None,
         "heads": [{"version_id": h.version_id, "round_id": h.round_id, "applied_at": h.applied_at, "folded": h.folded} for h in state.heads[-HISTORY_PREVIEW:]],
-        "params": params.to_dict(),
+        "params": visible_params(params),
         "params_hash": params.params_hash,
         "recipe_id": params.recipe_id,
         "irt_snapshot_id": state.snapshot_id,

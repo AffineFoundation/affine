@@ -716,6 +716,8 @@ def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, m
         pull.step("v1 history", v1_page_data)
     pull.step("site data", site_data)
     pull.step("site pages", site_pages)
+    # A contract that changed while the long pull ran still gets mirrored before this locked run exits.
+    pull.step("llms.txt and mining.json final refresh", pull.contract)
     for note in pull.notes:
         print(f"pull: note: {note}", file=sys.stderr)
     for problem in pull.problems:

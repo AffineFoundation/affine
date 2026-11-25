@@ -211,8 +211,12 @@ def test_a_rejection_never_repeats_the_miners_own_key_text_and_bounds_must_name_
         Recipe().for_miner({"secret-batch-text": 1})
     assert "secret-batch-text" not in str(caught.value)
     for bounds in ((MinerBound("no_such_field", 0, 1),), (MinerBound("rank", 9, 8, integer=True),), (MinerBound("image_digests", choices=("x",)),)):
-        with pytest.raises(ConfigError):
+        with pytest.raises(ConfigError) as caught:
             Recipe(miner_bounds=bounds)
+        if bounds[0].key == "no_such_field":
+            assert "git fetch origin affine/king4-kltok && git checkout affine/king4-kltok && git pull && python -m pip install -e './v2[miner,envs,links,chain]'" in str(caught.value)
+    with pytest.raises(ConfigError, match="git fetch origin affine/king4-kltok"):
+        Recipe(miner_bounds=(MinerBound("rank", 8, 64), MinerBound("rank", 8, 64)))
     for change in ({"steps": 0}, {"rank": 0}, {"lora_lr": 0.0}, {"adam_eps": 0.0}, {"target_modules": ()}):
         with pytest.raises(ConfigError):
             Recipe(**change)
