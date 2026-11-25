@@ -249,7 +249,8 @@ def verify_public_pool_snapshot(store: ObjectStore, snapshot: Mapping[str, Any])
             else:
                 old_manifest, old_withdrawn = rebuilt
                 old_rows, old_withdrawn_rows = _json_lines(old_manifest), _json_lines(old_withdrawn)
-                if reserve_rows[:len(old_rows)] != old_rows or withdrawn_rows[:len(old_withdrawn_rows)] != old_withdrawn_rows:
+                old_shards = old_rows[:-1]
+                if reserve_rows[:-1][:len(old_shards)] != old_shards or withdrawn_rows[:len(old_withdrawn_rows)] != old_withdrawn_rows:
                     raise VerifyError("public reserve does not extend a referenced rotation")
             checked_put(store, layout.active_pool(rotation.active_sha), canonical_json(list(rotation.active_ids)), missing_only=True)
             if load_active(store, rotation.active_sha) != rotation.active_ids:

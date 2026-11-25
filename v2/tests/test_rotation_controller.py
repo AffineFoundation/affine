@@ -154,6 +154,24 @@ def test_real_publisher_restores_public_pool_objects_across_history(tmp_path):
     assert not refused.exists(layout.active_pool(current_sha))
 
 
+def test_publish_failures_are_logged_without_escaping(tmp_path, capsys):
+    world, _ = rotated_world(tmp_path)
+
+    class FailingPublisher:
+        def __init__(self, failure):
+            self.failure = failure
+
+        def publish(self, snapshot):
+            raise self.failure
+
+    for failure in (VerifyError("bad reserve prefix"), RuntimeError("render failed")):
+        world.controller.publisher = FailingPublisher(failure)
+        world.controller._publish(world.clock())
+        expected = f"publish failed: {failure}"
+        assert world.controller.last_error == expected
+        assert f"publish: {expected}\n" in capsys.readouterr().err
+
+
 def test_live_params_change_rebuilds_the_next_sqrt_fisher_open(tmp_path):
     world, pool = rotated_world(tmp_path, irt_draw_rule="fisher")
     world.round()
