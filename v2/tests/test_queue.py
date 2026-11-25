@@ -57,6 +57,10 @@ def test_one_entry_per_miner_per_round_and_held_or_leased_seats_are_passed_over(
     assert [e.reg.uid for e in picked.entries] == [1, 3] and picked.skipped == (), "the second seat waits; it is not a skip"
     same_owner = build.queue(build.seat(1, coldkey="owner"), build.seat(2, coldkey="owner"), build.seat(3), build.seat(4))
     assert [e.reg.uid for e in pick(build, same_owner, ("hk1", "hk2", "hk3", "hk4"), cap=5).entries] == [1, 3, 4]
+    assert pick(build, same_owner, ("hk1", "hk2", "hk3", "hk4"), cap=5).skipped == ()
+    no_owner = build.queue(build.seat(1), build.seat(2))
+    picked = pick(build, no_owner, ("hk1", "hk2"), cap=5)
+    assert [e.reg.uid for e in picked.entries] == [1, 2] and picked.skipped == (), "empty selector inputs do not collide"
     parked = build.queue(build.seat(1, held=True), build.seat(2, leased=True), build.seat(3), build.seat(9, front=True))
     assert [e.reg.uid for e in pick(build, parked, ("hk1", "hk2", "hk3", "hk9"), cap=5).entries] == [9, 3]
 
@@ -118,6 +122,27 @@ def test_sync_removes_a_seat_that_left_the_chain_and_follows_a_hotkey_swap(build
     assert plan.removed == ((1, 101),), "a leased seat stays until its round ends"
     assert [reg.hotkey for reg in plan.rehotkeyed] == ["swapped"] and not plan.added
     assert sync(build, build.queue(build.seat(1)), [build.reg(1)]).empty
+
+
+def test_sync_refreshes_coldkeys_on_waiting_but_not_leased_seats(build):
+    waiting_seat, leased_seat = build.seat(1), build.seat(2, leased=True)
+    queue = build.queue(waiting_seat, leased_seat)
+    refreshed = [build.reg(1, coldkey="owner1"), build.reg(2, coldkey="owner2")]
+    plan = sync(build, queue, refreshed)
+    assert plan.rehotkeyed == (refreshed[0],) and plan.empty is False
+    assert queue[waiting_seat.reg.key].reg.coldkey == "", "the plan does not change the queue"
+    leased = sync(build, build.queue(leased_seat), [refreshed[1]])
+    assert leased.empty and not leased.rehotkeyed
+
+
+def test_sync_refreshes_legacy_empty_coldkeys_then_selects_one_seat_per_owner(build):
+    queue = build.queue(build.seat(1), build.seat(2), build.seat(3))
+    owners = [build.reg(1, coldkey="shared"), build.reg(2, coldkey="shared"), build.reg(3, coldkey="other")]
+    plan = sync(build, queue, owners)
+    assert plan.rehotkeyed == tuple(owners)
+    queue.update({seat.reg.key: build.replace(seat, reg=reg) for reg in owners for seat in [queue[reg.key]]})
+    picked = pick(build, queue, ("hk1", "hk2", "hk3"), cap=5)
+    assert [e.reg.uid for e in picked.entries] == [1, 3] and picked.skipped == ()
 
 
 def test_sync_refuses_a_bad_chain_read_so_it_cannot_drop_the_paid_queue(build):

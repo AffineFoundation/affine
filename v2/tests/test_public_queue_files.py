@@ -23,9 +23,10 @@ from sn120_v2.admission import StoreAdmission
 from sn120_v2.canonical import canonical_json, sha256_hex
 from sn120_v2.params import ATTENTION_AND_MLP_PROJECTIONS, MinerBound, Params, Recipe
 from sn120_v2.public import NOT_JUDGED, NOT_VALID, VALID, file_verdict, files_view
-from sn120_v2.queue import waiting
+from sn120_v2.journal import JOURNAL_FILE, read_journal
+from sn120_v2.queue import select_round, waiting
 from sn120_v2.sim import SimWorld, sim_params
-from sn120_v2.state import State
+from sn120_v2.state import State, load, replay
 from sn120_v2.store import LocalStore
 from sn120_v2.types import ChainSnapshot, Registration, Verdict
 
@@ -217,6 +218,37 @@ def test_pending_is_from_the_existing_chain_read_and_has_no_file_fields(tmp_path
     world.controller.state.served_hotkeys.update(("hk1", "hk2"))
     world.controller.state.queue.clear()
     assert public.pending_registrations(world.controller.state, chain, world.params) == []
+
+
+def test_sync_persists_refreshed_coldkeys_without_publishing_them(tmp_path, build):
+    world = SimWorld(tmp_path, sim_params(batch_cap=4))
+    world.register(1, 0.0)
+    world.register(2, 0.0)
+    world.controller.sync_registrations(
+        ChainSnapshot(world.params.netuid, world.now, world.now, (
+            Registration(0, "owner", 1, coldkey="burn-owner"),
+            Registration(1, "hk1", 1001, world.now, coldkey="shared-owner"),
+            Registration(2, "hk2", 1002, world.now, coldkey="shared-owner"),
+        )),
+        world.clock(),
+    )
+    before = len(world.publisher.snapshots)
+    assert [seat.reg.coldkey for seat in world.controller.state.queue.values()] == ["shared-owner"] * 2
+    selection = select_round(
+        world.controller.state.queue,
+        {"hk1": Verdict("hk1", True), "hk2": Verdict("hk2", True)},
+        lambda reg: build.batch(reg),
+        4,
+    )
+    assert [entry.reg.uid for entry in selection.entries] == [1] and selection.skipped == ()
+    replayed = load(world.root / JOURNAL_FILE)
+    assert replayed.queue == world.controller.state.queue
+    assert replay(read_journal(world.root / JOURNAL_FILE)).queue == replayed.queue
+    world.reopen()
+    assert world.controller.publish(world.clock())
+    text = json.dumps(world.publisher.snapshots[-1])
+    assert "coldkey" not in text and "shared-owner" not in text
+    assert len(world.publisher.snapshots) == before + 1
 
 
 def test_pending_does_not_count_leased_seats_or_change_valid_ahead(tmp_path, build):
