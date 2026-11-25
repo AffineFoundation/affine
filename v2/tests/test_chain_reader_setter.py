@@ -41,11 +41,6 @@ def test_snapshot_holds_every_registration_at_one_block():
     seat = snap.registrations[3]
     assert (seat.uid, seat.registration_block) == (3, 4003)
     assert seat.registered_at == chain.now - BLOCK_SECONDS * (5000 - 4003)
-    assert [reg.coldkey for reg in snap.registrations] == [f"ck{uid}" for uid in range(5)]
-    chain.owners.update({2: "shared"})
-    shared = Reader(chain, 120, clock=lambda: chain.now).snapshot()
-    assert shared.registrations[2].coldkey == "shared"
-    assert len({reg.coldkey for reg in snap.registrations}) == len(snap.registrations)
     assert reader.block_hash(7) == chain.block_hash(7)
 
 
@@ -53,8 +48,6 @@ def test_snapshot_holds_every_registration_at_one_block():
     "damage",
     [
         lambda chain: chain.keys.pop(2),  # a hotkey is missing
-        lambda chain: chain.owners.pop(2),  # an owner is missing
-        lambda chain: chain.owners.update({2: ""}),  # an owner is empty
         lambda chain: chain.born.pop(2),  # a registration block is missing
         lambda chain: setattr(chain, "uid_count", lambda block: 9),  # the UID count disagrees
         lambda chain: chain.keys.update({2: ""}),  # a hotkey is empty
@@ -138,7 +131,6 @@ class StubSubtensor:
 
     def __init__(self) -> None:
         self.executed: list[tuple] = []
-        self.map_reads: list[tuple] = []
 
     def block_info(self, block):
         return SimpleNamespace(number=block, hash=f"0xhash{block}", timestamp=datetime.fromtimestamp(1_800_000_000, timezone.utc))
@@ -147,12 +139,7 @@ class StubSubtensor:
         return {"SubnetworkN": 2, "LastUpdate": [10, 20], "WeightsSetRateLimit": 100, "WeightsVersionKey": 7}[item]
 
     def query_map(self, item, params, *, block=None):
-        self.map_reads.append((item, params, block))
-        return {
-            "Keys": [(0, "hk0"), (1, "hk1")],
-            "BlockAtRegistration": [(0, 5), (1, 800)],
-            "Owner": [("hk0", "ck0"), ("hk1", "ck1"), ("other-net-hotkey", "other-net-coldkey")],
-        }[item]
+        return {"Keys": [(0, "hk0"), (1, "hk1")], "BlockAtRegistration": [(0, 5), (1, 800)]}[item]
 
     def plan(self, intent, wallet):
         return SimpleNamespace(signer_address="hk0", violations=["too soon"])
@@ -162,7 +149,7 @@ class StubSubtensor:
         return SimpleNamespace(success=True, message="", block_hash="0xabc")
 
 
-ITEMS = ("SubnetworkN", "LastUpdate", "WeightsSetRateLimit", "WeightsVersionKey", "Keys", "BlockAtRegistration", "Owner")
+ITEMS = ("SubnetworkN", "LastUpdate", "WeightsSetRateLimit", "WeightsVersionKey", "Keys", "BlockAtRegistration")
 STUB_SDK = SimpleNamespace(
     storage=SimpleNamespace(SubtensorModule=SimpleNamespace(**{name: name for name in ITEMS})),
     SetWeights=lambda **fields: fields,
@@ -176,11 +163,6 @@ def test_sdk_client_reads_at_one_block_and_submits_exactly_once():
     assert client.signer() == "hk0"
     snap = Reader(client, 120, clock=lambda: 1_800_000_000).snapshot()
     assert snap.block == 900 and snap.hotkeys() == {0: "hk0", 1: "hk1"}
-    assert [reg.coldkey for reg in snap.registrations] == ["ck0", "ck1"]
-    owner_reads = [call for call in chain.map_reads if call[0] == "Owner"]
-    assert len(owner_reads) == 1
-    item, params, block = owner_reads[0]
-    assert item == "Owner" and params == [] and block == 900, "Owner is a hotkey-keyed plain map, with no netuid"
     assert snap.registrations[1].registration_block == 800 and client.block_hash(3) == "0xhash3"
     assert client.last_update(900) == [10, 20] and client.rate_limit(900) == 100
     assert client.plan({1: 1.0}) == ("hk0", ["too soon"])
@@ -191,14 +173,6 @@ def test_sdk_client_reads_at_one_block_and_submits_exactly_once():
     for call in (lambda reader: reader.submit({1: 1.0}), lambda reader: reader.signer()):
         with pytest.raises(ConfigError):
             call(SubtensorClient(120, chain, sdk=STUB_SDK))  # no wallet: this client can only read
-
-
-def test_sdk_client_reads_owners_without_a_wallet_and_maps_them_back_through_subnet_keys():
-    chain = StubSubtensor()
-    client = SubtensorClient(120, chain, sdk=STUB_SDK)
-    assert client.coldkeys(700) == {0: "ck0", 1: "ck1"}
-    assert chain.map_reads == [("Keys", [120], 700), ("Owner", [], 700)]
-    assert chain.executed == [] and client.wallet is None
 
 
 def refuse(error):

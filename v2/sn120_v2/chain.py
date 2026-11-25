@@ -46,7 +46,6 @@ class ChainClient(Protocol):
     def block_hash(self, block: int) -> str: ...
     def uid_count(self, block: int) -> int: ...
     def hotkeys(self, block: int) -> Mapping[int, str]: ...  # UID -> hotkey
-    def coldkeys(self, block: int) -> Mapping[int, str]: ...  # UID -> owner coldkey
     def registration_blocks(self, block: int) -> Mapping[int, int]: ...  # UID -> block of its registration
     def last_update(self, block: int) -> Sequence[int]: ...  # by UID: block of its last weight write
     def rate_limit(self, block: int) -> int: ...  # blocks a validator must wait between two weight writes
@@ -76,24 +75,18 @@ class Reader:
             raise InfraError(f"the chain head is {lag} s old: the node is behind")
         count = _read("the UID count", lambda: self.client.uid_count(block))
         hotkeys = dict(_read("the hotkeys", lambda: self.client.hotkeys(block)))
-        coldkeys = dict(_read("the coldkeys", lambda: self.client.coldkeys(block)))
         born = dict(_read("the registration blocks", lambda: self.client.registration_blocks(block)))
         uids = list(range(count))
-        if count < 1 or sorted(hotkeys) != uids or sorted(coldkeys) != uids or sorted(born) != uids:
+        if count < 1 or sorted(hotkeys) != uids or sorted(born) != uids:
             raise InfraError(
-                f"partial chain read at block {block}: {len(hotkeys)} hotkeys, {len(coldkeys)} coldkeys "
-                f"and {len(born)} registration blocks for {count} UIDs"
+                f"partial chain read at block {block}: {len(hotkeys)} hotkeys and {len(born)} registration blocks for {count} UIDs"
             )
         registrations = []
         for uid in uids:
-            if (
-                not (isinstance(hotkeys[uid], str) and hotkeys[uid])
-                or not (isinstance(coldkeys[uid], str) and coldkeys[uid])
-                or not 0 <= born[uid] <= block
-            ):
+            if not (isinstance(hotkeys[uid], str) and hotkeys[uid]) or not 0 <= born[uid] <= block:
                 raise InfraError(f"partial chain read at block {block}: bad registration for UID {uid}")
             registered_at = max(1, taken_at - BLOCK_SECONDS * (block - born[uid]))
-            registrations.append(Registration(uid, hotkeys[uid], born[uid], registered_at, coldkeys[uid]))
+            registrations.append(Registration(uid, hotkeys[uid], born[uid], registered_at))
         return ChainSnapshot(self.netuid, block, taken_at, tuple(registrations))
 
     def block_hash(self, block: int) -> str:
@@ -230,17 +223,9 @@ class FakeChain:
     """An in-memory ``ChainClient`` for tests and the CPU simulation. It keeps the rate limit as the real chain does."""
 
     def __init__(
-        self,
-        hotkeys: Mapping[int, str],
-        validator_hotkey: str,
-        *,
-        coldkeys: Mapping[int, str] | None = None,
-        block: int = 5000,
-        limit: int = 100,
-        now: int = 1_800_000_000,
+        self, hotkeys: Mapping[int, str], validator_hotkey: str, *, block: int = 5000, limit: int = 100, now: int = 1_800_000_000
     ) -> None:
         self.keys = dict(hotkeys)
-        self.owners = {uid: f"ck{uid}" for uid in self.keys} if coldkeys is None else dict(coldkeys)
         self.born = {uid: block - 1000 + uid for uid in self.keys}
         self.updated = {uid: 0 for uid in self.keys}
         self.validator_hotkey, self.block, self.limit, self.now = validator_hotkey, block, limit, now
@@ -272,10 +257,6 @@ class FakeChain:
     def hotkeys(self, block: int) -> dict[int, str]:
         self._up()
         return dict(self.keys)
-
-    def coldkeys(self, block: int) -> dict[int, str]:
-        self._up()
-        return dict(self.owners)
 
     def registration_blocks(self, block: int) -> dict[int, int]:
         self._up()
@@ -384,13 +365,6 @@ class SubtensorClient:
 
     def hotkeys(self, block: int) -> dict[int, str]:
         return {uid: str(hotkey) for uid, hotkey in self._map("Keys", block).items()}
-
-    def coldkeys(self, block: int) -> dict[int, str]:
-        # Owner is a hotkey-keyed plain map, not a netuid-keyed double map. Read
-        # it once, then keep only the owners of this subnet's registered keys.
-        hotkeys = self._map("Keys", block)
-        owners = dict(self.chain.query_map(getattr(self.items, "Owner"), [], block=block))
-        return {int(uid): str(owners[str(hotkey)]) for uid, hotkey in hotkeys.items() if str(hotkey) in owners}
 
     def registration_blocks(self, block: int) -> dict[int, int]:
         return {uid: int(born) for uid, born in self._map("BlockAtRegistration", block).items()}
