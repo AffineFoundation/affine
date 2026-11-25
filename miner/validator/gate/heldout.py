@@ -283,7 +283,7 @@ class Rounds:
     @staticmethod
     def public_commit(r):
         return dict(schema=SCHEMA, round_id=r['id'], head=r['head'], set_size=r['n'], pool=r['pool'], env=r['env'],
-                    commitment=r['commitment'], opened_at=r['opened_at'], opened_at_cr=r['opened_at_cr'], opened_epoch=r['opened_epoch'],
+                    commitment=r['commitment'], opened_at=r['opened_at'], opened_epoch=r['opened_epoch'],
                     baseline=dict(blocks=r['blocks'], k_block=r['k_block'], selection='block 0: k_block on all of S; keep 0 < c < k_block',
                                   rollouts_per_task_p=(r['blocks'] - 1) * r['k_block'], candidate_seeds='block 1 request seeds (CRN)'),
                     k_cand=r['k_cand'], bar_z=r['bar_z'], z_inclusive=r['z_inclusive'], sigma_run=public_sigma(r),

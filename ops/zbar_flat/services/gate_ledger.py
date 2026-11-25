@@ -56,7 +56,25 @@ def mtime(p):
 
 
 def cr(t):
-    return time.strftime('%Y-%m-%d %H:%M:%S CR (UTC-6)', time.gmtime(t - 6 * 3600)) if t else None
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(t)) if t is not None else None
+
+
+def public_json(value):
+    if isinstance(value, dict):
+        out = {k: public_json(v) for k, v in value.items() if not str(k).endswith('_cr')}
+        for k, v in value.items():
+            if str(k).endswith('_at_cr') and str(k)[:-3] not in value:
+                out[str(k)[:-3]] = public_json(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [public_json(v) for v in value]
+    if isinstance(value, str):
+        import re
+        from datetime import datetime, timedelta, timezone
+        m = re.fullmatch(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?) CR \(UTC-6\)', value)
+        if m:
+            return int(datetime.fromisoformat(m[1]).replace(tzinfo=timezone(timedelta(hours=-6))).timestamp())
+    return value
 
 
 def manifest_window(e):
@@ -103,7 +121,7 @@ def entry(e):
                                         fetched=tl.get('fetched'), serve_start=tl.get('serve_start'), served=tl.get('served'),
                                         run_start=tl.get('run_start'), end=tl.get('run_done')),
                         decided_at=dec.get('decided_at'), finalized=mtime(life / 'FINALIZED.json')),
-        decided_at_cr=dec.get('decided_at_cr'), timing_s=dec.get('timing'))
+        timing_s=dec.get('timing'))
 
 
 def private_reject(e, ent):
@@ -199,7 +217,7 @@ def tick():
             ent['ledgered_at'] = time.time(); append(LEDGER, ent); ledger.append(ent); seen.add((e, ent['candidate']))
         if ent['decision'] == 'red' and (e, ent['candidate']) not in rseen:
             append(REJECTED, private_reject(e, ent), 0o600); rseen.add((e, ent['candidate']))
-    doc = dict(version=VERSION, updated_at=time.time(), updated_at_cr=cr(time.time()),
+    doc = dict(version=VERSION, updated_at=time.time(),
                rule=(_prior_rule() or HELDOUT_RULE) + ' History: E152-E153 paired z > -1, E154-E167 paired z >= -1.5, E168-E270 paired z > 0 on a 1000-task '
                     'private probe sample minus the epoch batch (cap-hit < 0.20); held-out gate from E271. ' + SCORE_RULE() + ' Append-only.'
                     + K1_RULE_SUFFIX(),
@@ -211,13 +229,13 @@ def tick():
         if zb:
             doc['z_bar'] = zb
             zp = SITE_OUT.with_name('gate'); zp.mkdir(exist_ok=True); zp = zp / 'zbar.json'; zt_ = zp.with_name('.zbar.json.tmp')
-            zt_.write_text(json.dumps(zb, indent=1, sort_keys=True) + '\n'); os.chmod(zt_, 0o644); os.replace(zt_, zp)
+            zt_.write_text(json.dumps(public_json(zb), indent=1, sort_keys=True) + '\n'); os.chmod(zt_, 0o644); os.replace(zt_, zp)
     except Exception as ex:
         doc['z_bar'] = None; print('z_bar publish error: %s' % ex, flush=True)
     s = json.dumps(doc, sort_keys=True)
     for bad in ('"seed"', '"indices"', '"per_task"', 'revealed_'):
         if bad in s: raise ValueError('refusing to publish %s' % bad)
-    tmp = SITE_OUT.with_name(SITE_OUT.name + '.tmp'); tmp.write_text(json.dumps(doc, indent=1, sort_keys=True) + '\n')
+    tmp = SITE_OUT.with_name(SITE_OUT.name + '.tmp'); tmp.write_text(json.dumps(public_json(doc), indent=1, sort_keys=True) + '\n')
     os.chmod(tmp, 0o644); os.replace(tmp, SITE_OUT)
     return doc['counts']
 

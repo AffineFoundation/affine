@@ -129,7 +129,7 @@ def heldout_public():
     if h.get('enabled') is not True: return None
     try: cur = rj(HOME / 'subnet120/affine/website/gate/heldout/current.json')   # absent until the first round opens
     except Exception: cur = None
-    keep = ('round_id', 'head', 'set_size', 'pool', 'env', 'commitment', 'opened_at', 'opened_at_cr', 'opened_epoch', 'baseline', 'k_cand',
+    keep = ('round_id', 'head', 'set_size', 'pool', 'env', 'commitment', 'opened_at', 'opened_epoch', 'baseline', 'k_cand',
             'bar_z', 'z_inclusive', 'status', 'rule')
     return dict(from_epoch=h.get('from_epoch'), bar_z=h.get('bar_z', 1.0), z_inclusive=h.get('z_inclusive', False), se=heldout_se(h),
                 current_round=({k: cur.get(k) for k in keep} if isinstance(cur, dict) else None),
@@ -540,8 +540,26 @@ def train_params_public(d):
     return d
 
 
+def public_json(value):
+    if isinstance(value, dict):
+        out = {k: public_json(v) for k, v in value.items() if not str(k).endswith('_cr')}
+        for k, v in value.items():
+            if str(k).endswith('_at_cr') and str(k)[:-3] not in value:
+                out[str(k)[:-3]] = public_json(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [public_json(v) for v in value]
+    if isinstance(value, str):
+        import re
+        from datetime import datetime, timedelta, timezone
+        m = re.fullmatch(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?) CR \(UTC-6\)', value)
+        if m:
+            return int(datetime.fromisoformat(m[1]).replace(tzinfo=timezone(timedelta(hours=-6))).timestamp())
+    return value
+
+
 def write():
-    d = build()
+    d = public_json(build())
     s = json.dumps(d, sort_keys=True)
     # guard the seed_hex KEY, not the word: the public held-out rule text mentions seed_hex (feed was stale from 18:54Z 2026-10-30)
     for bad in ('"seed_hex":', 'SAMPLE', 'private', 'r2.cloudflarestorage', 'X-Amz'):

@@ -87,8 +87,30 @@ def log(**kw):
     kw['at'] = round(time.time(), 1); kw['at_cr'] = cr(kw['at']); print(json.dumps(kw, default=str), flush=True)
 
 
+def public_json(value):
+    if isinstance(value, dict):
+        out = {k: public_json(v) for k, v in value.items() if not str(k).endswith('_cr')}
+        for k, v in value.items():
+            if str(k).endswith('_at_cr') and str(k)[:-3] not in value:
+                out[str(k)[:-3]] = public_json(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [public_json(v) for v in value]
+    if isinstance(value, str):
+        import re
+        from datetime import datetime, timedelta, timezone
+        m = re.fullmatch(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?) CR \(UTC-6\)', value)
+        if m:
+            return int(datetime.fromisoformat(m[1]).replace(tzinfo=timezone(timedelta(hours=-6))).timestamp())
+    return value
+
+
 def wj(path, obj, mode=0o600):
-    path = Path(path); path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = Path(path)
+    try: path.relative_to(SITE)
+    except ValueError: pass
+    else: obj = public_json(obj)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     t = path.with_name('.' + path.name + '.tmp'); fd = os.open(t, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     with os.fdopen(fd, 'w') as f: f.write(json.dumps(obj, indent=1, sort_keys=True) + '\n')
     os.chmod(t, mode); os.replace(t, path)
@@ -887,6 +909,7 @@ _HO_FORBID_OPEN = ('"seed"', '"indices"', '"per_task"', '"sample_indices"', '"he
 
 
 def _ho_write_public(path, doc, open_round):
+    doc = public_json(doc)
     data = json.dumps(doc, indent=1, sort_keys=True)
     if open_round:
         for bad in _HO_FORBID_OPEN:
@@ -930,7 +953,7 @@ def heldout_publish():
         closed = rj(R.d(rid) / 'CLOSED.json'); b = R.baseline(rid); turns = R.turns(rid)
         pubc = dict(R.public_commit(r), rule=HO_PUBLIC_RULE); gt = _green_turn(closed, turns); bb = b if gt else None   # baseline numbers: GREEN rounds only
         row = dict(pubc, status=('closed' if closed else 'open'), closed=closed,
-                   baseline=dict(pubc['baseline'], done=bool(b), done_at_cr=(b or {}).get('done_at_cr'), head_pass_on_kept=(bb or {}).get('head_pass'),
+                   baseline=dict(pubc['baseline'], done=bool(b), done_at=(b or {}).get('done_at'), head_pass_on_kept=(bb or {}).get('head_pass'),
                                  kept_tasks=len((bb or {}).get('kept') or []) or None, scoring=(b or {}).get('scoring'),
                                  frozen_settings=(b or {}).get('settings'), settings_hash=(b or {}).get('settings_hash')),
                    turns=[dict(epoch=t.get('epoch'), candidate=t.get('candidate'), decision=t.get('decision'), z=t.get('z')) for t in turns],
@@ -976,7 +999,7 @@ def heldout_publish():
         try: (out / 'current.json').unlink()
         except FileNotFoundError: pass
     idx = [{k: v for k, v in row.items() if k != 'turns'} | dict(turns=len(row['turns'])) for row in rows]
-    _ho_write_public(out / 'index.json', dict(schema=HO.SCHEMA + '-index', updated_at_cr=cr(), current=(R.current() or {}).get('id'),
+    _ho_write_public(out / 'index.json', dict(schema=HO.SCHEMA + '-index', updated_at=time.time(), current=(R.current() or {}).get('id'),
                                               rounds=idx[-200:]), True)
 
 
@@ -1152,17 +1175,17 @@ def publish(cur_epoch, lag=2):
         if not d.name.isdigit(): continue
         e = int(d.name); c = rj(d / 'COMMIT.json')
         if not c: continue
-        ent = dict(epoch=e, head=c['head'], sample_size=c['sample_size'], commitment=c['commitment'], drawn_at_cr=c['drawn_at_cr'])
+        ent = dict(epoch=e, head=c['head'], sample_size=c['sample_size'], commitment=c['commitment'], drawn_at=c.get('drawn_at'))
         if c.get('heldout_round'): ent['heldout_round'] = c['heldout_round']
         dec = rj(d / 'DECISION.json')
         if dec:
             ev = dec.get('evaluated') or {}
-            ent.update(candidate=dec.get('candidate'), decision=dec.get('decision'), mode=dec.get('mode'), decided_at_cr=dec.get('decided_at_cr'),
+            ent.update(candidate=dec.get('candidate'), decision=dec.get('decision'), mode=dec.get('mode'), decided_at=dec.get('decided_at'),
                        paired_tasks=ev.get('n'), head_pass=ev.get('h_pass'), candidate_pass=ev.get('c_pass'), paired_z=ev.get('z'),
                        candidate_cap_rate=ev.get('c_cap_rate'), reasons=dec.get('reasons'), batch_tasks_dropped=dec.get('batch_overlap'))
         # Before DECISION.json only the commitment is public; afterwards the k1 transparency sidecar reveals seed, ids and grades (/gate/reveal/).
         entries.append(ent)
-    wj(SITE / 'index.json', dict(version=G.VERSION, updated_at_cr=cr(), sample_ids_published=('after-rotation (standing sample)' if opts()['standing'] else 'after-decision'),
+    wj(SITE / 'index.json', dict(version=G.VERSION, updated_at=time.time(), sample_ids_published=('after-rotation (standing sample)' if opts()['standing'] else 'after-decision'),
         standing_sample=('From the first epoch whose COMMIT.json carries standing_id: one PRIVATE standing sample is reused across turns, so after a RED the '
                          'head is not re-probed (its cached probe is reused) and a promoted candidate\'s own probe on that sample (same CRN plan seed) '
                          'becomes the new head probe. The standing sample is rotated every 24 h or whenever the head must be re-probed anyway '

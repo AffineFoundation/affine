@@ -35,7 +35,22 @@ def log(**k):
 def rj(p, d=None):
     try: return json.load(open(p))
     except Exception: return d
+def public_json(value):
+    if isinstance(value, dict):
+        out = {k: public_json(v) for k, v in value.items() if not str(k).endswith('_cr')}
+        for k, v in value.items():
+            if str(k).endswith('_at_cr') and str(k)[:-3] not in value:
+                out[str(k)[:-3]] = public_json(v)
+        return out
+    if isinstance(value, (list, tuple)): return [public_json(v) for v in value]
+    if isinstance(value, str):
+        m = re.fullmatch(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?) CR \(UTC-6\)', value)
+        if m:
+            from datetime import datetime, timedelta, timezone
+            return int(datetime.fromisoformat(m[1]).replace(tzinfo=timezone(timedelta(hours=-6))).timestamp())
+    return value
 def wj(p, o, mode=0o644):
+    if p == OUTJ: o = public_json(o)
     t = p + '.tmp'; json.dump(o, open(t, 'w'), indent=1); os.chmod(t, mode); os.replace(t, p)
 def pod(cmd, timeout=120, inp=None):
     p = subprocess.run([PP, cmd], capture_output=True, text=True, timeout=timeout, input=inp)
@@ -261,9 +276,9 @@ def publish(ks, cur=None):
                evaluating=(dict(king=cur, **({k: v for k, v in (S.get('running') or {}).items() if k in ('started',)})) if cur else None),
                kings=rows)
     wj(OUTP, out, 0o600)
-    wj(OUTJ, dict(version='sn120-kings-v1', updated_at=out['updated_at'], updated_at_cr=out['updated_at_cr'],
+    wj(OUTJ, dict(version='sn120-kings-v1', updated_at=out['updated_at'],
                   about='King (head) list in crowned order.',
-                  kings=[{f: r.get(f) for f in ('king', 'epoch', 'head_from_epoch', 'era', 'parent', 'crowned_at', 'crowned_at_cr')} for r in rows]))
+                  kings=[{f: r.get(f) for f in ('king', 'epoch', 'head_from_epoch', 'era', 'parent', 'crowned_at')} for r in rows]))
 def teardown():
     """History pod only: remove THIS pod (exact lium id) once no history king is left to claim. Logged; never touches other pods."""
     lid = CFG['lium_id']

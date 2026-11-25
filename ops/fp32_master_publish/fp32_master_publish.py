@@ -29,13 +29,32 @@ POD_DIR = '/workspace/affine-mimo-trainer-prod/fp32-publish'; POD_UP = POD_DIR +
 LOCAL_UP = RA / 'code' / 'pod_upload.py'
 STORE = '/workspace/affine-mimo-trainer-prod/fp32-master'
 PREFIX = 'mimo/affine-mimo9b-grpo-20261013/checkpoints/%s/fp32-master/'
-PUBLIC_HEADS = int(os.environ.get('FP32_PUBLIC_HEADS', '3'))     # newest N published heads get live download links
+PUBLIC_HEADS = max(0, int(os.environ.get('FP32_PUBLIC_HEADS', '3')))  # newest N published heads get live download links
 URL_SECONDS = 7 * 24 * 3600; URL_REFRESH_BELOW = 3 * 24 * 3600   # presigned GET lifetime / refresh when less is left
 MAX_ATTEMPTS = 12; RETRY_SECONDS = 300
 sys.path.insert(0, '/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/code')
-def cr(t=None): return time.strftime('%Y-%m-%d %H:%M:%S CR', time.gmtime((t or time.time()) - 6 * 3600))
+def cr(t=None):
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() if t is None else t))
+def public_json(value):
+    if isinstance(value, dict):
+        out = {k: public_json(v) for k, v in value.items() if not str(k).endswith('_cr')}
+        for k, v in value.items():
+            if str(k).endswith('_at_cr') and str(k)[:-3] not in value:
+                out[str(k)[:-3]] = public_json(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [public_json(v) for v in value]
+    if isinstance(value, str):
+        import re
+        from datetime import datetime, timedelta, timezone
+        m = re.fullmatch(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?) CR \(UTC-6\)', value)
+        if m:
+            return int(datetime.fromisoformat(m[1]).replace(tzinfo=timezone(timedelta(hours=-6))).timestamp())
+    return value
+def wj_public(path, doc):
+    wj(path, public_json(doc))
 def log(**k):
-    k['at_cr'] = cr(); LOG.parent.mkdir(parents=True, exist_ok=True)
+    k['at'] = time.time(); LOG.parent.mkdir(parents=True, exist_ok=True)
     with open(LOG, 'a') as f: f.write(json.dumps(k, sort_keys=True) + '\n')
 def rj(p, d=None):
     try: return json.loads(Path(p).read_text())
@@ -131,33 +150,34 @@ def publish(e, C, fm):
                meta_json=dict(r2_key=PREFIX % C + 'meta.json'), tensor_sha256=meta['tensor_sha256'], tensor_file=meta['tensor_file'],
                produced_from=dict(head_bf16_sha256=meta['input_bf16_sha256'], head_master_digest=meta['input_master_digest'],
                                   head_master_source=meta['source'], optimizer_step=meta['optimizer_step']),
-               turn='/k1/turns/%d/turn.json' % e, published_at=old.get('published_at') or time.time(),
-               published_at_cr=old.get('published_at_cr') or cr(), upload_seconds=res['seconds'] if res['files'] else old.get('upload_seconds', 0.0), publish_seconds=round(time.time() - t0, 1),
+               turn='/k1/turns/%d/turn.json' % e, published_at=old.get('published_at') or public_json(old.get('published_at_cr')) or time.time(),
+               upload_seconds=res['seconds'] if res['files'] else old.get('upload_seconds', 0.0), publish_seconds=round(time.time() - t0, 1),
                bytes=sum(v['bytes'] for v in meta['files'].values()), tensors=len(meta['tensor_sha256']),
                contents='fp32 master weights only (no optimizer state: the step is stateless, fresh zero moments every turn)',
                access='public: presigned R2 GET links in `download` (same bucket and mechanism as the bf16 head read_urls); '
                       'miner/kit/fetch_fp32_master.py downloads and verifies them',
                fetch='python3 miner/kit/fetch_fp32_master.py --head %s --out ./head-fp32-master' % C)
-    wj(OUTD / ('%s.json' % C), man)
+    wj_public(OUTD / ('%s.json' % C), man)
     idx = rj(OUTD / 'index.json', {}) or {}
     idx.setdefault('version', 'sn120-fp32-head-master-index-v1'); idx.setdefault('heads', [])
     idx['heads'] = [h for h in idx['heads'] if h.get('checkpoint') != C] + [dict(epoch=e, checkpoint=C, master_digest=meta['master_digest'],
-                     manifest='/k1/fp32-master/%s.json' % C, r2_prefix=PREFIX % C, published_at_cr=man['published_at_cr'])]
+                     manifest='/k1/fp32-master/%s.json' % C, r2_prefix=PREFIX % C, published_at=man['published_at'])]
     idx['heads'].sort(key=lambda h: h['epoch'])
-    idx['updated_at_cr'] = cr(); wj(OUTD / 'index.json', idx)
+    idx['updated_at'] = time.time(); wj_public(OUTD / 'index.json', idx)
     if pinned: pod('rm -f %s/%s/PIN' % (STORE, entry), timeout=60)
     log(event='published', epoch=e, checkpoint=C[:12], digest=meta['master_digest'][:16], upload_s=res['seconds'],
         uploaded=sorted(res['files']), total_s=man['publish_seconds'], gb=round(man['bytes'] / 1e9, 2))
 def refresh_links(force=False):
     """Live download links for the newest PUBLIC_HEADS published heads; older heads keep their manifest (sha256s), no links."""
     idx = rj(OUTD / 'index.json', {}) or {}; heads = sorted(idx.get('heads') or [], key=lambda h: h['epoch'])
-    live = heads[-PUBLIC_HEADS:]; live_c = {h['checkpoint'] for h in live}; b = None; now = time.time()
+    live = heads[-PUBLIC_HEADS:] if PUBLIC_HEADS > 0 else []
+    live_c = {h['checkpoint'] for h in live}; b = None; now = time.time()
     for h in heads:
         p = OUTD / ('%s.json' % h['checkpoint']); man = rj(p)
         if not man: continue
         if h['checkpoint'] not in live_c:
             if man.get('download'):
-                man.pop('download'); wj(p, man)
+                man.pop('download'); wj_public(p, man)
             continue
         dl = man.get('download') or {}
         if not force and dl.get('expires_at', 0) - now > URL_REFRESH_BELOW: continue
@@ -166,16 +186,16 @@ def refresh_links(force=False):
             for f in man['files']: b.client.head_object(Bucket=b.name, Key=man['files'][f]['r2_key'])
         except Exception as x:
             alert('link_error', checkpoint=C[:12], error=repr(x)[:200]); continue
-        man['download'] = dict(expires_at=exp, expires_at_cr=cr(exp), signed_at_cr=cr(now),
+        man['download'] = dict(expires_at=exp, signed_at=now,
                                files={f: b.presign(man['files'][f]['r2_key'], 'get_object', URL_SECONDS) for f in sorted(man['files'])},
                                meta_json=b.presign(man['meta_json']['r2_key'], 'get_object', URL_SECONDS),
                                note='presigned R2 GET links, valid 7 days, re-signed when fewer than 3 days are left; '
                                     'check every file against files.<name>.sha256')
-        wj(p, man); log(event='links_signed', checkpoint=C[:12], expires_at_cr=cr(exp))
-    if heads:
+        wj_public(p, man); log(event='links_signed', checkpoint=C[:12], expires_at=exp)
+    if heads and PUBLIC_HEADS > 0:
         k = heads[-1]
-        wj(OUTD / 'current.json', dict(version='sn120-fp32-head-master-current-v1', epoch=k['epoch'], checkpoint=k['checkpoint'],
-                                         manifest=k['manifest'], master_digest=k['master_digest'], updated_at_cr=cr(),
+        wj_public(OUTD / 'current.json', dict(version='sn120-fp32-head-master-current-v1', epoch=k['epoch'], checkpoint=k['checkpoint'],
+                                         manifest=k['manifest'], master_digest=k['master_digest'], updated_at=time.time(),
                                          note='newest GREEN head with a published fp32 master; compare checkpoint with mining.json checkpoint'))
 def tick():
     st = rj(STATE, {}) or {}; done = st.setdefault('done', {}); fail = st.setdefault('fail', {}); nxt = st.setdefault('next_try', {})

@@ -135,7 +135,7 @@ def heldout_public():
     except Exception: cur = None
     if h.get('baseline') == 'prior-v1':   # prior-v1 baseline (RA/20261101-baseline-switch)
         import prior_gate as _PG; return dict(_PG.public_params(h, cur), bar_z=h.get('bar_z', 1.0), z_inclusive=h.get('z_inclusive', False))
-    keep = ('round_id', 'head', 'set_size', 'pool', 'env', 'commitment', 'opened_at', 'opened_at_cr', 'opened_epoch', 'baseline', 'k_cand',
+    keep = ('round_id', 'head', 'set_size', 'pool', 'env', 'commitment', 'opened_at', 'opened_epoch', 'baseline', 'k_cand',
             'bar_z', 'z_inclusive', 'sigma_run', 'status', 'rule')
     return dict(from_epoch=h.get('from_epoch'), bar_z=h.get('bar_z', 1.0), z_inclusive=h.get('z_inclusive', False), se=heldout_se(h),
                 set_size_next_round=h.get('n', 1000), k_cand_next_round=h.get('k_cand', 4), head_rollouts_per_kept_task=12,
@@ -555,8 +555,26 @@ def train_params_public(d):
     return d
 
 
+def public_json(value):
+    if isinstance(value, dict):
+        out = {k: public_json(v) for k, v in value.items() if not str(k).endswith('_cr')}
+        for k, v in value.items():
+            if str(k).endswith('_at_cr') and str(k)[:-3] not in value:
+                out[str(k)[:-3]] = public_json(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [public_json(v) for v in value]
+    if isinstance(value, str):
+        import re
+        from datetime import datetime, timedelta, timezone
+        m = re.fullmatch(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?) CR \(UTC-6\)', value)
+        if m:
+            return int(datetime.fromisoformat(m[1]).replace(tzinfo=timezone(timedelta(hours=-6))).timestamp())
+    return value
+
+
 def write():
-    d = build()
+    d = public_json(build())
     s = json.dumps(d, sort_keys=True)
     # guard the seed_hex KEY, not the word: the public held-out rule text mentions seed_hex (feed was stale from 18:54Z 2026-10-30)
     for bad in ('"seed_hex":', 'SAMPLE', 'private', 'r2.cloudflarestorage', 'X-Amz'):

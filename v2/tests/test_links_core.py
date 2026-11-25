@@ -246,13 +246,21 @@ def test_the_index_lists_the_hotkeys_that_have_a_link():
     assert index == {
         "version": "affine-ff-link-v1",
         "issued_at": NOW,
-        "issued_at_cr": "2027-01-15 02:00:00 CR (UTC-6)",  # 08:00:00 UTC
         "expires_at": NOW + 7200,
         "hotkeys": sorted([A.hotkey, B.hotkey]),
         "reissue_every_seconds": 600,
         "link_file": "https://site.test/ff/links/<hotkey>.json",
     }
     assert json.loads(links.link_files([], FakePresigner(), NOW, URL)["ff/links.json"])["hotkeys"] == []
+
+
+def test_link_files_have_no_location_bearing_timestamps():
+    files = links.link_files([A.hotkey, B.hotkey], FakePresigner(), NOW, URL)
+    forbidden = (b"issued_at_cr", b"CR (UTC-6)", b"Costa Rica", b"America/Costa_Rica", b"UTC-6")
+    for content in files.values():
+        assert all(marker not in content for marker in forbidden)
+    index = json.loads(files["ff/links.json"])
+    assert set(index) == {"version", "issued_at", "expires_at", "hotkeys", "reissue_every_seconds", "link_file"}
 
 
 @pytest.mark.parametrize("ttl_s, reissue_s", [(7 * 86400 + 1, 1800), (0, 0), (1800, 1800), (600, 1800), (86400, 0)])
