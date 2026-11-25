@@ -37,16 +37,16 @@ def test_v4_documentation_matches_admission_and_resolved_stage_cost(tmp_path):
         "stage_keys": ["train", "groups", "sft"],
         "stage_train_keys": sorted(STAGE_TRAIN_KEYS),
         "steps": "epochs (full passes) over the stage",
-        "cost": "sum over stages of steps * trained_tokens, including GRPO and SFT",
+        "cost": "sum over stages of steps * (grpo_tokens + sft_tokens) + grpo_tokens",
         "sft": "official verification requires a known prompt with official reward exactly 1",
     }
     assert doc["contract"]["training_time_floor"] is None
     for phrase in (
         "an ordered list of 1 to 5 stages (`max_stages`)",
         "`steps` means epochs: full passes over that stage's trainable rows, not gradient-update counts",
-        "Per-stage cost is `steps * trained_tokens`",
-        "file cost is the sum of this value over all stages",
-        "SFT trained tokens count in the same stage total",
+        "Per-stage cost is `steps * (grpo_tokens + sft_tokens) + grpo_tokens`",
+        "File cost is the sum of this value over all stages",
+        "SFT trained tokens count in the training passes, but have no q_old pass",
         "Official verification requires a prompt known to the official grader and an output whose official reward is exactly 1",
         "This recipe publishes no `sft_weight` MinerBound",
         "a miner may not set that key at either level until the bound is explicitly enabled",
