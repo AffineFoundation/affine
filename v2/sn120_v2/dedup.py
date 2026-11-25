@@ -30,15 +30,29 @@ STAGES = frozenset((STAGE_EXACT, STAGE_ROLLOUT, STAGE_KING_EXACT, STAGE_KING_ROL
 def normalized_rollouts(raw: bytes) -> frozenset[str] | None:
     """Hashes of stripped, whitespace-collapsed (prompt, output), rewards excluded.
 
-    All accepted affine batch versions share this group shape. An empty or
-    unparsable set is unknown evidence and fails open.
+    Legacy versions share the top-level group shape. V4 includes every stage's
+    GRPO rollouts and SFT outputs. An empty or unparsable set fails open.
     """
     try:
         body = json.loads(raw)
-        if not isinstance(body, dict) or not isinstance(body.get("groups"), list):
+        if not isinstance(body, dict):
+            return None
+        groups = body.get("groups")
+        if body.get("version") == "affine-batch-v4":
+            groups = []
+            stages = body.get("stages")
+            if not isinstance(stages, list):
+                return None
+            for stage in stages:
+                if not isinstance(stage, dict) or not isinstance(stage.get("groups", []), list) or not isinstance(stage.get("sft", []), list):
+                    return None
+                groups.extend(stage.get("groups", []))
+                groups.extend({"prompt": row.get("prompt"), "rollouts": [row]} if isinstance(row, dict) else row
+                              for row in stage.get("sft", []))
+        if not isinstance(groups, list):
             return None
         hashes: set[str] = set()
-        for group in body["groups"]:
+        for group in groups:
             if not isinstance(group, dict) or not isinstance(group.get("prompt"), str) or not isinstance(group.get("rollouts"), list):
                 return None
             prompt = " ".join(group["prompt"].split())
@@ -408,7 +422,7 @@ def dryrun(paths: Sequence[Path], params: Params, first_seen_unix: Sequence[int]
     It is deliberately an explicit-file tool: only the operator can choose which frozen batch and result belong
     together. Missing or invalid evidence is unknown and never creates a duplicate.
     """
-    from .admission import Batch, Invalid, check_batch, parse_groups, signal_counts
+    from .admission import Batch, Invalid, batch_signal_counts, check_batch, frozen_batch, parse_groups, signal_counts
 
     if first_seen_unix is not None and len(first_seen_unix) != len(paths):
         raise ContractError("--first-seen must occur once per --batch")
@@ -431,17 +445,17 @@ def dryrun(paths: Sequence[Path], params: Params, first_seen_unix: Sequence[int]
         floor = max(params.min_signal_rollouts, recipe.minibatches)
         # Read-only diagnostics: even a rejected file gets its actual activity count.
         # This is not a second admission path; ``admission`` retains the real rejection.
-        active = signal_counts(batch.groups, recipe)[0] if batch is not None else None
-        if active is None:
+        active = batch_signal_counts(batch, recipe) if batch is not None else None
+        if active is None and body.get("version") != "affine-batch-v4":
             try:
                 kept = parse_groups(body, hotkey, params.max_prompts, params.max_rollouts)
                 active = signal_counts(kept, recipe)[0]
             except (Invalid, ContractError, OverflowError, TypeError, ValueError):
                 active = None
         groups = body.get("groups") if isinstance(body, dict) else None
-        rollouts = sum(len(group.get("rollouts", ())) for group in groups) if isinstance(groups, list) else 0
+        rollouts = batch.n_rollouts if batch is not None else sum(len(group.get("rollouts", ())) for group in groups) if isinstance(groups, list) else 0
         reg = Registration(pos, hotkey, pos)
-        frozen = FrozenBatch(hotkey, sha256_hex(raw), str(path), body.get("version", ""), len(groups or ()), rollouts, train)
+        frozen = frozen_batch(batch, reg, str(path)) if batch is not None else FrozenBatch(hotkey, sha256_hex(raw), str(path), body.get("version", ""), len(groups or ()), rollouts, train)
         entries.append(Entry(pos, reg, frozen))
         cap = recipe.global_norm_cap
         reports.append({"queue_pos": pos, "batch_sha256": frozen.batch_sha256, "rollouts": rollouts,

@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
-from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, MIN_ROLLOUTS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
+from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMAT_V4, FORMATS, MIN_ROLLOUTS, NO_SIGNAL, RULES, STAGE_TRAIN_KEYS, TIME_LIMIT, TRAIN_COST, TRANSIENT
 from .canonical import digest, sha256_hex, to_jsonable
 from .envs.math_pool import ENV_ID, POOL_FILE, POOL_SHA256, POOL_V2_0_SHA256, Task, load_pool
 from .errors import ConfigError, ContractError, InfraError, V2Error
@@ -126,7 +126,9 @@ UPDATE_COST_S = 0.1
 BOX_TRIES = inspect.signature(LocalRunner.__init__).parameters["attempts"].default
 TRAIN_FORMATS = FORMATS[1:]  # the first format may not carry "train"
 # Batch content and non-public store zones. A snapshot that holds one of these is refused.
-PRIVATE_KEYS = frozenset({"groups", "rollouts", "put_url", "put_headers"})
+# ``stages`` is also the name of public, constant v4 contract documentation below. Only state can carry a private
+# stage plan; that documentation is added after the state has passed this fail-closed filter.
+PRIVATE_KEYS = frozenset({"groups", "rollouts", "sft", "stages", "stage_count", "sft_count", "n_stages", "n_sft", "put_url", "put_headers"})
 PRIVATE_ZONES = ("private/", "pending/")
 OWN_KEYS = ("snapshot_digest", "contract")
 # A presigned upload link signs these headers (``Presigner.presign_put``). An upload without them is refused.
@@ -160,12 +162,15 @@ RULE_CHANGELOG = (
     "- 2026-11-25 / `service` / phase alone → phase plus coarse public service state, reason and next-open estimate.",
     "- 2026-11-25 / local-delta measurement guidance / undocumented → a 100-task local delta has an SE of about 5.3 percentage points.",
     "- 2026-11-25 / per-round seating / the one-entry-per-round rule is hotkey-only; there is no coldkey seat limit.",
+    "- 2026-11-25 / `z_bar` / `z_bar=1` → `z_bar=0.5`: crown needs strict `z > 0.5`, pending the paired next-round confirmation (fresh paired `z > 0.5`) before any payout.",
+    "- 2026-11-25 / `affine-batch-v4` / flat GRPO batches only → 1–`max_stages` ordered GRPO/SFT stages, official SFT verification and summed per-stage training cost.",
 )
 
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
-    "steps": "passes over your batch; each pass makes `minibatches` updates",
-    "minibatches": "updates in each pass; 1 = one update from all rows of your batch",
+    "steps": "epochs (full passes) over the batch or each v4 stage; each pass makes `minibatches` updates",
+    "minibatches": "updates in each pass; 1 = one update from all rows of your batch or v4 stage",
+    "sft_weight": "multiplier of each v4 supervised trace's token-mean cross-entropy",
     "lora_lr": "learning rate of each update",
     "adam_eps": "epsilon of each Adam update; larger values damp small-gradient weights",
     "max_grad_norm": "gradient clip of each update; it does not cap the size of an update (the training procedure, below)",
@@ -314,10 +319,37 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
         "batch_file": {
             "versions": list(FORMATS),
             "train_allowed_in": list(TRAIN_FORMATS),
+            "v4": {
+                "format": FORMAT_V4,
+                "max_stages": params.max_stages,
+                "top_level_keys": ["version", "hotkey", "stages", "train"],
+                "stage_keys": ["train", "groups", "sft"],
+                "stage_train_keys": sorted(STAGE_TRAIN_KEYS),
+                "steps": "epochs (full passes) over the stage",
+                "cost": "sum over stages of steps * trained_tokens, including GRPO and SFT",
+                "sft": "official verification requires a known prompt with official reward exactly 1",
+            },
             "forbidden_text": list(CONTROL_TOKENS),
             "private_object": layout.miner_object("HOTKEY"),
             "upload_headers": UPLOAD_HEADERS,
+            "public_files": "crowned winners only; waiting and losing files, stage plans and counts stay private",
         },
+        "training": {
+            "steps": "epochs (full passes) over the batch or v4 stage, not gradient-update counts",
+            "per_stage_cost": "sum over stages of steps * trained_tokens; each stage's resolved steps applies to its GRPO and SFT trained tokens",
+            "sft_weight": "token-mean cross-entropy multiplier; stage train may set it only when its opt-in MinerBound is published",
+            "sft_official_verification": "each SFT prompt must be known to the official grader and its output must have official reward exactly 1",
+            "stage_train_keys": sorted(STAGE_TRAIN_KEYS),
+        },
+        "training_time_floor": (
+            None if params.train_tokens_per_s_floor <= 0 else {
+                "enabled": True,
+                "train_tokens_per_s_floor": params.train_tokens_per_s_floor,
+                "minimum_seconds": math.ceil(params.max_train_token_steps / params.train_tokens_per_s_floor),
+                "post_training_reserve_s": 600,
+                "train_time_budget_s": params.train_time_budget_s,
+            }
+        ),
         "duplicate_policy": {
             "enabled": params.dedup_enabled,
             "stage_a": {
@@ -422,6 +454,104 @@ def mining_document(snapshot: Mapping[str, Any], public_url: str = "", links_url
     return {"snapshot_digest": digest(plain), **plain, "contract": contract(params, public_url, links_url)}
 
 
+def _v4_recipe_lines(params: Params) -> list[str]:
+    """The v4 stage recipe, distinct from the unchanged flat-batch rules."""
+    if FORMAT_V4 not in FORMATS:
+        return []
+    settable = {row["key"] for row in miner_settable(params.recipe)}
+    stage_keys = [f"`{key}`" for key in sorted(STAGE_TRAIN_KEYS)]
+    usable = [f"`{key}`" for key in sorted(STAGE_TRAIN_KEYS & settable)]
+    sft_bound = params.recipe.bound("sft_weight")
+    sft_setting = (
+        f"`sft_weight` is opt-in here: its published MinerBound allows {bound_text(sft_bound)}, with default {show(params.recipe.sft_weight)}. "
+        "Set it in top-level `train`, or override it in a stage's `train`; 0 disables the SFT loss contribution."
+        if sft_bound is not None else
+        f"The recipe default is `sft_weight={show(params.recipe.sft_weight)}`. This recipe publishes no `sft_weight` MinerBound, "
+        "so a miner may not set that key at either level until the bound is explicitly enabled."
+    )
+    return [
+        "",
+        f"### Ordered GRPO and SFT stages (`{FORMAT_V4}`)",
+        "",
+        f"- A v4 file has `stages`: an ordered list of 1 to {params.max_stages} stages (`max_stages`). Each stage has",
+        "  optional `train`, plus `groups` and/or `sft` (at least one, non-empty when present). Stages train one LoRA",
+        "  in order. Each stage resolves top-level `train`, then its own `train`, gets a fresh Adam state, and measures",
+        "  GRPO's old policy and support again after all earlier stage updates.",
+        "- A stage's `train` allowlist is " + ", ".join(stage_keys) + ". Keys outside this list, including",
+        "  `rank`, `alpha`, `target_modules`, `global_norm_cap` and `dropout`, belong at top level where their bounds",
+        "  permit them, never in a stage. Every stage value must also have a published MinerBound; in this recipe the",
+        "  usable stage keys are " + ", ".join(usable) + ".",
+        "- `steps` means epochs: full passes over that stage's trainable rows, not gradient-update counts. Each pass",
+        "  has `minibatches` updates (fewer when fewer active rows train). Per-stage cost is `steps * trained_tokens`;",
+        "  file cost is the sum of this value over all stages. The top-level `steps` supplies the default for a stage,",
+        "  and the stage's `steps` replaces it for that stage only. SFT trained tokens count in the same stage total.",
+        "- SFT rows have exactly `prompt` and `output`, with no reward or rollouts. They train token-mean",
+        "  cross-entropy, not GRPO advantage. Official verification requires a prompt known to the official grader",
+        "  and an output whose official reward is exactly 1. A grader failure or time limit leaves the trace",
+        "  unverified; an SFT output at the scoring cap or one that training token caps would cut is invalid.",
+        f"- {sft_setting}",
+        "- Only a crowned winner's batch file, including its stages and SFT rows, becomes public. Waiting and losing",
+        "  seats reveal no batch content, stage counts, SFT counts, stage train values or SFT verification details.",
+    ]
+
+
+def _v4_example(params: Params) -> dict[str, Any]:
+    recipe = params.recipe
+    stage_train: dict[str, Any] = {"steps": recipe.steps}
+    if recipe.bound("sft_weight") is not None:
+        stage_train["sft_weight"] = recipe.sft_weight
+    return {
+        "version": FORMAT_V4,
+        "hotkey": "<your hotkey ss58 address>",
+        "stages": [{
+            "train": stage_train,
+            "groups": [{
+                "prompt": "<official instruction of section 6>\n\n<problem text>",
+                "rollouts": [
+                    {"output": "<reasoning> \\boxed{<right answer>}", "reward": 1.0},
+                    {"output": "<reasoning> \\boxed{<wrong answer>}", "reward": 0.0},
+                ],
+            }],
+            "sft": [{"prompt": "<a known pool prompt>", "output": "<reasoning> \\boxed{<officially correct answer>}"}],
+        }],
+    }
+
+
+def _v4_file_lines(params: Params) -> list[str]:
+    if FORMAT_V4 not in FORMATS:
+        return []
+    return [
+        "",
+        f"### The `{FORMAT_V4}` file",
+        "",
+        "The same prompt/output token and control-text rules apply across all stages. Whole groups and SFT traces",
+        "share the file-wide prompt and rollout caps in stage order; each SFT trace counts as one prompt and one",
+        "rollout for those caps and for the public counts of a crowned winner. A v4 example:",
+        "",
+        "```json",
+        json.dumps(_v4_example(params), indent=1),
+        "```",
+        "",
+        "GRPO `groups` have the same shape as the flat example above. `sft` traces have exactly `prompt` and",
+        "`output`. There is no miner-supplied SFT reward: the official grader must verify reward exactly 1 for a",
+        "known prompt. Run the same `check --tokenizer ... --grade` command below; it checks every stage and trace.",
+        "Only the crowned winner's exact batch file is published; waiting and losing seats expose no stage or SFT",
+        "counts, content or train values.",
+    ]
+
+
+def _training_time_floor_lines(params: Params) -> list[str]:
+    if params.train_tokens_per_s_floor <= 0:
+        return []
+    minimum = math.ceil(params.max_train_token_steps / params.train_tokens_per_s_floor)
+    return [
+        f"- Training-time floor enabled: `train_tokens_per_s_floor={params.train_tokens_per_s_floor}` reserves at least",
+        f"  ceil(max_train_token_steps / train_tokens_per_s_floor) = {minimum} seconds plus 600 seconds of post-training",
+        f"  reserve. The configured training budget is {params.train_time_budget_s} seconds. This is a validator",
+        "  scheduling/reservation floor, not a throughput requirement for miners and not a different token-step cap.",
+    ]
+
+
 def _recipe_lines(params: Params) -> list[str]:
     recipe, recipe_id = params.recipe, params.recipe_id
     cap, cap_bound = recipe.global_norm_cap, recipe.bound("global_norm_cap")
@@ -469,7 +599,8 @@ def _recipe_lines(params: Params) -> list[str]:
         "for every batch. Your batch is the only training data. A batch made against an older head is trained on the",
         "current head. `recipe_id` is the sha256 of the canonical JSON (sorted keys, no spaces) of the recipe object in",
         "mining.json (`params.recipe`). A new recipe gets a new id, and it is shown here before the next round starts.",
-        "The object does not hold `minibatches` while the value is 1, or `adam_eps` while it is the default 1e-8.",
+        "The object does not hold `minibatches` while the value is 1, `adam_eps` while it is the default 1e-8,",
+        "or `sft_weight` while it is the default 1.",
         "",
         *table(("field", "value", "meaning"), rows),
         "",
@@ -501,7 +632,8 @@ def _recipe_lines(params: Params) -> list[str]:
         "- Values are never clamped. A value outside its bound, a value of the wrong type, or any other key under",
         "  `train` makes the whole file invalid.",
         f"- `train` is allowed in {show(TRAIN_FORMATS)}. It is not allowed in {FORMATS[0]}.",
-        "- Your `train` values are published only if your batch wins.",
+        "- Your `train` values are published only if your batch wins. For v4, stage `train` uses the restricted key",
+        "  set below; top-level `train` supplies defaults to each stage.",
         "- A file with `train` keys that only v1 had (`lr`, `kl`, `step_mult`, the knobs) is invalid. The seat is",
         "  skipped and not charged, as with any invalid file (section 4), until the miner uploads a valid file.",
         "",
@@ -531,6 +663,7 @@ def _recipe_lines(params: Params) -> list[str]:
         "  train report counts the truncated rollouts. A rollout with no output token left is dropped and counted.",
         "",
         *_training_lines(params),
+        *_v4_recipe_lines(params),
     ]
 
 
@@ -671,6 +804,7 @@ def _round_time_lines(params: Params) -> list[str]:
         "  chunk, the judging and the promotion.",
         f"- Training time: the first {show(train_end / 60)} minutes. Batches train longest-expected-first, with queue order breaking ties.",
         "  Each batch trains on one GPU, up to one training job per GPU at a time; any remaining batch waits for a free GPU.",
+        *_training_time_floor_lines(params),
         "- At the end of the training time no new training starts, and each training that still runs is stopped. Such",
         f"  a batch is `{NOT_TRAINED}`: you are not charged, your seat is first in the next round, and no failure is counted",
         "  for the seat. Each GPU starts scoring when its own training is done or stopped; other GPUs may still train.",
@@ -869,8 +1003,9 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  files, duplicate owners, holds and available capacity can change a turn. No exact next-check or start time",
         "  is published, and these fields reveal no draw-targeting information.",
         "- Waiting-file publication is SHA256 + check time only. No waiting or losing batch bytes, prompts, outputs,",
-        "  train values, reason, rule, counts, format, store URI, download link or presigned URL is public. Use the",
-        "  local `check` command to diagnose your own file; only crowned winners' batches become public.",
+        "  train values, reason, rule, counts, format, stage count, SFT count, stage plan, store URI, download link",
+        "  or presigned URL is public. Use the local `check` command to diagnose your own file; only crowned winners'",
+        "  batches become public.",
         "- `queue.pending` lists chain registrations which have no waiting seat and no leased seat in the open round.",
         "  Each row contains only `uid`, `hotkey`, `registration_block` and `status: pending`; there are no file fields",
         "  or URLs. The rows come from the controller's latest complete chain read, with no publisher-time chain query.",
@@ -988,9 +1123,11 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "```json",
         json.dumps(example, indent=1),
         "```",
+        *_v4_file_lines(params),
         "",
         f"- UTF-8 JSON, at most {params.max_batch_bytes} bytes. Top keys: `version`, `hotkey`, `groups`, and the optional",
-        f"  `train`. `version` is one of {show(FORMATS)}. `hotkey` must be the owner of the object.",
+        f"  `train` for flat formats; `{FORMAT_V4}` uses `stages` instead of `groups` as documented below. `version` is one of",
+        f"  {show(FORMATS)}. `hotkey` must be the owner of the object.",
         "- `groups`: a non-empty list of {prompt, rollouts}, with no other key. Each prompt is text with more than white",
         "  space in it, and differs from every other prompt. Each prompt has at least 1 rollout: {output, reward}, with",
         "  no other key. `output` is text.",
@@ -1024,11 +1161,14 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  group (`group_size`, section 2). A file in which no rollout trains is invalid. One rollout per prompt never",
         "  trains. So the example above has two rollouts with different rewards.",
         *textwrap.wrap("- " + SAMPLING_GUIDANCE, width=118, subsequent_indent="  "),
-        f"- `{TRAIN_COST}`: cost = steps x the tokens of the rollouts that train. The tokens of one rollout are its",
+        f"- `{TRAIN_COST}`: cost = steps x the tokens of the rollouts that train. For `{FORMAT_V4}`,",
+        "  resolve each stage's recipe after top-level and stage overrides, then sum `steps * trained_tokens` across",
+        "  stages. Both active GRPO rows and verified SFT traces contribute their trained tokens to their stage. The",
+        "  token-count rule for one row is the same for either form: the tokens of one rollout or trace are its",
         f"  prompt tokens plus its output tokens. room = min({recipe.train_max_output_tokens},",
         f"  {recipe.train_max_context_tokens} - prompt tokens). An output shorter than the room counts its tokens + 1",
-        "  (the end-of-turn token). An output as long as the room or longer counts the room. A rollout with advantage",
-        "  0 counts 0. Thus `max_train_token_steps = steps x tokens`, summed over the kept training rows.",
+        "  (the end-of-turn token). An output as long as the room or longer counts the room. A GRPO rollout with advantage",
+        "  0 counts 0. Thus `max_train_token_steps = steps x tokens`, summed over the kept training rows; v4 sums that product over stages.",
         *textwrap.wrap("- " + TRAIN_COST_EXAMPLE, width=118, subsequent_indent="  "),
         *cost_cap,
         f"- Two limits keep the training of a round short: the training time of the round ({show(params.train_time_budget_s / 60)} minutes for",
@@ -1647,7 +1787,8 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- Only a crowned/applied winner has a public batch, and with it public `train` values. For every other entry the round file",
         "  shows the decision, batch sha256 and available scores. `duplicate` and `null_update` are charged and cannot",
         "  win or be paid. Duplicate clusters publish only the identity and comparison fields listed in section 5; they",
-        "  never publish batch content. Waiting seats get only their own stored-file SHA256 and verdict check time.",
+        "  never publish batch content. Waiting seats get only their own stored-file SHA256 and verdict check time,",
+        "  never stage counts, SFT counts or SFT verification details. Losing entries likewise expose no stage plan.",
         f"- `{layout.WINNER_STATS}` is `{WINNER_STATS_SCHEMA}`: integer Unix UTC `generated_at` and a newest-first",
         f"  `winners` list covering the same last {HISTORY_PREVIEW} closed rounds as `mining.json` (not an all-time archive). Each row",
         "  has `round_id`, `uid`, `hotkey`, `applied_at`, `z`, `delta`, `se`, `head`, `lora`, `batch_sha256`,",

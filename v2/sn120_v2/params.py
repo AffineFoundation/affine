@@ -91,6 +91,8 @@ class MinerBound(Record):
 # and sampling temperature; LoRA rank and alpha; target modules; the cap on
 # the norm of the whole update.
 # PLACEHOLDER marks a bound the spec does not give. It is not a decision.
+SFT_MINER_BOUND = MinerBound("sft_weight", 0.0, 1.0, decided=True)
+
 DEFAULT_MINER_BOUNDS = (
     MinerBound("lora_lr", 1e-6, 1e-4),  # PLACEHOLDER
     MinerBound("adam_eps", 1e-10, 1e-4, decided=True),
@@ -118,7 +120,7 @@ class Recipe(Record):
     # ``minibatches`` and ``adam_eps`` came after the first rounds. While at their defaults they are not written
     # (``canonical.to_jsonable``): a stored recipe keeps its JSON form and ``recipe_id``, and code from before the
     # fields can read it.
-    LEFT_OUT_AT_DEFAULT = ("minibatches", "adam_eps")
+    LEFT_OUT_AT_DEFAULT = ("minibatches", "adam_eps", "sft_weight")
 
     method: str = "grpo-lora"
     steps: int = 1  # passes over the whole file
@@ -129,6 +131,7 @@ class Recipe(Record):
     global_norm_cap: float | None = 6.0  # cap on the norm of the whole adapter update; None = no cap
     group_size: int = 0  # PLACEHOLDER: rollouts per GRPO group; 0 = use each prompt's rollouts as the file groups them
     sample_temperature: float = 1.0  # temperature the batch's rollouts were sampled at
+    sft_weight: float = 1.0  # multiplier of each supervised trace's token-mean cross-entropy
     rank: int = 16
     alpha: float = 32.0
     dropout: float = 0.0
@@ -153,6 +156,7 @@ class Recipe(Record):
         _need(self.rank >= 1, "recipe.rank must be at least 1")
         _need(math.isfinite(self.lora_lr) and self.lora_lr > 0, "recipe.lora_lr must be a positive number")
         _need(math.isfinite(self.adam_eps) and self.adam_eps > 0, "recipe.adam_eps must be a finite positive number")
+        _need(_unit(self.sft_weight), "recipe.sft_weight must be in [0, 1]")
         _need(math.isfinite(self.max_grad_norm) and self.max_grad_norm > 0, "recipe.max_grad_norm must be positive")
         cap = self.global_norm_cap
         _need(cap is None or (math.isfinite(cap) and cap > 0), "recipe.global_norm_cap must be positive, or null for no cap")
@@ -203,7 +207,7 @@ class Params(Record):
         "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
         "eval_merged", "null_prune_from_round", "min_kl_seq", "min_kl_tok", "kl_rollouts",
-        "kl_max_tokens", "kl_time_limit_s", "confirm_next_round",
+        "kl_max_tokens", "kl_time_limit_s", "confirm_next_round", "max_stages", "train_tokens_per_s_floor",
     )
 
     netuid: int = 120
@@ -306,6 +310,10 @@ class Params(Record):
     # PLACEHOLDER: cap on steps x the tokens the trainer runs through the model for one file; 0 = no limit.
     # The cap does not count minibatches: each optimizer update has a fixed cost that no admission rule counts.
     max_train_token_steps: int = 16_000_000
+    max_stages: int = 5  # affine-batch-v4: one to five ordered GRPO/SFT stages
+    # When positive, reserve enough wall time for the configured token-step
+    # floor plus the ten-minute post-training reserve. 0 leaves old params off.
+    train_tokens_per_s_floor: int = 0
 
     # Queue and leases.
     round_time_limit_s: int = 100 * 60  # launch rule: at most this long from the lease to the promotion of the winner
@@ -442,6 +450,10 @@ class Params(Record):
             0 < self.train_time_budget_s < self.round_time_limit_s - self.promote_reserve_s,
             "train_time_budget_s must leave time for the scoring inside round_time_limit_s",
         )
+        _need(type(self.max_stages) is int and 1 <= self.max_stages <= 5, "max_stages must be an integer from 1 to 5")
+        _need(type(self.train_tokens_per_s_floor) is int and self.train_tokens_per_s_floor >= 0, "train_tokens_per_s_floor must be a nonnegative integer")
+        _need(self.train_tokens_per_s_floor <= 0 or self.train_time_budget_s >= math.ceil(self.max_train_token_steps / self.train_tokens_per_s_floor) + 600,
+              "train_time_budget_s must cover max_train_token_steps / train_tokens_per_s_floor, rounded up, plus 600 seconds")
         _need(self.eval_chunk_tasks >= 1, "eval_chunk_tasks must be at least 1")
         _need(self.apply_retry_s > 0 and self.apply_max_attempts >= 1, "apply retry settings must be positive")
         _need(self.kings_window >= 1 and self.burn_uid >= 0, "kings_window >= 1 and burn_uid >= 0")

@@ -113,6 +113,11 @@ class FrozenBatch(Record):
     n_prompts: int
     n_rollouts: int
     train: dict[str, Any] = field(default_factory=dict)  # the miner's values; apply with Recipe.for_miner(train)
+    # v4 only: one {"train": {...}} per stage. Prompts and outputs remain
+    # solely in the private frozen object, never duplicated into tickets.
+    LEFT_OUT_AT_DEFAULT = ("stages",)
+    OMIT_EMPTY_FACTORY_DEFAULTS = ("stages",)
+    stages: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         _need(is_sha256(self.batch_sha256), "FrozenBatch.batch_sha256 must be a 64-hex sha256")

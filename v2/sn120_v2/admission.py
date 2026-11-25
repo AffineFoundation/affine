@@ -52,9 +52,12 @@ from .seams import ObjectStore
 from .types import FrozenBatch, Registration, Verdict
 
 FORMAT_V1 = "affine-batch-v1"
-FORMATS = (FORMAT_V1, "affine-batch-v2", "affine-batch-v3")  # v2 and v3 may carry "train"
+FORMAT_V4 = "affine-batch-v4"
+FORMATS = (FORMAT_V1, "affine-batch-v2", "affine-batch-v3", FORMAT_V4)  # v2+ may carry "train"
 CONTROL_TOKENS = ("<|im_start|>", "<|im_end|>", "<|endoftext|>")
 _TOP_KEYS = frozenset(("version", "hotkey", "groups"))
+_V4_TOP_KEYS = frozenset(("version", "hotkey", "stages"))
+STAGE_TRAIN_KEYS = frozenset(("lora_lr", "adam_eps", "steps", "minibatches", "group_size", "sample_temperature", "sft_weight"))
 _BOXED = "\\boxed"
 
 Group = tuple[str, tuple[tuple[str, float], ...]]  # (prompt, ((output, reward), ...))
@@ -71,6 +74,8 @@ Sizes = dict[tuple[int, int], tuple[int, int]]  # (group, rollout) place -> (pro
 Grader = Callable[[str, str, bool], float | None]
 TIME_LIMIT = "grader_time_limit"  # the rule code of a row that the official grader cannot grade in time
 FAULT = "grader_fault"  # the rule code of a row that makes the official grader fail, while the grader itself works
+SFT_UNVERIFIED = "sft_unverified"
+SFT_TOO_LONG = "sft_too_long"
 NO_SIGNAL = "no_signal"  # the rule code of a file in which no rollout can change the model
 MIN_ROLLOUTS = "min_rollouts"  # too few rollouts have a nonzero advantage
 NULL_UPDATE = "null_update"  # when enabled, the configured cap cannot reach the minimum stored update norm
@@ -130,7 +135,10 @@ RULES: dict[str, str] = {
     "size": "the file is empty or larger than the byte cap",
     "json": "the file is not UTF-8 JSON",
     "nonfinite": "the file holds NaN or Infinity",
-    "top_keys": "the top level is not an object with exactly version, hotkey, groups and (v2, v3) the optional train",
+    "top_keys": "the top level is not an object with exactly version, hotkey, groups (stages for v4) and (v2+) the optional train",
+    "stages": "v4 stages is not a list of 1 to max_stages objects, or a stage has wrong keys or no groups/sft",
+    "stage_train": "a v4 stage train has a key other than lora_lr, adam_eps, steps, minibatches, group_size, sample_temperature or sft_weight",
+    "sft_keys": "an SFT trace does not have exactly the keys prompt, output",
     "version": "version is not a known format",
     "train": "train is not an object, has a key that is not settable, or has a value outside its published bound",
     "hotkey": "hotkey is not the owner of the stored object",
@@ -151,6 +159,8 @@ RULES: dict[str, str] = {
     "answer_only": "too many rollouts have almost no reasoning before the first boxed answer",
     "reasoning_share": "too small a share of the output tokens is reasoning",
     "answer_repeat": "one final answer is in too many rollouts",
+    SFT_UNVERIFIED: "an SFT prompt is unknown to the grader, its official reward is not exactly 1, or the grader cannot verify it",
+    SFT_TOO_LONG: "an SFT output is exactly max_output_tokens or would be cut/dropped by the training token caps",
     NO_SIGNAL: "no rollout has a reward that differs from the mean reward of its training group, so nothing trains",
     MIN_ROLLOUTS: "too few rollouts have a nonzero advantage; the floor is min_signal_rollouts",
     NULL_UPDATE: "when min_step_norm > 0, the miner's global_norm_cap is below it, so the stored update cannot be large enough to judge",
@@ -335,14 +345,25 @@ class Batch:
     train: dict[str, Any]  # the miner's "train" object as given; apply with Recipe.for_miner
     checked: tuple[str, ...]  # rule families that ran: "format", plus "tokens" and "grader" when given
     train_token_steps: int = 0  # the training cost that rule train_cost compares with its cap; 0 without a tokenizer
+    # Empty for v1-v3. v4 holds (kept groups, SFT (prompt, output) pairs,
+    # submitted stage train) per stage. Private content never enters a Verdict.
+    stages: tuple[tuple[tuple[Group, ...], tuple[tuple[str, str], ...], dict[str, Any]], ...] = ()
 
     @property
     def n_prompts(self) -> int:
-        return len(self.groups)
+        return len(self.groups) + sum(len(sft) for _, sft, _ in self.stages)
 
     @property
     def n_rollouts(self) -> int:
-        return sum(len(rollouts) for _, rollouts in self.groups)
+        return sum(len(rollouts) for _, rollouts in self.groups) + sum(len(sft) for _, sft, _ in self.stages)
+
+    def frozen_stages(self) -> tuple[dict[str, Any], ...]:
+        """The full admitted stage plan, read from the private frozen object at train time."""
+        return tuple({"train": dict(train), "groups": list(groups), "sft": list(sft)} for groups, sft, train in self.stages)
+
+    def stage_recipes(self) -> tuple[dict[str, Any], ...]:
+        """Only stage recipe overrides belong in a ticket, never private batch text."""
+        return tuple({"train": dict(train)} for _, _, train in self.stages)
 
 
 def _need(ok: bool, rule: str, reason: str) -> None:
@@ -390,9 +411,10 @@ def _train(value: Any, recipe: Recipe) -> dict[str, Any]:
 def _header(value: dict[str, Any], recipe: Recipe) -> tuple[str, dict[str, Any]]:
     version = value.get("version")
     may_train = version in FORMATS[1:]
-    allowed = _TOP_KEYS | {"train"} if may_train else _TOP_KEYS
+    required = _V4_TOP_KEYS if version == FORMAT_V4 else _TOP_KEYS
+    allowed = required | {"train"} if may_train else required
     extra = "; train is optional" if may_train else ""
-    _need(_TOP_KEYS <= set(value) <= allowed, "top_keys", f"top level keys must be version, hotkey, groups{extra}")
+    _need(required <= set(value) <= allowed, "top_keys", f"top level keys must be version, hotkey, {'stages' if version == FORMAT_V4 else 'groups'}{extra}")
     _need(may_train or version == FORMAT_V1, "version", "version must be one of: " + ", ".join(FORMATS))
     return version, _train(value["train"], recipe) if "train" in value else {}
 
@@ -421,6 +443,176 @@ def _groups(value: dict[str, Any], hotkey: str) -> list[Group]:
             rows.append((rollout["output"], float(rollout["reward"])))
         out.append((prompt, tuple(rows)))
     return out
+
+
+def _v4_stages(value: dict[str, Any], hotkey: str, params: Params, top_train: Mapping[str, Any]) -> list[tuple[list[Group], list[tuple[str, str]], dict[str, Any]]]:
+    """Shape-check every v4 stage before any global cap is applied."""
+    _need(value["hotkey"] == hotkey, "hotkey", "hotkey does not match the owner of the stored object")
+    stages = value["stages"]
+    _need(isinstance(stages, list) and 1 <= len(stages) <= params.max_stages, "stages", f"stages must hold 1 to {params.max_stages} stages")
+    out = []
+    for i, stage in enumerate(stages):
+        at = f"stages[{i}]"
+        _need(isinstance(stage, dict) and set(stage) <= {"train", "groups", "sft"} and bool(set(stage) & {"groups", "sft"}), "stages", f"{at} keys are train, groups, sft; groups and/or sft is required")
+        train = stage.get("train", {})
+        _need(isinstance(train, dict) and set(train) <= STAGE_TRAIN_KEYS, "stage_train", f"{at}.train allows only lora_lr, adam_eps, steps, minibatches, group_size, sample_temperature, sft_weight")
+        # Reuse the same numerical/type gate as top-level train. Only the key
+        # allowlist differs; shape keys and global_norm_cap never reach it.
+        _train(train, params.recipe)
+        groups = _groups({"hotkey": hotkey, "groups": stage["groups"]}, hotkey) if "groups" in stage else []
+        if "groups" in stage and not groups:
+            raise Invalid("stages", f"{at}.groups must be non-empty when present")
+        traces = stage.get("sft", [])
+        _need(isinstance(traces, list) and ("sft" not in stage or bool(traces)), "stages", f"{at}.sft must be a non-empty list when present")
+        sft: list[tuple[str, str]] = []
+        for j, trace in enumerate(traces):
+            here = f"{at}.sft[{j}]"
+            _need(isinstance(trace, dict) and set(trace) == {"prompt", "output"}, "sft_keys", f"{here} keys must be exactly prompt, output")
+            prompt, output = trace["prompt"], trace["output"]
+            _need(isinstance(prompt, str) and prompt.strip() != "", "prompt", f"{here}.prompt must be a non-empty string")
+            _need(isinstance(output, str), "output", f"{here}.output must be a string")
+            sft.append((prompt, output))
+        _need(bool(groups or sft), "stages", f"{at} needs at least one group or SFT trace")
+        out.append((groups, sft, dict(train)))
+    return out
+
+
+def _v4_flat(stages: Sequence[tuple[Sequence[Group], Sequence[tuple[str, str]], Mapping[str, Any]]]) -> tuple[list[Group], list[tuple[int, bool, int]]]:
+    """One ordered view for the shared cap, text, token and reward rules.
+
+    SFT is a singleton group only for this view. Its reward is a placeholder:
+    SFT verification requires the official grade 1 and never uses an advantage.
+    """
+    groups, places = [], []
+    for k, (stage_groups, traces, _) in enumerate(stages):
+        groups.extend(stage_groups)
+        places.extend((k, False, i) for i in range(len(stage_groups)))
+        groups.extend((prompt, ((output, 1.0),)) for prompt, output in traces)
+        places.extend((k, True, j) for j in range(len(traces)))
+    return groups, places
+
+
+def _v4_cap(stages: Sequence[tuple[list[Group], list[tuple[str, str]], dict[str, Any]]], params: Params) -> list[tuple[list[Group], list[tuple[str, str]], dict[str, Any]]]:
+    flat, places = _v4_flat(stages)
+    kept = _cap(flat, params.max_prompts, params.max_rollouts)
+    out: list[tuple[list[Group], list[tuple[str, str]], dict[str, Any]]] = [
+        ([], [], dict(train)) for _, _, train in stages
+    ]
+    for group, (k, is_sft, _) in zip(kept, places):
+        if is_sft:
+            out[k][1].append((group[0], group[1][0][0]))
+        else:
+            out[k][0].append(group)
+    return [stage for stage in out if stage[0] or stage[1]]
+
+
+def _v4_kept(stages: Sequence[tuple[Sequence[Group], Sequence[tuple[str, str]], Mapping[str, Any]]], params: Params, tokens: Tokens | None, top_train: Mapping[str, Any]) -> tuple[list[dict[str, Any]], set[tuple[int, int]], Sizes | None, list[Group]]:
+    """Return per-stage token sizes plus the flattened legacy check results."""
+    flat, places = _v4_flat(stages)
+    capped, sizes = _kept(flat, params, tokens)
+    measured: list[dict[str, Any]] = [
+        {"groups": [None] * len(groups), "sft": [None] * len(traces)}
+        for groups, traces, _ in stages
+    ]
+    for i, (k, is_sft, j) in enumerate(places):
+        n_prompt, n_output = (sizes or {}).get((i, 0), (0, 0))
+        if not is_sft:
+            measured[k]["groups"][j] = None if sizes is None else {
+                rollout: sizes[i, rollout]
+                for rollout in range(len(stages[k][0][j][1]))
+            }
+            continue
+        measured[k]["sft"][j] = None if sizes is None else (n_prompt, n_output)
+        if tokens is not None:
+            recipe = params.recipe.for_miner(top_train).for_miner(stages[k][2])
+            room = min(recipe.train_max_output_tokens, recipe.train_max_context_tokens - n_prompt)
+            _need(0 < n_output < room and n_output < params.max_output_tokens, SFT_TOO_LONG,
+                  f"stages[{k}].sft[{j}] would be cut by training caps or is at max_output_tokens")
+    return measured, capped, sizes, flat
+
+
+def _v4_cost(stages: Sequence[tuple[Sequence[Group], Sequence[tuple[str, str]], Mapping[str, Any]]], measured: Sequence[dict[str, Any]], params: Params, top_train: Mapping[str, Any]) -> int:
+    """Resolve stage recipes and sum steps x trained tokens independently per stage."""
+    active = cost = 0
+    top_recipe = params.recipe.for_miner(top_train)
+    _need(top_recipe.global_norm_cap is None or top_recipe.global_norm_cap >= params.min_step_norm, NULL_UPDATE,
+          f"global_norm_cap {top_recipe.global_norm_cap if top_recipe.global_norm_cap is not None else float('inf'):g} is below min_step_norm {params.min_step_norm:g}; the stored update can never reach the floor")
+    measured_tokens = all(
+        size is not None
+        for sizes in measured
+        for size in [*sizes["groups"], *sizes["sft"]]
+    )
+    for (groups, traces, train), sizes in zip(stages, measured):
+        recipe = top_recipe.for_miner(train)
+        stage_tokens = 0
+        for i, group in enumerate(groups):
+            local = None if sizes["groups"][i] is None else {
+                (0, j): size for j, size in sizes["groups"][i].items()
+            }
+            n, used = signal_counts((group,), recipe, local)
+            active += n
+            stage_tokens += used
+        for size in sizes["sft"]:
+            if size is None:
+                active += 1
+                stage_tokens += 1  # legacy no-tokenizer convention: unknown cost is checked as 0 below
+                continue
+            n_prompt, n_output = size
+            used = trained_tokens(n_prompt, n_output, recipe)
+            active += used > 0
+            stage_tokens += used
+        cost += recipe.steps * stage_tokens
+    _need(active > 0, NO_SIGNAL, "no active GRPO rollout or verified SFT trace trains")
+    _need(active >= params.min_signal_rollouts, MIN_ROLLOUTS, f"only {active} active GRPO rollouts/SFT traces; the floor is {params.min_signal_rollouts}")
+    _need(params.max_train_token_steps <= 0 or cost <= params.max_train_token_steps, TRAIN_COST,
+          f"training this file costs {cost} token-steps, summed over stages; the cap is {params.max_train_token_steps}")
+    return cost if measured_tokens else 0
+
+
+def _v4_graded(stages: Sequence[tuple[Sequence[Group], Sequence[tuple[str, str]], Mapping[str, Any]]], params: Params, grader: Grader, capped: set[tuple[int, int]], sizes: Sizes | None) -> None:
+    """Legacy GRPO verdicts and SFT's strict official-reward-one verdict."""
+    _, places = _v4_flat(stages)
+    offsets: dict[int, int] = {}
+    for n, (k, is_sft, _) in enumerate(places):
+        if not is_sft:
+            offsets.setdefault(k, n)
+    for k, (groups, traces, _) in enumerate(stages):
+        if groups:
+            start = offsets[k]
+            local_capped: set[tuple[int, int]] = set()
+            local_sizes: Sizes = {}
+            flat_index = start
+            for i, group in enumerate(groups):
+                for j in range(len(group[1])):
+                    if (flat_index, j) in capped:
+                        local_capped.add((i, j))
+                    if sizes is not None:
+                        local_sizes[i, j] = sizes[flat_index, j]
+                flat_index += 1
+            _graded(groups, params, grader, local_capped, local_sizes if sizes is not None else None)
+        for j, (prompt, output) in enumerate(traces):
+            row = (prompt, output, False)
+            official = next(iter(_grades(grader, [row])))
+            here = f"stages[{k}].sft[{j}]"
+            if isinstance(official, GraderTimeLimit):
+                raise Invalid(SFT_UNVERIFIED, f"{here}: the official grader did not finish", _fault(grader, row, official))
+            if isinstance(official, Exception):
+                raise Invalid(SFT_UNVERIFIED, f"{here}: the official grader failed", _fault(grader, row, official))
+            _need(official == 1, SFT_UNVERIFIED, f"{here} needs a known prompt with official reward exactly 1")
+
+
+def _check_v4(raw: bytes, hotkey: str, params: Params, value: dict[str, Any], train: dict[str, Any], tokens: Tokens | None, grader: Grader | None) -> Batch:
+    stages = _v4_stages(value, hotkey, params, train)
+    kept = _v4_cap(stages, params)
+    measured, capped, sizes, _ = _v4_kept(kept, params, tokens, train)
+    cost = _v4_cost(kept, measured, params, train)
+    if grader is not None:
+        _v4_graded(kept, params, grader, capped, sizes)
+    groups = tuple(group for stage, _, _ in kept for group in stage)
+    out_stages = tuple((tuple(groups), tuple(sft), dict(train)) for groups, sft, train in kept)
+    checked = ("format",) + (("tokens",) if tokens is not None else ()) + (("grader",) if grader is not None else ())
+    dropped = sum(len(stage[0]) for stage in stages) - len(groups)
+    return Batch(sha256_hex(bytes(raw)), len(raw), FORMAT_V4, groups, dropped, train, checked, cost, out_stages)
 
 
 def parse_groups(value: dict[str, Any], hotkey: str, max_prompts: int, max_rollouts: int) -> list[Group]:
@@ -672,6 +864,19 @@ def check_batch(raw: bytes, hotkey: str, params: Params, *, tokens: Tokens | Non
     except BaseException as cause:
         _still_works(params, tokens, grader, cause)
         raise Invalid(CHECK_FAULT, f"the checker fails on this file: {_where(cause)}", proven=not isinstance(cause, MACHINE)) from cause
+def frozen_batch(batch: Batch, reg: Registration, uri: str) -> FrozenBatch:
+    """The one FrozenBatch constructor shared by admission and reproduction."""
+    return FrozenBatch(reg.hotkey, batch.sha256, uri, batch.format, batch.n_prompts, batch.n_rollouts, dict(batch.train), batch.stage_recipes())
+
+
+def batch_signal_counts(batch: Batch, recipe: Recipe) -> int:
+    """Active GRPO rows plus SFT traces, for read-only dedup diagnostics."""
+    if not batch.stages:
+        return signal_counts(batch.groups, recipe)[0]
+    total = 0
+    for groups, traces, train in batch.stages:
+        total += signal_counts(groups, recipe.for_miner(train))[0] + len(traces)
+    return total
 
 
 def _where(cause: BaseException) -> str:
@@ -717,6 +922,8 @@ def _still_works(params: Params, tokens: Tokens | None, grader: Grader | None, c
 def _check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None, grader: Grader | None) -> Batch:
     value = _load(raw, params.max_batch_bytes)
     version, train = _header(value, params.recipe)
+    if version == FORMAT_V4:
+        return _check_v4(raw, hotkey, params, value, train, tokens, grader)
     groups = _groups(value, hotkey)
     kept = _cap(groups, params.max_prompts, params.max_rollouts)
     capped, sizes = _kept(kept, params, tokens)
@@ -1077,4 +1284,4 @@ class StoreAdmission:
         if self.store.sha256(frozen_key) != batch.sha256:
             self.store.delete(frozen_key)  # a replay must not find the damaged copy
             raise VerifyError(f"the frozen copy of {reg.hotkey} for round {round_id} does not hash to the checked bytes")
-        return FrozenBatch(reg.hotkey, batch.sha256, frozen_key, batch.format, batch.n_prompts, batch.n_rollouts, dict(batch.train))
+        return frozen_batch(batch, reg, frozen_key)
