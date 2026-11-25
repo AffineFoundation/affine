@@ -1,5 +1,15 @@
 # Affine epoch subnet
 
+> **SN120 is now v2. Miners must follow the [`v2` branch](https://github.com/AffineFoundation/affine/tree/v2), not this branch's v1 mining tools.**
+> Read the live protocol at **https://affine.io/llms.txt** and the machine-readable contract at **https://affine.io/mining.json**.
+> Use **`python v2/miner/affine_miner.py`** to see bounds, check and upload a batch, or reproduce a round.
+> Start with [`v2/miner/affine_miner.py`](v2/miner/affine_miner.py) and [train and score your batch at home](v2/REPLICATE.md).
+
+## Historical v1 documentation — not the live protocol
+
+The GREEN/RED material and v1 commands below are retained only as history. They are not the SN120 v2 protocol.
+
+
 Bittensor subnet 120 (MiMo GRPO). **Miners upload one free batch file** (prompts, rollouts,
 rewards) to a private per-hotkey object; at the miner's turn the validator copies it,
 checks the format, trains one GRPO step from the published head (trainer v8.3.3l) and the
@@ -33,6 +43,10 @@ History and inactive designs (not the live protocol): [architecture and runtime]
 Run `.venv/bin/python -m subnet.mock` for a real model/R2/training smoke, or
 `.venv/bin/python -m subnet.tests` and `.venv/bin/python -m ops.new_subnet_checks`
 for protocol checks. Credentials and generated artifacts stay outside Git.
+
+## v2 public task pool
+
+The v2 branch's [pool rotation document](v2/POOL_ROTATION.md) specifies the public active/reserve/retired task lifecycle. With `rotation_rule="info"`, `affine-pool-rotation-v2` ranks every candidate by Bernoulli Fisher information, keeps a configurable active size, and publishes the complete deterministic ranking and next-up queue. The static `/pool` page (`pool.html`) shows active-set composition, score histogram, recent admits/retires and per-task public evidence. The v1 rotation rule remains the default; this code does not activate the new params or deploy itself.
 
 Read AGENTS.md before modifying this repo. Legacy production and its private archive
 remain separate; this checkout does not automatically deploy changes.

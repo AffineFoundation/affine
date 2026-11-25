@@ -1,0 +1,35 @@
+{
+ "claims": [
+  {
+   "file_sha256": "b645d00cfc0ea0e47d5f3750831a39b3b0a6c5d8d8de14fc54089dfb5afd87a4",
+   "hotkey": "5FCM8VvFKfKzQnmkT7X9kDY6xMcgeGYRK8tmSbfwpXyM1CvS",
+   "task_id": "00000000000000000002",
+   "uid": 17,
+   "uploaded_at": 1795096800.0
+  },
+  {
+   "file_sha256": "48921deb2588bf99add18d6e8a8558816a4828c7c3ad21b1ccdd65018ec7ff39",
+   "hotkey": "5Ez973Q82FyaLNPfjnKEDnHF3jvshyx7qeJsvCmUCmjeR3GF",
+   "task_id": "00000000000000000003",
+   "uid": 23,
+   "uploaded_at": 1795097700.0
+  }
+ ],
+ "epochs": [
+  "20261119T1600Z"
+ ],
+ "max_age_seconds": 21600,
+ "updated_at": 1795116000.0,
+ "version": "affine-generator-payout-v1",
+ "weights": {
+  "17": 0.5,
+  "23": 0.5
+ },
+ "window": {
+  "end": "2026-11-19T19:20:00Z",
+  "exclusive_start": true,
+  "inclusive_end": true,
+  "start": "2026-11-18T19:20:00Z"
+ },
+ "window_seconds": 86400
+}

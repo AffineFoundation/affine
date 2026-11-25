@@ -1,0 +1,16 @@
+# Mechanism 1 only. Do not execute before explicit go-live authorization.
+[Unit]
+Description=SN120 Generator mechanism-1 weights
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=const
+Environment=PYTHONPATH=/home/const/sn120-generator/src
+ExecStart=/home/const/sn120-generator/venv/bin/python -m sn120_v2.generator.weights --payout /home/const/subnet120/affine/website/generator/payout.json --runs /home/const/sn120-generator/runs.jsonl --network finney --execute
+TimeoutStartSec=300
+Restart=no
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
