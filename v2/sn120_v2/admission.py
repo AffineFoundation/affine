@@ -543,7 +543,7 @@ def _v4_kept(stages: Sequence[tuple[Sequence[Group], Sequence[tuple[str, str]], 
 
 
 def _v4_cost(stages: Sequence[tuple[Sequence[Group], Sequence[tuple[str, str]], Mapping[str, Any]]], measured: Sequence[dict[str, Any]], params: Params, top_train: Mapping[str, Any]) -> int:
-    """Resolve stage recipes and sum steps x trained tokens independently per stage."""
+    """Resolve stage recipes and count training passes plus GRPO's old-policy pass."""
     active = cost = 0
     top_recipe = params.recipe.for_miner(top_train)
     _need(top_recipe.global_norm_cap is None or top_recipe.global_norm_cap >= params.min_step_norm, NULL_UPDATE,
@@ -555,23 +555,23 @@ def _v4_cost(stages: Sequence[tuple[Sequence[Group], Sequence[tuple[str, str]], 
     )
     for index, ((groups, traces, train), sizes) in enumerate(zip(stages, measured)):
         recipe = top_recipe.for_miner(train)
-        stage_active = stage_tokens = 0
+        stage_active = grpo_tokens = sft_tokens = 0
         for i, group in enumerate(groups):
             local = None if sizes["groups"][i] is None else {
                 (0, j): size for j, size in sizes["groups"][i].items()
             }
             n, used = signal_counts((group,), recipe, local)
             stage_active += n
-            stage_tokens += used
+            grpo_tokens += used
         for size in sizes["sft"]:
             used = 1 if size is None else trained_tokens(*size, recipe)
             trains = used > 0 and recipe.sft_weight > 0
             stage_active += int(trains)
-            stage_tokens += used if trains else 0
+            sft_tokens += used if trains else 0
         _need(stage_active > 0, NO_SIGNAL,
               f"stage {index} has no nonzero-advantage GRPO rollout or positive-weight SFT trace that trains")
         active += stage_active
-        cost += recipe.steps * stage_tokens
+        cost += recipe.steps * (grpo_tokens + sft_tokens) + grpo_tokens
     _need(active > 0, NO_SIGNAL, "no active GRPO rollout or verified SFT trace trains")
     _need(active >= params.min_signal_rollouts, MIN_ROLLOUTS, f"only {active} active GRPO rollouts/SFT traces; the floor is {params.min_signal_rollouts}")
     if not measured_tokens:

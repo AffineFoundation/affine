@@ -64,7 +64,7 @@ def test_happy_admission_and_stage_cost():
     ], train={"steps": 4})
     batch = check(body)
     assert batch.n_prompts == 2 and batch.n_rollouts == 3
-    assert batch.train_token_steps == 2 * 2 * (2 + 41 + 1) + 3 * (2 + 41 + 1)
+    assert batch.train_token_steps == (2 + 1) * 2 * (2 + 41 + 1) + 3 * (2 + 41 + 1)
     assert len(batch.frozen_stages()) == 2
 
 
@@ -243,6 +243,8 @@ def test_ticket_has_only_stage_recipes_and_cost_cap_sums_stages():
         {"train": {"steps": 3}, "sft": [{"prompt": "three four", "output": THINK + "\\boxed{1}"}]},
     ])
     batch = check(body)
+    tokens = 2 * (2 + 41 + 1)
+    assert batch.train_token_steps == 3 * tokens + 3 * tokens // 2, "q_old adds one GRPO pass but no SFT pass"
     ticket = frozen_batch(batch, Registration(1, HOTKEY, 0), "private/batch.json")
     assert len(ticket.stages) == 5
     assert ticket.stages[:2] == ({"train": {"steps": 2}}, {"train": {"steps": 3}})

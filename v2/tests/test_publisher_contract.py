@@ -426,7 +426,7 @@ def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_pat
     assert "`max_grad_norm` | 1 | gradient clip of each update; it does not cap the size of an update" in flat and "step-size cap" not in flat
     assert "The clip does not cap the size of an update." in flat and "The one cap on it is `global_norm_cap`." in flat
     assert "Row k of the shuffled list (k from 0) goes to minibatch k modulo N." in flat and "steps x N updates in all" in flat
-    assert "The cost does not count `minibatches`." in flat and "each update has a fixed cost of its own, about 0.1 s" in flat
+    assert "The cost does not count `minibatches`" in flat and "Each update also has a fixed cost of its own, about 0.1 s" in flat
     old = dataclasses.replace(recipe, global_norm_cap=None, miner_bounds=tuple(bound for bound in recipe.miner_bounds if bound.key not in ("minibatches", "global_norm_cap")))
     before = " ".join(published(world(tmp_path / "before", recipe=old).publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode().split())
     assert "This recipe has none: there is no cap. A file may not set a cap of its own now." in before, "a set from before the two new bounds"
@@ -458,7 +458,7 @@ def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     assert "Training time: the first 25 minutes." in flat and "Batches train longest-expected-first" in flat
     assert "Such a batch is `not_trained`: you are not charged, your seat is first in the next round" in flat
     assert "the training time of the round (25 minutes for all batches, section 3) and this cost cap for one file (123456 token-steps)" in flat
-    assert "`train_cost`: cost = steps x the tokens" in flat and "A file with a cost above 123456 token-steps is invalid." in flat
+    assert "`train_cost`: for v1-v3, cost = steps x the tokens" in flat and "A file with a cost above 123456 token-steps is invalid." in flat
     no_cap = " ".join(published(world(tmp_path / "no-cap", max_train_token_steps=0).publisher.snapshots[-1])[1].split())
     assert "There is no cap on the cost now" in no_cap and "this cost cap for one file (no cap now)" in no_cap
     assert "Scoring streams over the draw with no chunk barrier." in flat
