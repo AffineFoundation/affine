@@ -116,12 +116,13 @@ def test_one_run_copies_the_keys_of_the_layout_writes_the_links_and_builds_the_s
     small = [key for key in store.list("public/") if key.startswith(("public/heads/", "public/rounds/")) and key not in FOREIGN]
     tables = {layout.irt_snapshot(mining["irt_snapshot_id"])} | {layout.irt_snapshot(row["irt_snapshot_id"]) for row in mining["history"]}
     copied = {layout.MINING_JSON, layout.LLMS_TXT, layout.WINNER_STATS, layout.CURRENT, *small, *tables, layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}
-    assert len(small) == 4 and set(files) == copied | {LINKS, INDEX, "llms.txt", "mining.json"} | BUILT
+    assert len(small) == 4 and set(files) == copied | {LINKS, INDEX, "llms.txt", "mining.json", layout.WINNER_STATS_ALIAS} | BUILT
     for key in copied - {layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}:  # mirrored objects are byte-identical
         assert files[key] == store.get(key)
     assert json.loads(files[layout.ROLLOUT_INDEX]) == {"schema": "sn120-v2-rollouts-index-2", "backfill": None, "bench": [], "gate": [], "schema_doc": "SCHEMA.md"}
     assert (site / "public/rollouts/SCHEMA.md").read_bytes() == (PULL.parent / "static/rollouts/SCHEMA.md").read_bytes()
     assert files["llms.txt"] == files[layout.LLMS_TXT] and files["mining.json"] == files[layout.MINING_JSON]
+    assert files[layout.WINNER_STATS_ALIAS] == files[layout.WINNER_STATS] == store.get(layout.WINNER_STATS_ALIAS)
     assert json.loads(files["site-data.json"])["winner_stats_url"] == f"{URL}/{layout.WINNER_STATS}"
     assert [row["uid"] for row in json.loads(files[layout.WINNER_STATS])["winners"]] == [4]
     assert set(json.loads(files[INDEX])["files"]) == copied - {"public/rollouts/SCHEMA.md"} | {LINKS}
@@ -168,6 +169,59 @@ def test_the_run_invokes_winner_stats_immediately_after_the_contract(env, tmp_pa
     assert called[1][0] == "llms.txt and mining.json" and called[2][0] == "winner stats"
     assert called[2][1].__func__ is module.Pull.winner_stats
     assert layout.WINNER_STATS in module.FIXED
+
+
+def test_enriched_stats_strip_mismatched_optional_fields_and_mirror_core(env, store, tmp_path):
+    from sn120_v2.canonical import sha256_hex
+    from sn120_v2.envs.math_pool import load_pool
+    from sn120_v2.envs.reserve import Catalog, empty_manifest
+
+    mining = json.loads(store.get(layout.MINING_JSON))
+    mining["winner_stats"] = json.loads(store.get(layout.WINNER_STATS))
+    winner = mining["winner_stats"]["winners"][0]
+    task = load_pool().task(load_pool().task_ids[0])
+    raw = json.dumps({"version": "affine-batch-v2", "hotkey": winner["hotkey"], "groups": [
+        {"prompt": task.batch_prompt(), "rollouts": [{"output": "work \\boxed{1}", "reward": 1.0}]},
+        {"prompt": "custom public prompt", "rollouts": [{"output": "no box", "reward": 0.0}]},
+    ]}).encode()
+    winner["batch_sha256"] = sha256_hex(raw)
+    crowned = next(entry for entry in mining["history"][0]["entries"] if entry["status"] == "winner")
+    crowned["batch_sha256"] = winner["batch_sha256"]
+    store.put(layout.winner_batch(winner["round_id"]), raw)
+    store.put(layout.RESERVE_MANIFEST, empty_manifest())
+    store.put(layout.RESERVE_WITHDRAWN, b"")
+    mining.pop("snapshot_digest", None)
+    mining.pop("contract", None)
+    pool = Catalog(load_pool(), load_pool().__class__((), "no-reserve-fixture"))
+    StorePublisher(store, URL + "/", prompt_pool=pool).publish(mining)
+    stats = json.loads(store.get(layout.WINNER_STATS))
+    assert stats["winners"][0]["group_count"] == 2 and stats["winners"][0]["boxed_frac"] == 0.5
+    site = tmp_path / "fresh"
+    done = pull(env, site)
+    assert done.returncode == 0, done.stderr
+    assert "winner enrichment check deferred" in done.stderr
+    assert (site / layout.WINNER_STATS).read_bytes() == store.get(layout.WINNER_STATS_ALIAS) == store.get(layout.WINNER_STATS)
+    assert (site / layout.RESERVE_MANIFEST).read_bytes() == empty_manifest()
+
+    stats["winners"] = [dict(stats["winners"][0], group_count=999)]
+    core = {key: value for key, value in stats["winners"][0].items() if key != "group_count"}
+    store.put(layout.WINNER_STATS, json.dumps(stats).encode())
+    store.put(layout.WINNER_STATS_ALIAS, store.get(layout.WINNER_STATS))
+    done = pull(env, site)
+    assert done.returncode == 0, done.stderr
+    assert "winner enrichment stripped" in done.stderr and "group_count" in done.stderr
+    mirrored = json.loads((site / layout.WINNER_STATS).read_bytes())
+    assert mirrored["winners"] == [core]
+    assert (site / layout.WINNER_STATS).read_bytes() == (site / layout.WINNER_STATS_ALIAS).read_bytes()
+
+
+def test_enrichment_unavailable_after_the_mirror_still_mirrors_sanitized_stats(env, store, tmp_path):
+    stats = json.loads(store.get(layout.WINNER_STATS))
+    store.put(layout.WINNER_STATS, json.dumps(stats | {"winners": [dict(stats["winners"][0], group_count=1)]}).encode())
+    done = pull(env, tmp_path / "fresh")
+    assert done.returncode == 0, done.stderr
+    assert "winner enrichment stripped" in done.stderr and "public reserve catalog unavailable" in done.stderr
+    assert "group_count" not in json.loads((tmp_path / "fresh" / layout.WINNER_STATS).read_bytes())["winners"][0]
 
 
 def test_only_keys_that_the_layout_names_are_read(env, store, tmp_path):

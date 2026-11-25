@@ -1,52 +1,63 @@
-# Affine epoch subnet
+# Affine SN120 v2: live-pool mining
 
-> **SN120 is now v2. Miners must follow the [`v2` branch](https://github.com/AffineFoundation/affine/tree/v2), not this branch's v1 mining tools.**
-> Read the live protocol at **https://affine.io/llms.txt** and the machine-readable contract at **https://affine.io/mining.json**.
-> Use **`python v2/miner/affine_miner.py`** to see bounds, check and upload a batch, or reproduce a round.
-> Start with [`v2/miner/affine_miner.py`](v2/miner/affine_miner.py) and [train and score your batch at home](v2/REPLICATE.md).
+**The official-active scoring pool rotates every round and MUST be refetched every round.** Start with the [v2 miner quickstart](docs/MINER_QUICKSTART.md) or the full [v2 miner guide](v2/miner/README.md). Use the official `v2` source, not legacy mining tools.
 
-## Historical v1 documentation — not the live protocol
+The authority is a fresh, cache-busted **https://affine.io/mining.json**, specifically **`round.pool.active` and `round.pool.active_sha`**. Fetch `https://affine.io/public/pool/active/<sha>.json` and require the SHA-256 of its bytes to equal `active_sha`. Use **https://affine.io/public/pool/summary.json only if the round has no pool**. The active object is a sorted, unique list of task IDs.
 
-The GREEN/RED material and v1 commands below are retained only as history. They are not the SN120 v2 protocol.
+```bash
+# From the repository root: resolve the current active IDs to verified task bodies.
+python v2/miner/live_pool.py --out tasks.jsonl
+```
 
+Every custom HTTP request needs a `User-Agent`; cache only immutable SHA-addressed reserve shards. Base `dapo:`/`math:` bodies come from `v2/sn120_v2/envs/math_pool_v2_1.jsonl`, which is **STALE/test-only as an active list and NOT a king-draw source**. Generator-produced `gen:` and other reserve bodies come from **https://affine.io/public/pool/reserve/MANIFEST.jsonl** and `https://affine.io/public/pool/reserve/shards/<name>.<sha>.jsonl`; reserve rows provide `id`, `problem`, `answer` and optional public `prior_p`.
 
-Bittensor subnet 120 (MiMo GRPO). **Miners upload one free batch file** (prompts, rollouts,
-rewards) to a private per-hotkey object; at the miner's turn the validator copies it,
-checks the format, trains one GRPO step from the published head (trainer v8.3.3l) and the
-promotion gate keeps the candidate only if it improves the model on a private held-out set.
-Rewards are used as given; no mining software is needed.
+## Nine steps for a v2 miner
 
-**Gate (prior-v1 baseline):** GREEN iff gain > 0, z > 1 (flat bar, no time relaxation),
-pooled cap-hit < 0.33 and at least 100 tasks scored. GREEN -> the candidate becomes the head and
-the turn earns; RED -> the head is kept and the turn earns nothing.
-**GREEN files are public** byte-exact at `https://affine.io/k1/turns/<epoch>/batch.json`
-(with their lr / kl in `turn.json`); RED files and RED training params stay private.
+1. **Register an Ed25519 hotkey** on SN120 and run `python -m sn120_v2.links activate --wallet NAME --hotkey NAME --execute`. There is one entry per hotkey per round and no coldkey entry limit; a charged hotkey needs a new registration for another turn.
+2. **Fetch the live pool again** with `python v2/miner/live_pool.py --out tasks.jsonl`.
+3. **Generate rollouts and transform them to official batch JSON.** The reference `miner/kit/generate.py` defaults to `--pool live`; explicit offline/test operation is `--pool local --local-pool PATH`. Generator output is not an upload batch, and legacy `make_batch.py` compatibility with the live contract is not guaranteed.
+4. **Run ordinary and live-pool checks.** First add `--no-live-pool` for the ordinary offline check, then omit it for the warning-only live diagnostic, or use `--active FILE` with a saved active object:
 
-- **[Mining: the batch file, upload and rules](docs/MINER_QUICKSTART.md)** ·
-  reference helper [`miner/affine_batch.py`](miner/affine_batch.py) · [miner kit and validator code](miner/README.md) ·
-  live contract https://affine.io/mining.json (`batch_file`) · https://affine.io/llms.txt
-- Optional per-turn `lr` (1.25e-7 to 1e-6, default 5e-7) and `kl` (0.005 to 0.1, default 0.02) in an `affine-batch-v2` file: [format and math](docs/MINER_QUICKSTART.md#optional-affine-batch-v2-optional-lr-and-kl-from-2026-10-31) · [validator side](ops/ff_train_params/README.md)
-- Optional per-turn `step_mult` (integer: 1, 2, default 1; duongna's step multiplier) and optimizer / loss knobs (per-group lr scales, adam_eps, weight_decay, clamp_mode, loss_agg, adv_center, adv_clip; all default to the previous trainer) in an `affine-batch-v2` file, from e575: [fields and math](docs/MINER_QUICKSTART.md) · [validator side (trainer v8.3.3l, replay, activation/revert)](ops/step_mult/README.md)
-- [Held-out gate and prior-v1 baseline (code)](priors/gate/README.md)
-- [GREEN-file publishing (default on)](ops/green_publish_default/README.md)
-- [Validator side of the free-file protocol (lifecycle, activation/revert)](ops/free_file/README.md)
-- [STANDING RULES (ops): nothing ever on the encrypted disk](STANDING-RULES.md)
-- [Live registration, payouts and rollback](docs/LIVE_SUBNET.md)
-- [Changelog](CHANGELOG.md)
+   ```bash
+   python v2/miner/affine_miner.py check --mining-json https://affine.io/mining.json --hotkey <ss58> --no-live-pool batch.json
+   python v2/miner/affine_miner.py check --mining-json https://affine.io/mining.json --hotkey <ss58> batch.json
+   python v2/miner/affine_miner.py check --mining-json https://affine.io/mining.json --hotkey <ss58> --active active.json batch.json
+   ```
 
-History and inactive designs (not the live protocol): [architecture and runtime](docs/ARCHITECTURE.md) ·
+5. **Open a sealed upload link and PUT** using the publisher's current commands:
+
+   ```bash
+   export AFFINE_PUT_URL="$(python -m sn120_v2.links open --hotkey <ss58> --key /private/miner.seed --links-url https://affine.io/ff/links)"
+   python v2/miner/affine_miner.py upload --mining-json https://affine.io/mining.json --hotkey <ss58> batch.json
+   unset AFFINE_PUT_URL
+   ```
+
+   The presigned URL is secret. See `mining.json.contract.upload` for the authoritative activation/open commands.
+6. **Interpret file checks by phase.** IDLE means no round is open; waiting files are checked then and when a round takes entries. They are not checked while a round is RUNNING. Mid-round verdicts are the previous snapshot, identified by `queue.files_checked_at`, each row's `checked_at` and `batch_sha256`.
+7. **Crown with strict `z > z_bar`.** The eligible highest-delta candidate must also satisfy the live symmetric gate and tie tolerance. The currently live value is **`z_bar = 0.5`**, but live params can change; derive it from `mining.json.params` as shown in the quickstart.
+8. **Require fresh next-round paired confirmation before payment.** The crown is applied immediately, but only a successful new paired comparison in the next round confirms it; crown-round outcomes do not substitute for that evidence.
+9. **Only confirmed registered kings split weight equally**, with no backpay at confirmation. One writer attempts weights on the hourly cadence in `params.weights_cadence_s`, preserves the last valid weights on chain/state failure, and never uses burn or owner-only fallback. Read **https://affine.io/public/winner-stats.json**; **https://affine.io/winner-stats.json** serves the same bytes.
+
+## Rotation-v2 and draw settings are separate
+
+With `rotation_rule = "info"`, candidate ranking uses **score = p(1-p)**. For sufficient history, `p` is the IRT-predicted head pass rate; otherwise it uses optional reserve `prior_p`, then configured `rotation_prior_p`. The maximum is **0.25 at p = 0.5**, and **score > 0.16 exactly means 0.2 < p < 0.8**. Scores from 0.15 through 0.16 may lie outside that interval.
+
+**`params.irt_middle_band` belongs only to the separate `band` draw rule.** Its preferred interval is inclusive but nonexclusive; outside tasks retain sampling preference. It never governs rotation-v2 active-set ranking. See [pool rotation](v2/POOL_ROTATION.md) for the full algorithm and public replay evidence.
+
+For actual verified head/master downloads, training, scoring, KL measurement and reproduction, use [v2/REPLICATE.md](v2/REPLICATE.md). The quickstart deliberately does not freeze batch caps or training knobs; the live params and `python v2/miner/affine_miner.py bounds --mining-json https://affine.io/mining.json` are authoritative.
+
+**Privacy:** only crowned/applied winner batches and their training values become public. Loser, waiting and invalid batch bodies never become public. All timestamps are UTC.
+
+Historical research and inactive designs (not the live miner protocol): [architecture and runtime](docs/ARCHITECTURE.md) ·
 [MiMo operator lifecycle](docs/MIMO_LIFECYCLE.md) · [flip-incentive shadow scoring](docs/FLIP_INCENTIVE.md) ·
 [fixed-nonce GRPO cutover plan](docs/MIMO_FIXED_NONCE_GRPO_CUTOVER_PLAN.md) ·
 [retained-Adam NLL experiment](docs/EXPERIMENTAL_RETAINED_NLL.md) · [RCore adapter](docs/NATIVE_RCORE_COMMON.md) ·
-[implementation plan](IMPLEMENTATION_PLAN.md) · [operational state and evidence](STATE.md)
-
-Run `.venv/bin/python -m subnet.mock` for a real model/R2/training smoke, or
-`.venv/bin/python -m subnet.tests` and `.venv/bin/python -m ops.new_subnet_checks`
-for protocol checks. Credentials and generated artifacts stay outside Git.
+[implementation plan](IMPLEMENTATION_PLAN.md) · [operational state and evidence](STATE.md) ·
+[STANDING RULES](STANDING-RULES.md) · [live registration, payouts and rollback](docs/LIVE_SUBNET.md) · [changelog](CHANGELOG.md)
 
 ## v2 public task pool
 
-The v2 branch's [pool rotation document](v2/POOL_ROTATION.md) specifies the public active/reserve/retired task lifecycle. With `rotation_rule="info"`, `affine-pool-rotation-v2` ranks every candidate by Bernoulli Fisher information, keeps a configurable active size, and publishes the complete deterministic ranking and next-up queue. The static `/pool` page (`pool.html`) shows active-set composition, score histogram, recent admits/retires and per-task public evidence. The v1 rotation rule remains the default; this code does not activate the new params or deploy itself.
+The live public pool follows the active/reserve/retired lifecycle in the [pool rotation document](v2/POOL_ROTATION.md). When live params select `rotation_rule="info"`, `affine-pool-rotation-v2` ranks candidates by Bernoulli Fisher information and publishes the deterministic ranking and next-up queue. The public `/pool` page shows active-set composition, score histograms, recent admits/retires and per-task evidence. Always derive the active set from fresh live artifacts rather than checkout defaults; changes in this checkout do not deploy automatically.
 
 Read AGENTS.md before modifying this repo. Legacy production and its private archive
 remain separate; this checkout does not automatically deploy changes.

@@ -10,14 +10,17 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import math
 import os
 import re
+import statistics
 import time
 from collections import Counter
 from typing import Any, Mapping, Sequence
 
 from .canonical import is_sha256, to_jsonable
+from .errors import V2Error
 from .params import Params
 from .payout import paid_set, payees
 from .queue import waiting
@@ -421,7 +424,141 @@ def _winner_stats(records: Sequence[RoundRecord], kings_seq: Sequence[King], hea
     return {"schema": WINNER_STATS_SCHEMA, "generated_at": now, "winners": winners}
 
 
-def validate_winner_stats(snapshot: Mapping[str, Any], document: Mapping[str, Any], public_url: str = "") -> Mapping[str, Any]:
+ENRICHMENT_FIELDS = frozenset({"group_count", "boxed_frac", "output_chars_p50", "prompt_sources", "prompt_band"})
+SOURCE_PREFIXES = ("gen", "dapo", "math", "nmv2", "other", "unmapped")
+
+
+def _one_final_box(text: str) -> bool:
+    """One balanced, non-empty ``\\boxed{}``, ending the output; no second box or trailing text."""
+    if text.count("\\boxed{") != 1:
+        return False
+    begin = text.index("\\boxed{") + len("\\boxed{")
+    depth = 1
+    for position in range(begin, len(text)):
+        if text[position] == "{":
+            depth += 1
+        elif text[position] == "}":
+            depth -= 1
+            if depth == 0:
+                return bool(text[begin:position].strip()) and not text[position + 1:].strip()
+    return False
+
+
+def _public_batch(raw: bytes) -> tuple[Any, ...]:
+    """Strictly parse all training rows, without current admission caps or recipe/token rules."""
+    from .admission import FORMAT_V4, FORMATS, _groups
+
+    document = json.loads(raw)
+    if not isinstance(document, dict) or not isinstance(document.get("hotkey"), str) or document.get("version") not in FORMATS:
+        raise ValueError("public winner batch has an invalid header")
+    if document["version"] != FORMAT_V4:
+        return tuple(_groups(document, document["hotkey"]))
+    stages = document.get("stages")
+    if not isinstance(stages, list) or not stages:
+        raise ValueError("public winner batch has no stages")
+    groups = []
+    for stage in stages:
+        if (not isinstance(stage, dict) or not set(stage) <= {"train", "groups", "sft"}
+                or not set(stage) & {"groups", "sft"} or "train" in stage and not isinstance(stage["train"], dict)):
+            raise ValueError("public winner batch has an invalid stage")
+        if "groups" in stage:
+            groups.extend(_groups({"hotkey": document["hotkey"], "groups": stage["groups"]}, document["hotkey"]))
+        traces = stage.get("sft", [])
+        if not isinstance(traces, list) or "sft" in stage and not traces:
+            raise ValueError("public winner batch has invalid SFT traces")
+        for trace in traces:
+            if (not isinstance(trace, dict) or set(trace) != {"prompt", "output"}
+                    or not isinstance(trace["prompt"], str) or not trace["prompt"].strip()
+                    or not isinstance(trace["output"], str)):
+                raise ValueError("public winner batch has an invalid SFT trace")
+            # The same ordered singleton view used by admission's shared v4
+            # checks. The placeholder reward is not an enrichment metric.
+            groups.append((trace["prompt"], ((trace["output"], 1.0),)))
+    return tuple(groups)
+
+
+def winner_enrichment(snapshot: Mapping[str, Any], row: Mapping[str, Any], store: Any, prompt_pool: Any) -> dict[str, Any]:
+    """Derive metrics from one already-public crowned batch, never from a private/frozen URI."""
+    from . import layout
+    from .canonical import sha256_hex
+
+    key = layout.winner_batch(row["round_id"])
+    raw = store.get(key)
+    if sha256_hex(raw) != row["batch_sha256"]:
+        raise ValueError("public winner batch does not match its crowned batch SHA256")
+    groups = _public_batch(raw)
+    outputs = [output for _, rollouts in groups for output, _ in rollouts]
+    if not outputs:
+        raise ValueError("public winner batch has no rollouts")
+    sources = {name: 0 for name in SOURCE_PREFIXES}
+    mapped: dict[str, int] = {}
+    for prompt, _ in groups:
+        task = prompt_pool.task_for_prompt(prompt)
+        if task is None:
+            sources["unmapped"] += 1
+        else:
+            prefix = task.task_id.split(":", 1)[0]
+            sources[prefix if prefix in sources else "other"] += 1
+            mapped[task.task_id] = mapped.get(task.task_id, 0) + 1
+    result: dict[str, Any] = {
+        "group_count": len(groups),
+        "boxed_frac": sum(_one_final_box(output) for output in outputs) / len(outputs),
+        "output_chars_p50": statistics.median(len(output) for output in outputs),
+        "prompt_sources": sources,
+    }
+    record = next((record for record in snapshot.get("history", []) if record.get("round_id") == row["round_id"]), None)
+    if record is None or not record.get("irt_snapshot_id"):
+        return result
+    try:
+        irt = json.loads(store.get(layout.irt_snapshot(record["irt_snapshot_id"])))
+        from .irt import predicted_pass, verify_snapshot
+
+        verify_snapshot(irt)
+        band = irt.get("config", {}).get("middle_band")
+        if band is not None:
+            low, high = band
+            ability = irt.get("head_ability", 0.0)
+            counts = {"low": 0, "middle": 0, "high": 0}
+            for task_id, count in mapped.items():
+                task = irt.get("tasks", {}).get(task_id)
+                if task is None:
+                    raise ValueError("mapped crowned-batch task is missing from its crown-round IRT")
+                p = predicted_pass(ability, task[0])
+                counts["low" if p < low else "high" if p > high else "middle"] += count
+            result["prompt_band"] = counts
+    except (KeyError, OSError, ValueError, TypeError, AttributeError, V2Error) as exc:
+        # A bad IRT object removes only the optional band, not the already verified batch metrics.
+        logging.getLogger(__name__).warning(
+            "winner-stats prompt_band omitted for %s: %s: %s", row["round_id"], type(exc).__name__, exc
+        )
+    return result
+
+
+def enrich_winner_stats(snapshot: Mapping[str, Any], stats: Mapping[str, Any], store: Any,
+                        prompt_pool: Any, logger: Any = None) -> dict[str, Any]:
+    """Best-effort per-crown enrichment; an unreadable public batch cannot stop publication."""
+    logger = logging.getLogger(__name__) if logger is None else logger
+    rows = []
+    for original in stats["winners"]:
+        row = {key: value for key, value in original.items() if key not in ENRICHMENT_FIELDS}
+        try:
+            row.update(winner_enrichment(snapshot, row, store, prompt_pool))
+        except (KeyError, OSError, RuntimeError, ValueError, TypeError, AttributeError, V2Error) as exc:
+            logger.warning("winner-stats enrichment omitted for %s: %s: %s", row["round_id"], type(exc).__name__, exc)
+        rows.append(row)
+    return {**stats, "winners": rows}
+
+
+def validate_winner_enrichment(snapshot: Mapping[str, Any], row: Mapping[str, Any], store: Any, prompt_pool: Any) -> None:
+    """Recompute optional public-batch facts; a type check alone would trust forged content."""
+    derived = winner_enrichment(snapshot, row, store, prompt_pool)
+    for name in ENRICHMENT_FIELDS:
+        if name in row and (name not in derived or row[name] != derived[name]):
+            raise ValueError(f"winner stats {name} does not match its public crowned batch and crown-round IRT")
+
+
+def validate_winner_stats(snapshot: Mapping[str, Any], document: Mapping[str, Any], public_url: str = "",
+                          store: Any = None, prompt_pool: Any = None) -> Mapping[str, Any]:
     """Check every stored winner fact against public history before a site mirrors or displays it.
 
     Batch counts and knobs are available only in the controller's crowned-only transport or its standalone public file.
@@ -461,8 +598,10 @@ def validate_winner_stats(snapshot: Mapping[str, Any], document: Mapping[str, An
         pending = next((row for row in expected["winners"] if row["confirmed"] is None and not row["paid"]), None)
         pending_round = pending["round_id"] if pending is not None else None
     for row, public_row in zip(document["winners"], expected["winners"], strict=True):
-        if not isinstance(row, Mapping) or set(row) != allowed:
-            raise ValueError("winner stats must have exactly the public fields of a crowned winner")
+        if not isinstance(row, Mapping) or not allowed <= set(row) <= allowed | ENRICHMENT_FIELDS:
+            raise ValueError("winner stats must have exactly the public fields of a crowned winner plus optional batch-derived facts")
+        if store is not None and set(row) & ENRICHMENT_FIELDS:
+            validate_winner_enrichment(snapshot, row, store, prompt_pool)
         for name in allowed - {"batch_prompts", "batch_rollouts", "batch_format", "train", "batch_url", "head", "confirmed"}:
             if row[name] != public_row[name]:
                 raise ValueError(f"winner stats {name} does not match public history")

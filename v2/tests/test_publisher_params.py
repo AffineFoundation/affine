@@ -190,7 +190,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         publisher.OPTIMIZER,  # typed in the publisher; a test below compares it with the training job
         publisher.GRADER_VERSION,  # the same, with the grader
         f"at most {publisher.BOX_TRIES} tries in all, inside the training time",
-        f"Task pool: {publisher._pool_lines(params)[0].split(' tasks in ')[0].removeprefix('- Task pool: ')} tasks",
+        f"Base task-body catalog: {publisher._pool_lines(params)[0].split(' tasks in ')[0].removeprefix('- Base task-body catalog: ')} tasks",
         f"{len(json.loads((math_pool.POOL_FILE.with_suffix('.dropped.json')).read_bytes())['dropped']):,} tasks of the earlier pool",
         f"sha256 `{math_pool.POOL_V2_0_SHA256[:8]}…`",
 
@@ -301,7 +301,12 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     # The changelog is a dated history, not a statement of current numeric parameters.
     # Its activation numbers must not change with a simulation's current Params.
     spans += [match.span() for line in publisher.RULE_CHANGELOG for match in re.finditer(re.escape(line), text)]
-    spans += [found.span() for pattern in (SECTION, re.compile(r"## \d+\. ")) for found in pattern.finditer(text)]
+    spans += [found.span() for pattern in (SECTION, re.compile(r"## \d+\. "), re.compile(r"(?m)^\d+\. "), re.compile(r"p\(1-p\)"),
+              re.compile(r"`score > 0\.16`"), re.compile(r"`0\.2 < p < 0\.8`"), re.compile(r"`0\.25`"), re.compile(r"`p=0\.5`"),
+              re.compile(r"`0\.15`"), re.compile(r"`0\.16`"), re.compile(r"section 5")) for found in pattern.finditer(text)]
+    start = text.index("## Start here:")
+    end = text.index("### Live task bodies and rotation", start)
+    spans += [(start, end), *(found.span() for found in re.finditer("section 5", text))]
     typed = [f"...{text[max(0, at - 70) : at]}>>{text[at : at + 30]}..." for at in digits if not any(low <= at < high for low, high in spans)]
     assert not typed, "a number in llms.txt that no parameter and no named constant gives:\n" + "\n".join(typed)
     unused = [phrase for phrase in phrases if phrase in flat[1] and not any(low <= at < high for found in re.finditer(re.escape(phrase), text) for low, high in [found.span()] for at in digits)]
