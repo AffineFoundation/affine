@@ -86,6 +86,9 @@ class LocalRunner:
         trained = {pos: report for pos, report in reports.items() if isinstance(report, LoRAArtifact)}
         train_done = self.clock()
         null, scored, dropped, stopped = self._evaluate(ticket, trained, limit) if trained else ((), {}, {}, False)
+        parent, parent_error = self._score_parent(ticket, limit) if ticket.parent is not None else ((), "")
+        if ticket.parent is not None and not parent and any(len(text.rstrip(NOT_RUN)) != len(ticket.draw.task_ids) for text in null):
+            parent, parent_error = (), "the new-head null did not complete the full fresh draw"
         first_look = params.look_sizes(len(ticket.draw.task_ids))[0]
         n_scored = len(null[0].rstrip(NOT_RUN)) if null else 0
         entries = []
@@ -111,7 +114,22 @@ class LocalRunner:
             finished_at=finished,
             stopped_at_limit=stopped,
             phase_s={"training": train_done - started, "evaluation": finished - train_done},
+            parent_outcomes=parent,
+            parent_error=parent_error,
         )
+
+    def _score_parent(self, ticket: RoundTicket, deadline: int) -> tuple[tuple[str, ...], str]:
+        """Parent-only infrastructure is fail-soft: candidates keep their ordinary sealed result."""
+        if ticket.parent is None:
+            return (), ""
+        score = getattr(self.evaluator, "score_parent", None)
+        if score is None:
+            return (), "parent scoring is unavailable in this evaluator"
+        try:
+            outcome = score(ticket, deadline)
+            return ((outcome,) if isinstance(outcome, str) else tuple(outcome)), ""
+        except Exception as exc:  # noqa: BLE001 - a parent failure is confirmation no_decision, never a lease failure
+            return (), f"parent scoring failed: {type(exc).__name__}: {exc}"
 
     def _train_all(self, ticket: RoundTicket, train_end: int, at_the_lease: bool) -> dict[int, EntryResult | LoRAArtifact]:
         """Train the batches in queue order until ``train_end``, as many at a time as there are GPU slots.
@@ -201,6 +219,7 @@ class LocalRunner:
         params, draw = ticket.params, ticket.draw
         n, samples = len(draw.task_ids), params.samples_per_task
         null_samples = params.null_samples
+        confirmation_needed = ticket.parent is not None
         null = [""] * null_samples
         scored = {pos: [""] * samples for pos in trained}
         dropped: dict[int, int] = {}
@@ -260,10 +279,12 @@ class LocalRunner:
                     if self.clock() >= deadline:
                         stopped = True
                         break
-                    if self.clock() >= deadline or not alive:
+                    if self.clock() >= deadline or (not alive and not confirmation_needed):
                         stopped = self.clock() >= deadline
                         break
-                    completed = stream(request, result_and_judge, eliminated, lambda: not alive)
+                    completed = stream(request, result_and_judge, eliminated, lambda: not alive and not confirmation_needed)
+                    if not alive and not confirmation_needed:
+                        completed = len(null[0])
                     if not alive:
                         completed = len(null[0])
                     # A completed stream can stop short because every LoRA
@@ -290,7 +311,7 @@ class LocalRunner:
                 null[:] = [text[:common] for text in null]
                 for pos in alive:
                     scored[pos][:] = [text[:common] for text in scored[pos]]
-            elif not alive:
+            elif not alive and not confirmation_needed:
                 last_look = max(dropped.values(), default=-1)
                 keep = looks[last_look] if last_look >= 0 else 0
                 null[:] = [text[:keep] for text in null]
@@ -331,7 +352,7 @@ class LocalRunner:
                 if drop_at_look(score_entry(draw.weights, null, scored[pos], params), look, n, params):
                     alive.remove(pos)
                     dropped[pos] = look
-            if not alive:
+            if not alive and ticket.parent is None:
                 break
         pad = lambda strings: tuple(text + NOT_RUN * (n - len(text)) for text in strings)
         return pad(null), {pos: pad(strings) for pos, strings in scored.items()}, dropped, stopped

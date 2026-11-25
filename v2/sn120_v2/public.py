@@ -18,7 +18,7 @@ from .params import Params
 from .payout import paid_set, payees
 from .queue import waiting
 from .state import RoundRecord, State
-from .types import NOT_SCORED, NOT_TRAINED, WINNER, BoxResult, EntryDecision, QueueEntry, RoundTicket, Verdict
+from .types import KL_FIELDS, NOT_SCORED, NOT_TRAINED, WINNER, BoxResult, EntryDecision, QueueEntry, RoundTicket, Verdict
 
 SCHEMA = "sn120-v2-public-1"
 QUEUE_PREVIEW = 50
@@ -95,6 +95,7 @@ def entry_view(entry: EntryDecision) -> dict[str, Any]:
     if entry.score is not None:
         score = entry.score
         view |= {"delta": score.delta, "se": score.se, "z": score.z, "cap_rate": score.cap_rate, "n_tasks": score.n_tasks}
+    view |= {name: value for name in ("kl_seq", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens") if (value := getattr(entry, name)) is not None}
     if entry.status == WINNER:
         view |= {"lora_hash": entry.lora_hash, "pass_rate": entry.score.pass_rate, "null_pass_rate": entry.score.null_pass_rate}
     return view
@@ -105,6 +106,17 @@ def phase(state: State) -> str:
     if state.round is None:
         return "IDLE"
     return "RUNNING" if state.round.decision is None else "APPLY"
+
+
+def confirmation_view(confirmation: Any) -> dict[str, Any]:
+    """The same paid/unpaid paired result in round.json and mining.json round/history."""
+    return confirmation.to_dict() | {
+        "new_head_pass_rate": confirmation.new_pass_rate,
+        "old_head_pass_rate": confirmation.old_pass_rate,
+        "paid": confirmation.confirmed,
+        "payout_status": "paid" if confirmation.confirmed else "unpaid",
+        "reason": public_text(confirmation.reason),
+    }
 
 
 def round_view(record: RoundRecord) -> dict[str, Any]:
@@ -124,6 +136,7 @@ def round_view(record: RoundRecord) -> dict[str, Any]:
         "skipped": len(record.skipped),
         "duplicate_clusters": list(record.duplicate_clusters),
         "duplicates": [entry_view(entry) | {"reason": public_text(entry.reason)} for entry in record.duplicate_decisions],
+        **({"confirmation": confirmation_view(record.confirmation)} if record.confirmation is not None else {}),
     }
     if record.decision is None:
         view["entries"] = sorted([
@@ -256,10 +269,35 @@ def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxRes
         draw = leases[0][0].draw
         report["draw"] = draw.to_dict()
     report["null_outcomes"] = {ticket.box_id: list(result.null_outcomes) for ticket, result in leases}
+    nulls = [{name: getattr(result, f"null_{name}") for name in ("kl_seq", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens")}
+             for _, result in leases if result.null_kl_seq is not None]
+    if nulls:
+        import math
+
+        count = sum(row["kl_k"] for row in nulls)
+        tokens = sum(row["kl_tokens"] for row in nulls)
+        mean = math.fsum(row["kl_seq"] * row["kl_k"] for row in nulls) / count
+        # Recover each calibration's sum of squares, then pool it without a new pass.
+        spread = math.fsum(
+            (row["kl_k"] - 1) * (row["kl_seq_se"] * math.sqrt(row["kl_k"])) ** 2
+            + row["kl_k"] * (row["kl_seq"] - mean) ** 2 for row in nulls
+        )
+        report |= {"null_kl_seq": mean, "null_kl_seq_se": math.sqrt(spread / (count - 1) / count) if count > 1 else 0.0,
+                   "null_kl_tok": math.fsum(row["kl_tok"] * row["kl_tokens"] for row in nulls) / tokens,
+                   "null_kl_k": count, "null_kl_tokens": tokens}
     report["winner_outcomes"] = next(
         (list(entry.outcomes) for _, result in leases for entry in result.entries if winner and entry.queue_pos == winner.queue_pos),
         None,
     )
+    if record.confirmation is not None:
+        report["confirmation"] = confirmation_view(record.confirmation)
+    parent_results = [result for ticket, result in leases if ticket.parent is not None]
+    if parent_results or record.parent is not None:
+        # Parent archives are optional; the fresh sealed sample-0 outcomes and decision are mandatory public evidence,
+        # including a no-result or duplicate-only close.
+        report["parent_outcomes"] = next((list(result.parent_outcomes) for result in parent_results if result.parent_outcomes), None)
+        error = next((result.parent_error for result in parent_results if result.parent_error), "")
+        report["parent_error"] = public_text(error) if error else (None if report["parent_outcomes"] else "no fresh parent result arrived")
     from . import layout
 
     scored = {entry.queue_pos: entry for _, result in leases for entry in result.entries if entry.outcomes}
@@ -273,7 +311,7 @@ def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxRes
             "lora_hash": scored[pos].lora.lora_hash,
             "status": decisions[pos].status if pos in decisions else None,
             "outcomes": list(scored[pos].outcomes),
-        }
+        } | {name: value for name in KL_FIELDS if (value := getattr(scored[pos], name)) is not None}
         for pos in sorted(scored)
     ]
     report["rollouts_meta"] = layout.public_rollout_gate_meta(record.round_id)
@@ -283,6 +321,9 @@ def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxRes
     reasons = {entry.queue_pos: entry.reason for entry in record.decision.entries} if record.decision else {}
     for view in report["entries"]:
         view["reason"] = public_text(reasons.get(view["queue_pos"], ""))
+        measured = next((entry for _, result in leases for entry in result.entries if entry.queue_pos == view["queue_pos"]), None)
+        if measured is not None:
+            view |= {name: value for name in ("kl_seq", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens") if (value := getattr(measured, name)) is not None}
         if view["queue_pos"] in trained:
             train = trained[view["queue_pos"]]
             train_data = train.to_dict()
@@ -335,6 +376,6 @@ def round_text(report: Mapping[str, Any]) -> str:
             note = f"dropped at look {e['eliminated_at_look']}" + (f"; {note}" if note else "")
         lines.append(f"{e['queue_pos']:>3} {e['uid']:>4}  {hotkey:<12} {e.get('status', 'no result'):<11} {numbers} {norm}  {note}".rstrip())
     wall = report.get("wall_s") or {}
-    names = [("training", "train"), ("evaluation", "eval"), ("promote", "promote"), ("fold", "fold"), ("lease_to_promotion", "lease to promotion"), ("total", "total")]
+    names = [("training", "train"), ("evaluation", "eval"), ("kl", "kl"), ("promote", "promote"), ("fold", "fold"), ("lease_to_promotion", "lease to promotion"), ("total", "total")]
     lines.append("wall time: " + " | ".join(f"{label} {_span(wall[key])}" for key, label in names if key in wall))
     return "\n".join(lines)

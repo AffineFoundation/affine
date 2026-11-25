@@ -37,14 +37,14 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from . import layout
-from .admission import SHA_SHOWN, freeze_log, verdict_log, verdict_note
+from .admission import FORMATS, SHA_SHOWN, freeze_log, verdict_log, verdict_note
 from .afterking import PUBLISH, Beside, Overlap
 from .canonical import canonical_json, is_sha256, sha256_hex, to_jsonable
 from .dedup import cluster_entries, cluster_past_kings, normalized_rollouts, stage_b
 from .errors import BatchRejected, ConfigError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
 from .headlog import apply_lora, fold_due, fold_head, genesis_head, lora_ref
 from .journal import JOURNAL_FILE, Journal, pull
-from .judging import check_result, decide, duplicate_decision
+from .judging import check_result, decide, duplicate_decision, score_confirmation
 from .params import GenesisSpec, Params
 from .payout import payees
 from .public import public_text, round_report, snapshot
@@ -55,6 +55,7 @@ from .state import (
     ABANDONED,
     APPLIED,
     APPLY_DEFERRED,
+    CONFIRMATION_RESOLVED,
     GENESIS,
     HEAD_APPLIED,
     HEAD_FOLDED,
@@ -82,8 +83,11 @@ from .types import NO_DECISION as ENTRY_NO_DECISION
 from .types import (
     NOT_SCORED,
     NULL_MODEL,
+    Confirmation,
     SCORED,
     EntryDecision,
+    ParentEval,
+    PendingKing,
     SKIP,
     BoxResult,
     ChainSnapshot,
@@ -152,6 +156,7 @@ class Stack:
     mirror: bool = False  # keep the durable copy of the journal in ``store``, one object per record
     pins: Callable[[Params], None] | None = None  # raises InfraError when this box has another image or code than the parameters pin
     pool: Any = None  # optional PoolRuntime, rotation only; the ordinary sampler remains untouched when absent
+    prompt_pool: Any = None  # MathPool-compatible task_for_prompt mapping for next-round training-prompt exclusion
     head: HeadPublish = dataclasses.field(default_factory=HeadPublish)
     rollout_publisher: Any = None  # optional local/public gate rollout journal, never a scoring dependency
     settings: tuple[str, ...] = ()  # one line for each setting that the stack chooses to show, and where its value comes from; ``run`` prints them at its start
@@ -199,12 +204,13 @@ class Controller:
         pins: Callable[[Params], None] | None = None,
         head: HeadPublish | None = None,
         pool: Any = None,
+        prompt_pool: Any = None,
         rollout_publisher: Any = None,
     ) -> None:
         self.journal, self.store, self.admission, self.sampler, self._params = journal, store, admission, sampler, params
         self.folder, self.publisher, self.pins, self.head = folder, publisher, pins, head or HeadPublish()
         self.state: State = replay(journal.records)
-        self.pool = pool
+        self.pool, self.prompt_pool = pool, prompt_pool
         self.rollout_publisher = rollout_publisher
         self._rotation: Any = None
         if pool is not None:
@@ -532,6 +538,44 @@ class Controller:
 
     # ------------------------------------------------------------ open
 
+    def _parent_slot(self) -> ParentEval | None:
+        if not self.params.confirm_next_round or self.state.pending_king is None:
+            return None
+        pending = self.state.pending_king
+        # A missing manifest is an explicit unscoreable parent, not a reason to block this round's candidates.
+        return ParentEval(pending, self.state.manifests.get(pending.parent_version_id))
+
+    def _training_task_exclusions(self, parent: ParentEval | None) -> frozenset[str]:
+        """Map the previous winner's real batch prompts to current pool ids. Bad/unmapped prompts never block open."""
+        if parent is None or not self.params.confirm_next_round:
+            return frozenset()
+        pending = parent.pending
+        try:
+            raw = self.store.get(layout.winner_batch(pending.crown_round_id))
+            if sha256_hex(raw) != pending.batch_sha256:
+                raise VerifyError("the pending crown's winner batch does not match its batch sha256")
+            body = json.loads(raw)
+            if body.get("version") not in FORMATS or not isinstance(body.get("groups"), list):
+                raise ValueError("not an affine-batch-v1/v2/v3 groups file")
+            prompts = [group["prompt"] for group in body["groups"]
+                       if isinstance(group, dict) and isinstance(group.get("prompt"), str)]
+        except Exception as exc:  # exclusion is best-effort; parent scoring still fails closed independently
+            print(f"round open: pending training-prompt exclusion unavailable ({type(exc).__name__})", file=sys.stderr, flush=True)
+            return frozenset()
+        pool = self.prompt_pool or self.pool
+        mapper = getattr(pool, "task_for_prompt", None)
+        if mapper is None:
+            return frozenset()
+        excluded = set()
+        for prompt in prompts:
+            try:
+                task = mapper(prompt)
+                if task is not None:
+                    excluded.add(task.task_id)
+            except Exception:  # one unmapped/retired prompt never prevents round open
+                continue
+        return frozenset(excluded)
+
     def _freeze(self, reg: Registration, round_id: str) -> FrozenBatch | None:
         batch = self.admission.freeze(reg, round_id)
         if batch is None:
@@ -593,6 +637,8 @@ class Controller:
         picked = select_round(state.queue, verdicts, lambda reg: self._freeze(reg, round_id), params.batch_cap)
         if len(picked.entries) < params.n_min_start:
             return []
+        parent = self._parent_slot()
+        excluded = self._training_task_exclusions(parent)
         # Stage A: immediately after freeze and before entropy, tickets and any training GPU work.
         with timed(f"dedup stage A of {round_id}"):
             kept, duplicate_rows, duplicate_clusters, first_seen = self._stage_a(picked.entries, now)
@@ -610,7 +656,8 @@ class Controller:
                 decision = duplicate_decision(head.version_id, round_id, rows)
                 record = RoundRecord(round_id, head.version_id, params.params_hash, params.recipe_id, "", "", 0,
                                      now, (), picked.skipped, decision, duplicate_decisions=tuple(duplicate_rows),
-                                     duplicate_clusters=tuple(duplicate_clusters), first_seen=first_seen)
+                                     duplicate_clusters=tuple(duplicate_clusters), first_seen=first_seen,
+                                     parent=parent, excluded_training_prompts=len(excluded))
                 self._log(ROUND_OPENED, {"round": record.to_dict()}, now)
                 self._close(NULL, [], now)
                 return []
@@ -628,11 +675,14 @@ class Controller:
             self._rotation, self.sampler, rotation = self.pool.open_and_publish(round_id, snapshot, state)
             if snapshot.get("snapshot_id"):
                 self.store.put(layout.irt_snapshot(snapshot["snapshot_id"]), canonical_json(to_jsonable(snapshot)))
-        draw = self.sampler.draw(head, make_round_seed(round_id, head.version_id, entropy), params.n_tasks)
+        round_seed = make_round_seed(round_id, head.version_id, entropy)
+        # No pending crown: retain the original three-argument call and byte-for-byte draw behavior.
+        draw = (self.sampler.draw(head, round_seed, params.n_tasks, excluded) if parent is not None
+                else self.sampler.draw(head, round_seed, params.n_tasks))
         self._store_snapshot(draw.snapshot_id)
         tickets, leases = [], []
         for index, block in enumerate(split_among_boxes(picked.entries, len(boxes))):
-            ticket = RoundTicket(round_id, f"{round_id}-l{index}", boxes[index], head, params, draw, block, now, now + params.lease_timeout_s)
+            ticket = RoundTicket(round_id, f"{round_id}-l{index}", boxes[index], head, params, draw, block, now, now + params.lease_timeout_s, parent=parent)
             put_record(self.store, layout.ticket(round_id, ticket.lease_id), ticket)
             tickets.append(ticket)
             leases.append(Lease(ticket.lease_id, ticket.box_id, now, ticket.expires_at, ticket.digest(), block))
@@ -640,7 +690,7 @@ class Controller:
             round_id, head.version_id, params.params_hash, params.recipe_id, draw.round_seed, draw.snapshot_id,
             len(draw.task_ids), now, tuple(leases), picked.skipped,
             rotation=rotation, duplicate_decisions=tuple(duplicate_rows), duplicate_clusters=tuple(duplicate_clusters),
-            first_seen=first_seen,
+            first_seen=first_seen, parent=parent, excluded_training_prompts=len(excluded),
         )
         data = {"round": record.to_dict()}
         if rotation is not None:
@@ -765,9 +815,66 @@ class Controller:
 
     # ------------------------------------------------------------ apply, fold, close
 
+    def _resolve_confirmation(self, pairs: Leases, now: int) -> None:
+        """Settle the previous crown once, before this round can install another one.
+
+        Only sealed fresh r+1 outcomes are read here. In particular round r's winner_outcomes are never an input.
+        Any absent/failed parent evidence is an explicit no_decision and leaves the installed head untouched.
+        """
+        record = self.state.round
+        if record is None or record.confirmation is not None or self.state.pending_king is None:
+            return
+        pending = self.state.pending_king
+        if pending.crown_round_id == record.round_id:
+            return  # the crown's own close installs its pending slot; only the next round can settle it
+        request = record.parent
+        # No clean parent slot means no usable comparison: expire the old crown before any immediate new crown.
+        if request is None or request.pending != pending:
+            confirmation = Confirmation(
+                parent_version_id=pending.parent_version_id,
+                pending_round_id=pending.crown_round_id,
+                pending_uid=pending.uid,
+                new_version_id=pending.new_version_id,
+                excluded_training_prompts=record.excluded_training_prompts,
+                reason="no_decision: confirmation was disabled or the round did not pin the pending parent",
+            )
+            self._log(CONFIRMATION_RESOLVED, {"round_id": record.round_id, "confirmation": confirmation.to_dict()}, now)
+            return
+        if request.manifest is not None and request.manifest.head.version_id != pending.parent_version_id:
+            fields = dict(reason="no_decision: the confirming round pinned another parent head")
+        else:
+            fields: dict[str, Any] = dict(reason="no_decision: no fresh parent result arrived")
+            if request.manifest is None:
+                fields["reason"] = "no_decision: the pending crown's parent manifest is unavailable"
+            usable = [(ticket, result) for ticket, result in pairs if ticket.parent == request and result.parent_outcomes]
+            if usable:
+                ticket, result = usable[0]
+                try:
+                    fields = score_confirmation(ticket.draw.weights, (result.null_outcomes[0],), result.parent_outcomes)
+                except Exception as exc:  # malformed/unavailable parent evidence can never silently confirm
+                    fields = {"reason": f"no_decision: fresh parent comparison failed ({type(exc).__name__})"}
+            elif request.manifest is not None:
+                error = next((result.parent_error for ticket, result in pairs
+                              if ticket.parent == request and result.parent_error), "")
+                if error:
+                    fields["reason"] = "no_decision: " + public_text(error)
+
+        confirmation = Confirmation(
+            parent_version_id=pending.parent_version_id,
+            pending_round_id=pending.crown_round_id,
+            pending_uid=pending.uid,
+            new_version_id=pending.new_version_id,
+            excluded_training_prompts=record.excluded_training_prompts,
+            **fields,
+        )
+        self._log(CONFIRMATION_RESOLVED, {"round_id": record.round_id, "confirmation": confirmation.to_dict()}, now)
+
     def _finish(self, now: int) -> None:
         record = self.state.round
-        pairs, winner = self._leases(record, "done"), record.decision.winner
+        pairs = self._leases(record, "done")
+        self._resolve_confirmation(pairs, now)
+        record = self.state.round
+        winner = record.decision.winner
         tested = next((entry for _, result in pairs for entry in result.entries if winner is not None and entry.queue_pos == winner.queue_pos), None)
         made = None
         if winner is not None and not record.applied:
@@ -826,7 +933,14 @@ class Controller:
         parent = self.state.manifest
         manifest = HeadManifest(head, parent.base_files, parent.master_files, parent.lora_files | {artifact.lora_hash: artifact.files})
         king = King(seat.reg.uid, seat.reg.hotkey, record.round_id, head.version_id, now, winner.score.z)
-        self._log(HEAD_APPLIED, {"round_id": record.round_id, "manifest": manifest.to_dict(), "king": king.to_dict()}, now)
+        data: dict[str, Any] = {"round_id": record.round_id, "manifest": manifest.to_dict()}
+        if self.params.confirm_next_round:
+            pending = PendingKing(seat.reg.uid, seat.reg.hotkey, record.round_id, parent.head.version_id,
+                                  head.version_id, seat.batch.batch_sha256, now, winner.score.z)
+            data["pending"] = pending.to_dict()
+        else:
+            data["king"] = king.to_dict()  # disabled mode is exactly the historical immediate apply-and-pay
+        self._log(HEAD_APPLIED, data, now)
         return made
 
     def _fold_beside(self, record: RoundRecord, head: HeadVersion, artifact: LoRAArtifact, to_public: Callable[[], None], now: int, tested=None) -> FoldArtifact | None:
@@ -894,6 +1008,8 @@ class Controller:
         return True
 
     def _close(self, outcome: str, pairs: Leases, now: int, reason: str = "") -> None:
+        # Includes no-result/no-decision and duplicate-only closes: an unscoreable pending crown expires unpaid.
+        self._resolve_confirmation(pairs, now)
         record, params, queue = self.state.round, self.params, self.state.queue
         decision = record.decision
         counted = {e.queue_pos for _, result in pairs for e in result.entries if e.counted_for_seat}
@@ -969,7 +1085,7 @@ class Controller:
             if item.kind == ROUND_OPENED:
                 break
         opened = at[ROUND_OPENED]
-        wall = {name: max((result.phase_s.get(name, 0) for _, result in pairs), default=0) for name in ("training", "evaluation")}
+        wall = {name: max((result.phase_s.get(name, 0) for _, result in pairs), default=0) for name in ("training", "evaluation", "kl")}
         wall["total"] = now - opened
         if HEAD_APPLIED in at:
             wall["promote"] = at[HEAD_APPLIED] - at[ROUND_SETTLED]
