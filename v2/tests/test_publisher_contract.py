@@ -205,13 +205,17 @@ def test_every_miner_bound_is_published_from_the_records(tmp_path):
     assert doc["contract"]["recipe_id"] == recipe.recipe_id and recipe.recipe_id in text
 
 
-def test_training_scoring_and_sampler_render_are_published_as_identical(tmp_path):
+def test_stored_prompt_contract_and_recommendation_are_published(tmp_path):
     text = published(world(tmp_path).publisher.snapshots[-1])[1]
     flat = " ".join(text.split())
-    assert "Training and scoring render a pool task identically" in flat
-    assert "user = `prompt` with a leading instruction + blank line removed" in flat
-    assert "enable_thinking=True" in flat and "add_generation_prompt=True" in flat
-    assert "Rollouts sampled under the old one-user-message render are now slightly off-policy for the trainer" in flat
+    assert "Validator training uses exactly the stored `prompt` field of each batch row" in flat
+    assert "Sampling context such as a separate system message is not kept unless it was written into that stored `prompt` field" in flat
+    assert "official instruction of section 6 (`MANDATE`), a blank line, then the problem, both in that one `prompt` field, as recent crowned kings do" in flat
+    assert '`MathPool.task.batch_prompt()` = `MANDATE + "\\n\\n" + problem`' in flat
+    assert "For your sampler, match the trainer's render: strip a leading official instruction + blank line from the stored `prompt` if present; render system = the official instruction, user = the problem; then apply the head's chat template with `add_generation_prompt=True` and `enable_thinking=True`" in flat
+    assert "The template is not applied to the raw stored `prompt` as a single user message" in flat
+    assert "Prompt input: exactly the stored `prompt` field" not in flat
+    assert "Both are the same task for the grader and give exactly the same model tokens" not in flat
     assert "Scoring renders a task in another way than training" not in flat
 
 

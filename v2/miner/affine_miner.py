@@ -107,6 +107,29 @@ def applied_train(params: Params, train: Mapping[str, Any]) -> dict[str, Any]:
     return {bound.key: to_jsonable(getattr(recipe, bound.key)) for bound in params.recipe.miner_bounds}
 
 
+def prompt_guidance(batch: Batch, params: Params) -> list[str]:
+    """Compare only this file's stored prompts with the bundled public pool."""
+    if params.env != ENV_ID:
+        return []
+    try:
+        pool = load_pool()
+    except (OSError, ValueError, V2Error):
+        return []  # An unavailable local pool adds no warning and never rejects the file.
+    mismatched = sum(
+        1 for prompt, _ in batch.groups
+        if (task := pool.task_for_prompt(prompt)) is not None and prompt != task.batch_prompt()
+    )
+    if not mismatched:
+        return []
+    noun = "prompt differs" if mismatched == 1 else "prompts differ"
+    return [
+        f"WARNING: {mismatched} stored {noun} from the official pool prompt text `task.batch_prompt()` "
+        '(the official instruction, a blank line, then the problem, in the one stored `prompt` field). '
+        "Validator training uses exactly the stored `prompt` field; a separate sampler system message is not kept. "
+        "This is guidance only: the file stays valid."
+    ]
+
+
 def check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None = None, grader: Grader | None = None) -> dict[str, Any]:
     """The validator's check of one file, as a report. Raises ``Invalid`` when the file breaks a rule."""
     return check_report(check_batch(raw, hotkey, params, tokens=tokens, grader=grader), params)
@@ -125,7 +148,7 @@ def check_report(batch: Batch, params: Params) -> dict[str, Any]:
         "rules_not_run": [family for family in ("tokens", "grader") if family not in batch.checked],
         "train_applied": applied_train(params, batch.train),
         "train_cost_guidance": train_cost_guidance(params),
-        "warnings": [warning],
+        "warnings": [warning, *prompt_guidance(batch, params)],
         "kl_gate": {"trained": False, "kl_seq_measured": False, "kl_tok_measured": False, "passing_file_check_is_passing_kl_gate": False, "enabled": params.kl_floor_on, "min_kl_seq": params.min_kl_seq, "min_kl_tok": params.min_kl_tok, "command": LOCAL_KL_COMMAND, "warning": warning},
     }
 
