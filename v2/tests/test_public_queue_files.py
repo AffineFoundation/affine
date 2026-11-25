@@ -316,7 +316,11 @@ def test_the_id_of_the_params_is_the_same(tmp_path):
     world = line_world(tmp_path)
     snap = last(world)
     assert snap["params_hash"] == world.params.params_hash == Params.from_dict(snap["params"]).params_hash
-    assert snap["params"] == world.params.to_dict(), "queue.files is no part of the params"
+    assert snap["params"]["max_stages"] == 5 and snap["params"]["recipe"]["sft_weight"] == 1.0
+    assert {key: value for key, value in snap["params"].items() if key not in ("max_stages", "recipe")} == {
+        key: value for key, value in world.params.to_dict().items() if key not in ("max_stages", "recipe")
+    }, "queue.files is no part of the params"
+    assert {key: value for key, value in snap["params"]["recipe"].items() if key != "sft_weight"} == world.params.recipe.to_dict()
 
 
 def test_nothing_else_about_a_waiting_file_or_a_seat_is_published(tmp_path):

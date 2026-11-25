@@ -167,8 +167,42 @@ def test_the_run_invokes_winner_stats_immediately_after_the_contract(env, tmp_pa
     assert module.run(store=None, site=tmp_path, public_url=URL, ttl_s=1, keep_rounds=2, max_bytes=1,
                       v1_history=None, now=1) == 0
     assert called[1][0] == "llms.txt and mining.json" and called[2][0] == "winner stats"
+    assert called[-1][0] == "llms.txt and mining.json final refresh"
+    assert called[-1][1].__func__ is module.Pull.contract
     assert called[2][1].__func__ is module.Pull.winner_stats
     assert layout.WINNER_STATS in module.FIXED
+
+
+def test_a_contract_changed_during_pull_is_mirrored_before_exit(env, store, tmp_path):
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.syspath_prepend(str(PULL.parent))
+        spec = importlib.util.spec_from_file_location("sn120_site_pull_final_contract_test", PULL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        first = store.get(layout.MINING_JSON)
+        made = json.loads(first)
+        generated = made["generated_at"]
+        old_digest = made["snapshot_digest"]
+        import copy
+        from sn120_v2.publisher import render
+        snap = {key: value for key, value in copy.deepcopy(made).items() if key not in ("snapshot_digest", "contract")}
+        snap["generated_at"] = generated + 100
+        newer_mining, newer_llms = render(snap, URL)
+
+        def change_mid_run(self, ttl_s):
+            store.put(layout.MINING_JSON, newer_mining)
+            store.put(layout.LLMS_TXT, newer_llms)
+
+        monkeypatch.setattr(module.Pull, "head", change_mid_run)
+        assert module.run(store, tmp_path, URL, 1, 200, 128 << 20, None, 1) == 0
+        assert (tmp_path / layout.MINING_JSON).read_bytes() == newer_mining
+        assert (tmp_path / layout.LLMS_TXT).read_bytes() == newer_llms
+        assert (tmp_path / "mining.json").read_bytes() == newer_mining
+        assert (tmp_path / "llms.txt").read_bytes() == newer_llms
+        assert json.loads(newer_mining)["snapshot_digest"] != old_digest
+    finally:
+        monkeypatch.undo()
 
 
 def test_enriched_stats_strip_mismatched_optional_fields_and_mirror_core(env, store, tmp_path):

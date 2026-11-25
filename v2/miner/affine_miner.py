@@ -666,11 +666,61 @@ def load_tokens(path: str | None, base_hash: str | None = None) -> Tokens | None
     return HFTokens(importlib.import_module("transformers").AutoTokenizer.from_pretrained(path)) if path else None
 
 
-def official_grader(params: Params) -> Grader:
-    """The validator's grader of the environment, built with the validator's own call. Needs the ``envs`` extra."""
+def grading_public_url(source: str) -> str:
+    """The public object root beside a mining.json source, or the standard public root."""
+    if source.startswith(("http://", "https://")):
+        return source.rsplit("/", 1)[0] if source.endswith("/mining.json") else source
+    if source.startswith("file://"):
+        return source
+    sys.path.insert(0, str(Path(__file__).resolve().parent))  # sn120-standalone-source-path
+    import live_pool  # sn120-standalone-source-path
+    try:
+        contract = json.loads(Path(source).read_bytes()).get("contract") or {}
+        return contract.get("public_url") or live_pool.PUBLIC_URL
+    except (OSError, ValueError, TypeError):
+        return live_pool.PUBLIC_URL
+
+
+def full_grading_catalog(source: str, *, active: str | None = None, cache: str | Path | None = None) -> Any:
+    """The verified base + whole public reserve catalog; never the active-only MathPool.
+
+    ``active`` is an explicit offline catalog of resolved live_pool JSONL bodies,
+    not an active-ID subset. Raw active IDs cannot verify reserve bodies offline.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))  # sn120-standalone-source-path
+    import live_pool  # sn120-standalone-source-path
+    from sn120_v2.envs.math_pool import MathPool, Task
+    from sn120_v2.envs.reserve import Catalog
+    try:
+        if active is not None:
+            raw = Path(active).read_bytes()
+            rows = [json.loads(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
+            if not rows or not all(isinstance(row, dict) and {"task_id", "problem", "answer"} <= set(row) for row in rows):
+                raise ConfigError("--active must contain resolved live_pool JSONL task bodies to grade offline; raw active IDs do not supply reserve bodies")
+            tasks = tuple(Task(row["task_id"], ENV_ID, row["problem"], row["answer"]) for row in rows)
+            return Catalog(load_pool(), MathPool(tasks, sha256_hex(raw)))
+        public_url = grading_public_url(source)
+        pointer, _, mining = live_pool._pointer(public_url)
+        cache = Path(cache).expanduser() if cache is not None else Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "affine" / "live-pool"
+        return live_pool._catalog(public_url, pointer, mining, cache)  # no active IDs: full base + reserve
+    except (OSError, ValueError, TypeError, KeyError, V2Error) as exc:
+        raise ConfigError(
+            f"could not load the verified full public grading catalog ({type(exc).__name__}: {exc}); "
+            "reserve gen: traces cannot be verified without it. Refusing to fall back to the bundled math:/dapo: pool, "
+            "which could falsely report sft_unverified. Retry online, or pass --active with resolved live_pool JSONL task bodies "
+            "for offline grading; --no-live-catalog explicitly grades only bundled math:/dapo: tasks."
+        ) from exc
+
+
+def official_grader(params: Params, pool: Any | None = None) -> Grader:
+    """The official grader over an injected catalog, defaulting to the bundled pool for this low-level call.
+
+    The CLI supplies ``full_grading_catalog`` by default. Tests and offline callers can inject a catalog
+    without network access. Needs the ``envs`` extra for the grading function.
+    """
     if params.env != ENV_ID:
         raise ConfigError(f"this tool has no grader for environment {params.env!r}")
-    return env_grader(load_pool(), importlib.import_module("sn120_v2.envs.math_grader").grade)
+    return env_grader(load_pool() if pool is None else pool, importlib.import_module("sn120_v2.envs.math_grader").grade)
 
 
 def load_backend(spec: str, workdir: str) -> tuple[ObjectStore, Trainer, Evaluator, str]:
@@ -686,7 +736,8 @@ def main(argv: list[str] | None = None) -> int:
         command = commands.add_parser(name)
         if name == "check":
             command.add_argument("--no-live-pool", action="store_true", help="skip the warning-only live official-active pool check")
-            command.add_argument("--active", help="local live_pool JSONL or a raw SHA-addressed active-ID list; otherwise fetch the live pool")
+            command.add_argument("--active", help="local live_pool JSONL or raw active-ID list for the warning check; with --grade, resolved JSONL supplies the offline full catalog")
+            command.add_argument("--no-live-catalog", action="store_true", help="explicit offline grading: only bundled math:/dapo: tasks; reserve gen: SFT cannot be verified")
             command.epilog = "WARNING: this does NOT train or measure kl_seq or kl_tok; a passing file check is NOT a passing KL gate. Enabled floors come from params.min_kl_seq and params.min_kl_tok. Measure them with `python -m sn120_v2.replicate run`. max_train_token_steps = steps × sum(prompt + output + eos over kept training rows); minibatches do NOT multiply it. Live worked example: cap 22,130,000 / steps=16 = 1,383,125 tokens; official check --tokenizer rejects a mixed batch above that budget."
         command.add_argument("--mining-json", required=True, help="mining.json: a file or an http(s) URL")
         if name == "bounds":
@@ -713,10 +764,19 @@ def main(argv: list[str] | None = None) -> int:
             raise ConfigError("--grade needs --tokenizer")
         if args.command == "check" and args.no_live_pool and args.active:
             raise ConfigError("--active cannot be used with --no-live-pool")
+        if args.command == "check" and args.no_live_catalog and args.active:
+            raise ConfigError("--active cannot be used with --no-live-catalog")
         if args.command == "upload" and not os.environ.get(PUT_URL_ENV):
             raise ConfigError(f"set {PUT_URL_ENV} to the upload URL of your sealed link")
         raw, tokens = Path(args.batch).read_bytes(), load_tokens(args.tokenizer, head.base_hash)
-        grader = official_grader(params) if args.grade else None
+        grader = None
+        if args.grade:
+            if getattr(args, "no_live_catalog", False):
+                print("WARNING: grading only bundled math:/dapo: tasks; reserve gen: SFT cannot be verified and will be sft_unverified.", file=sys.stderr)
+                pool = load_pool()
+            else:
+                pool = full_grading_catalog(args.mining_json, active=getattr(args, "active", None))
+            grader = official_grader(params, pool)
         if args.command in ("check", "upload"):
             report = check(raw, args.hotkey, params, tokens, grader)
             if args.command == "check" and not args.no_live_pool:

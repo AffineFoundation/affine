@@ -47,6 +47,7 @@ from .journal import JOURNAL_FILE, Journal, pull
 from .judging import check_result, decide, duplicate_decision, legacy_parent_one_sample, score_confirmation
 from .params import GenesisSpec, Params
 from .payout import payees
+from .public import phase as public_phase
 from .public import public_text, round_report, snapshot, winner_stats
 from .queue import SyncPlan, plan_sync, select_round, split_among_boxes, squat_trim, waiting
 from .sampling import make_round_seed, train_seed
@@ -290,6 +291,7 @@ class Controller:
         the last closed round left in ``pending/``, and the public files of the state as it is now.
         """
         self.overlap = overlap
+        self._publish(int(time.time()))
         if self.state.rounds:
             last = self.state.rounds[-1].round_id
             overlap.keep(f"the delete of what round {last} left in pending/", lambda _: delete_pending(self.store, layout.pending_round_prefix(last)))
@@ -363,6 +365,7 @@ class Controller:
             self.sampler = IRTSampler(tuple(snapshot["tasks"]), params, snapshot=snapshot,
                                       rotation=snapshot.get("rotation"))
         self._pin()
+        self._publish(now)
 
     def sync_registrations(self, chain: ChainSnapshot, now: int, force: bool = False) -> SyncPlan:
         """Bring the queue in line with the chain. A suspicious read is refused unless ``force``."""
@@ -1165,7 +1168,8 @@ class Controller:
     def _shown(self) -> object:
         """What a snapshot shows of the queue, files and coarse service. A change here is a reason to publish between rounds."""
         seats = [(seat.reg.key, seat.front, seat.demoted, seat.held) for seat in waiting(self.state.queue)]
-        return (seats, {hotkey: (verdict.valid, verdict.batch_sha256, verdict.checked_at) for hotkey, verdict in self._verdicts.items()},
+        return (self.params.params_hash, public_phase(self.state), self.state.round.round_id if self.state.round else None,
+                seats, {hotkey: (verdict.valid, verdict.batch_sha256, verdict.checked_at) for hotkey, verdict in self._verdicts.items()},
                 self._registrations, self._stop_asked, self._close_publish_pending, self._waiting_for_seats)
 
     def _publish(self, now: int) -> None:

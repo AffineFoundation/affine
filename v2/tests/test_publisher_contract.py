@@ -60,6 +60,26 @@ def test_the_controller_publishes_through_the_real_store(tmp_path):
     assert doc["queue"]["length"] == 1 and "| 0 | 12 | hk12 | 1012 | no |" in text
 
 
+def test_contract_pair_reaches_the_store_before_winner_enrichment(tmp_path):
+    made = world(tmp_path, play=True)
+    snap = made.publisher.snapshots[-1]
+    store = MemStore({layout.head_manifest(snap["head"]["head"]["version_id"]): b"{}"})
+    calls = []
+    original = publisher.enrich_winner_stats
+
+    def enrich(snapshot, stats, *args):
+        calls.append((layout.MINING_JSON in store, layout.LLMS_TXT in store, layout.WINNER_STATS in store))
+        return original(snapshot, stats, *args)
+
+    publisher.enrich_winner_stats = enrich
+    try:
+        publisher.StorePublisher(store, "https://files.example/").publish(snap)
+    finally:
+        publisher.enrich_winner_stats = original
+    assert calls == [(True, True, False)]
+    assert publisher.check_pair(store[layout.MINING_JSON], store[layout.LLMS_TXT]) == []
+
+
 def test_winner_stats_contain_only_applied_crowns_with_public_batch_facts(tmp_path):
     made = world(tmp_path)
     made.register(11, 0.4, train={"lora_lr": 0.0001, "steps": 2})

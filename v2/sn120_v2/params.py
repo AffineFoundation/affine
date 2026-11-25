@@ -24,6 +24,7 @@ from .canonical import Record, _hints, from_jsonable, is_sha256, to_jsonable
 from .errors import BatchRejected, ConfigError
 
 SEED_SCOPES = ("round", "batch")
+MINER_UPGRADE_COMMAND = "git fetch origin affine/king4-kltok && git checkout affine/king4-kltok && git pull && python -m pip install -e './v2[miner,envs,links,chain]'"
 
 # Identity of the launch model. The base hash is the manifest digest of the
 # published checkpoint files (see canonical.manifest_digest).
@@ -150,6 +151,11 @@ class Recipe(Record):
     code_digest: str = ""  # sha256 of the training code, set by the train/eval workstream
     image_digests: tuple[str, ...] = ()  # worker images allowed to produce LoRAs and scores
 
+    @property
+    def settable_fields(self) -> frozenset[str]:
+        """Fields a bound may name; also the public compatibility filter's allowlist."""
+        return frozenset(f.name for f in dataclasses.fields(self)) - {"miner_bounds", "code_digest", "image_digests", "method"}
+
     def __post_init__(self) -> None:
         _need(self.steps >= 1, "recipe.steps must be at least 1")
         _need(self.minibatches >= 1, "recipe.minibatches must be at least 1")
@@ -163,9 +169,10 @@ class Recipe(Record):
         _need(bool(self.target_modules), "recipe.target_modules must not be empty")
         for name, needed in TARGET_MODULE_NEEDS:
             _need(name not in self.target_modules or needed in self.target_modules, f"recipe.target_modules with {name} must hold {needed} too")
-        settable = {f.name for f in dataclasses.fields(self)} - {"miner_bounds", "code_digest", "image_digests", "method"}
+        settable = self.settable_fields
         keys = [bound.key for bound in self.miner_bounds]
-        _need(len(set(keys)) == len(keys) and set(keys) <= settable, "miner_bounds must name distinct recipe fields")
+        _need(len(set(keys)) == len(keys) and set(keys) <= settable,
+              f"miner_bounds must name distinct recipe fields; an unknown or duplicate key needs newer miner tools. Upgrade with: {MINER_UPGRADE_COMMAND}")
         for bound in self.miner_bounds:
             _need(bool(bound.choices) or bound.low <= bound.high, f"bad miner bound for {bound.key!r}")
         # The high end of the miner bound is the ceiling for every file: the value of a file that sets none may not be above it.
@@ -378,6 +385,12 @@ class Params(Record):
                 args = [arg for arg in typing.get_args(tp) if arg is not type(None)]
                 tp = args[0] if len(args) == 1 else Any
             if dataclasses.is_dataclass(tp) and isinstance(value, Mapping):
+                if tp is Recipe and isinstance(value.get("miner_bounds"), list):
+                    # A future bound is not a local training permission. Drop it only on this public-read path;
+                    # canonical journals, tickets and stored Params keep the strict Recipe constructor.
+                    known_keys = Recipe().settable_fields
+                    value = value | {"miner_bounds": [bound for bound in value["miner_bounds"]
+                                                       if not isinstance(bound, Mapping) or bound.get("key") in known_keys]}
                 return {key: known(hint, value[key]) for key, hint in _hints(tp).items()
                         if not key.startswith("_") and key in value}
             origin, args = typing.get_origin(tp), typing.get_args(tp)

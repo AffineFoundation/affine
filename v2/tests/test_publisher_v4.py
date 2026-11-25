@@ -10,7 +10,7 @@ import pytest
 from sn120_v2 import publisher, public, sim
 from sn120_v2.admission import FORMAT_V4, STAGE_TRAIN_KEYS
 from sn120_v2.errors import ContractError
-from sn120_v2.params import DEFAULT_MINER_BOUNDS, SFT_MINER_BOUND, Recipe
+from sn120_v2.params import DEFAULT_MINER_BOUNDS, SFT_MINER_BOUND, Params, Recipe
 
 
 def snapshot(tmp_path: Path, **changes):
@@ -66,6 +66,21 @@ def test_v4_example_has_stages_and_sft_and_preserves_flat_example(tmp_path):
     assert v4["stages"][0]["train"] == {"steps": doc["params"]["recipe"].get("steps", 1)}
     assert set(v4["stages"][0]["sft"][0]) == {"prompt", "output"}
     assert "reward" not in v4["stages"][0]["sft"][0]
+
+
+def test_public_v4_snapshot_shows_defaults_without_changing_either_hash(tmp_path):
+    params = sim.sim_params()
+    snap = snapshot(tmp_path)
+    doc, _ = render(tmp_path)
+    assert snap["params"]["max_stages"] == doc["params"]["max_stages"] == 5
+    assert snap["params"]["recipe"]["sft_weight"] == doc["params"]["recipe"]["sft_weight"] == 1.0
+    assert "max_stages" not in params.to_dict() and "sft_weight" not in params.recipe.to_dict()
+    for decoder in (Params.from_dict, Params.from_public_dict):
+        restored = decoder(doc["params"])
+        assert restored.params_hash == params.params_hash == doc["params_hash"]
+        assert restored.recipe_id == params.recipe_id == doc["recipe_id"]
+        assert restored.to_dict() == params.to_dict()
+    assert publisher.check_pair(json.dumps(doc).encode(), publisher.render(snap, "https://files.example")[1]) == []
 
 
 def test_sft_weight_is_documented_only_when_its_bound_is_opted_in(tmp_path):

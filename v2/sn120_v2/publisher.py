@@ -114,6 +114,13 @@ SAMPLING_GUIDANCE = ("With 2 rollouts per prompt, one official-head sample of 96
 # Measured on 2026-11-25 from the 103 scored entries in the 20 closed rounds
 # of public mining.json history (every row had n_tasks=2000).
 LOCAL_DELTA_SE = "A 100-task local delta has a standard error of about 5.3 percentage points, estimated from the public 2000-task SE scaled by √(n/100)."
+SFT_SIZING_GUIDANCE = (
+    "Start small: SFT is strong. Prefer a lower `sft_weight`, for example 0.1–0.3, and few SFT traces relative to "
+    "GRPO rollouts. Measure `kl_tok` locally with `python -m sn120_v2.replicate run ...` before submission. "
+    "One anonymized, unattributed public observation: 120 SFT traces + 80x2 GRPO at `sft_weight=1.0` produced "
+    "`kl_tok=0.088` and −7 percentage points, versus GRPO-only +1.7 percentage points. This is only a caution "
+    "that a large SFT term at weight 1.0 can move the policy too far, not a predicted result."
+)
 MERGED_EXPLANATION = (
     "Each candidate is tested as the merged model round_bf16(fp32 king master + your LoRA update), "
     "built with the same arithmetic as the install fold; the model that is tested is bit-for-bit the model that is installed. "
@@ -166,6 +173,7 @@ RULE_CHANGELOG = (
     "- 2026-11-25 / miner pool guidance / local `math_pool_v2_1.jsonl` presented as the pool → sample from the live official-active pool (`public/pool/summary.json` → `public/pool/active/<sha>.json`); reference generator defaults to it; `check` warns when most prompts are outside it.",
     "- 2026-11-25 / winner stats / canonical-only → byte-identical root `winner-stats.json` alias and optional per-crown fields derived only from crowned winners' public batches.",
     "- 2026-11-25 / miner walkthrough / scattered stale guidance → live-pool, reserve, checking, upload, confirmation and payout walkthrough in llms.txt and the miner quickstarts.",
+    "- 2026-11-25 / miner-visible v4 edges / `check --grade` now uses the full verified live catalog including `gen:`; public params visibly show `max_stages` and the `sft_weight` default without changing hashes; older checkers name the upgrade command and `from_public_dict` tolerates future bounds; mining.json publication lag is shortened on the producer and at the end of site pull.",
 )
 
 V4_RULE_CHANGELOG = (
@@ -500,6 +508,7 @@ def _v4_recipe_lines(params: Params) -> list[str]:
         "  and an output whose official reward is exactly 1. A grader failure or time limit leaves the trace",
         "  unverified; an SFT output at the scoring cap or one that training token caps would cut is invalid.",
         f"- {sft_setting}",
+        f"- {SFT_SIZING_GUIDANCE}",
         "- Only a crowned winner's batch file, including its stages and SFT rows, becomes public. Waiting and losing",
         "  seats reveal no batch content, stage counts, SFT counts, stage train values or SFT verification details.",
     ]
@@ -609,8 +618,9 @@ def _recipe_lines(params: Params) -> list[str]:
         "for every batch. Your batch is the only training data. A batch made against an older head is trained on the",
         "current head. `recipe_id` is the sha256 of the canonical JSON (sorted keys, no spaces) of the recipe object in",
         "mining.json (`params.recipe`). A new recipe gets a new id, and it is shown here before the next round starts.",
-        "The object does not hold `minibatches` while the value is 1, `adam_eps` while it is the default 1e-8,",
-        "or `sft_weight` while it is the default 1.",
+        "The canonical hashed/stored object omits `minibatches` while the value is 1, `adam_eps` while it is the",
+        "default 1e-8, and `sft_weight` while it is the default 1. The public snapshot visibly includes those effective",
+        "`sft_weight` and `max_stages` defaults; decoding it restores the same canonical object and hashes.",
         "",
         *table(("field", "value", "meaning"), rows),
         "",
@@ -2254,18 +2264,17 @@ class StorePublisher:
             upload_entry(self.links_url)  # a bad address stops the start, not each publish
 
     def publish(self, snapshot: Mapping[str, Any]) -> None:
-        """Render and filter all public files first, so a bad snapshot changes nothing. Then write and read back each one.
+        """Publish the validated contract pair before optional winner-stats enrichment.
 
-        A store that is behind or fails raises ``InfraError``: the controller keeps running and publishes again.
+        A malformed or private snapshot changes nothing. Every write reads back;
+        a failed store raises ``InfraError`` and the controller publishes again.
         """
         stats = validate_winner_stats(snapshot, winner_stats_from_snapshot(snapshot, self.public_url), self.public_url)
-        stats = enrich_winner_stats(snapshot, stats, self.store, self.prompt_pool, self.enrichment_log)
         # This transport carries crowned-only facts into the separate public file. It is not part of mining.json;
         # the publisher still receives only a mapping, never State or private journal/batch locations.
         mining, llms = render({key: value for key, value in snapshot.items() if key != "winner_stats"},
                               self.public_url, self.links_url)
         refuse_private(stats, "winner-stats")
-        stats_bytes = (json.dumps(stats, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
         head_key = layout.head_manifest(snapshot["head"]["head"]["version_id"])
         try:
             if not self.store.exists(head_key):
@@ -2276,8 +2285,15 @@ class StorePublisher:
                 verify_public_pool_snapshot(self.store, snapshot)
             except V2Error as exc:
                 raise InfraError(f"public pool verification failed: {exc}") from exc
-            for key, data in ((layout.WINNER_STATS, stats_bytes), *((alias, stats_bytes) for alias in layout.PUBLIC_ALIASES),
-                              (layout.MINING_JSON, mining), (layout.LLMS_TXT, llms)):
+            for key, data in ((layout.MINING_JSON, mining), (layout.LLMS_TXT, llms)):
+                self.store.put(key, data)
+                if self.store.sha256(key) != sha256_hex(data):
+                    raise InfraError(f"{key} does not read back as written")
+            # Optional public-batch enrichment must not hold back the already validated contract pair.
+            stats = enrich_winner_stats(snapshot, stats, self.store, self.prompt_pool, self.enrichment_log)
+            refuse_private(stats, "winner-stats")
+            stats_bytes = (json.dumps(stats, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+            for key, data in ((layout.WINNER_STATS, stats_bytes), *((alias, stats_bytes) for alias in layout.PUBLIC_ALIASES)):
                 self.store.put(key, data)
                 if self.store.sha256(key) != sha256_hex(data):
                     raise InfraError(f"{key} does not read back as written")
