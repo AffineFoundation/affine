@@ -159,6 +159,7 @@ RULE_CHANGELOG = (
     "- 2026-11-24 / confirming-round king + old-parent samples / inherited `1` → matched `2` per task (`null_samples_per_task=2`).",
     "- 2026-11-25 / `service` / phase alone → phase plus coarse public service state, reason and next-open estimate.",
     "- 2026-11-25 / local-delta measurement guidance / undocumented → a 100-task local delta has an SE of about 5.3 percentage points.",
+    "- 2026-11-25 / per-round seating / the one-entry-per-round rule is hotkey-only; there is no coldkey seat limit.",
 )
 
 RECIPE_NOTES = {
@@ -886,7 +887,7 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- When the hotkey of the UID changes and the registration stays, the seat keeps its place. The validator then",
         "  reads the file of the new hotkey: a file that was stored for the old hotkey does not count. When the new",
         "  hotkey already had its turn, the seat is removed.",
-        "- One entry for each miner in a round. A second seat of the same hotkey or coldkey waits for a later round.",
+        "- One entry for each hotkey in a round. A second seat of the same hotkey waits for a later round.",
         f"- `{NO_DECISION}`: our infrastructure failed (section 3). You are not charged and you go to the front of the",
         "  queue.",
         "- A failure is counted for your seat in one case only: your batch had the whole training time of the round",

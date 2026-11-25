@@ -56,21 +56,18 @@ def select_round(
 ) -> Selection:
     """Walk the queue and admit up to ``cap`` seats that have a valid frozen file.
 
-    A seat with no valid file is skipped. A held seat is passed over. A miner
-    gets one entry per round: a second seat of the same hotkey or coldkey
-    stays queued for a later round.
+    A seat with no valid file is skipped. A held seat is passed over. Each
+    hotkey gets one entry per round: a second seat of the same hotkey waits
+    for a later round.
     """
     entries: list[Entry] = []
     skipped: list[RegKey] = []
-    miners: set[str] = set()
+    hotkeys: set[str] = set()
     for seat in waiting(queue):
         if len(entries) >= cap:
             break
         reg = seat.reg
-        if seat.held:
-            continue
-        owners = {f"hotkey:{reg.hotkey}"} | ({f"coldkey:{reg.coldkey}"} if reg.coldkey else set())
-        if owners & miners:
+        if seat.held or reg.hotkey in hotkeys:
             continue
         verdict = verdicts.get(reg.hotkey)
         batch = freeze(reg) if verdict is not None and verdict.valid else None
@@ -78,7 +75,7 @@ def select_round(
             skipped.append(reg.key)
             continue
         entries.append(Entry(queue_pos=len(entries), reg=reg, batch=batch))
-        miners |= owners
+        hotkeys.add(reg.hotkey)
     return Selection(tuple(entries), tuple(skipped))
 
 
