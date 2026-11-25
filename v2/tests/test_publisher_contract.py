@@ -160,6 +160,33 @@ def test_crowned_public_batch_enrichment_and_privacy(tmp_path, caplog):
     assert "prompt_band" not in basic and basic["group_count"] == 4  # VerifyError also preserves the basic fields
 
 
+def test_v4_crowned_batch_enriches_grpo_groups_and_sft_without_admission_caps(tmp_path):
+    snapshot, winner, store, pool = crowned_public_batch_fixture(tmp_path)
+    tasks = [pool.task(task_id) for task_id in pool.task_ids]
+    document = {
+        "version": "affine-batch-v4", "hotkey": winner["hotkey"],
+        "stages": [
+            {"train": {"steps": 2}, "groups": [
+                {"prompt": tasks[0].batch_prompt(), "rollouts": [{"output": "work \\boxed{1}", "reward": 1.0}]},
+            ]},
+            {"sft": [
+                {"prompt": tasks[1].problem, "output": "abcdef"},
+                {"prompt": "custom public prompt", "output": "no box"},
+            ]},
+        ],
+    }
+    raw = json.dumps(document).encode()
+    winner["batch_sha256"] = sha256_hex(raw)
+    store[layout.winner_batch(winner["round_id"])] = raw
+    stats = {"schema": public.WINNER_STATS_SCHEMA, "generated_at": snapshot["generated_at"], "winners": [winner]}
+    enriched = public.enrich_winner_stats(snapshot, stats, store, pool)["winners"][0]
+    assert enriched["group_count"] == 3
+    assert enriched["boxed_frac"] == 1 / 3 and enriched["output_chars_p50"] == 6
+    assert enriched["prompt_sources"] == {"gen": 1, "dapo": 0, "math": 1, "nmv2": 0, "other": 0, "unmapped": 1}
+    assert sum(enriched["prompt_band"].values()) == 2
+    public.validate_winner_enrichment(snapshot, enriched, store, pool)
+
+
 def test_real_controller_enriches_only_its_crowned_public_batch(tmp_path):
     from sn120_v2.envs.math_pool import MathPool
 

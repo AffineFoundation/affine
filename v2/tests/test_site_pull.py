@@ -171,7 +171,7 @@ def test_the_run_invokes_winner_stats_immediately_after_the_contract(env, tmp_pa
     assert layout.WINNER_STATS in module.FIXED
 
 
-def test_enriched_stats_verify_and_forgery_is_refused(env, store, tmp_path):
+def test_enriched_stats_strip_mismatched_optional_fields_and_mirror_core(env, store, tmp_path):
     from sn120_v2.canonical import sha256_hex
     from sn120_v2.envs.math_pool import load_pool
     from sn120_v2.envs.reserve import Catalog, empty_manifest
@@ -203,21 +203,25 @@ def test_enriched_stats_verify_and_forgery_is_refused(env, store, tmp_path):
     assert (site / layout.WINNER_STATS).read_bytes() == store.get(layout.WINNER_STATS_ALIAS) == store.get(layout.WINNER_STATS)
     assert (site / layout.RESERVE_MANIFEST).read_bytes() == empty_manifest()
 
-    good_stats = (site / layout.WINNER_STATS).read_bytes()
     stats["winners"] = [dict(stats["winners"][0], group_count=999)]
+    core = {key: value for key, value in stats["winners"][0].items() if key != "group_count"}
     store.put(layout.WINNER_STATS, json.dumps(stats).encode())
     store.put(layout.WINNER_STATS_ALIAS, store.get(layout.WINNER_STATS))
     done = pull(env, site)
-    assert done.returncode == 1 and "FAILED winner stats:" in done.stderr and "group_count" in done.stderr
-    assert (site / layout.WINNER_STATS).read_bytes() == good_stats
-    assert (site / layout.WINNER_STATS_ALIAS).read_bytes() == good_stats
+    assert done.returncode == 0, done.stderr
+    assert "winner enrichment stripped" in done.stderr and "group_count" in done.stderr
+    mirrored = json.loads((site / layout.WINNER_STATS).read_bytes())
+    assert mirrored["winners"] == [core]
+    assert (site / layout.WINNER_STATS).read_bytes() == (site / layout.WINNER_STATS_ALIAS).read_bytes()
 
 
-def test_enriched_stats_fail_after_the_mirror_if_the_catalog_is_unavailable(env, store, tmp_path):
+def test_enrichment_unavailable_after_the_mirror_still_mirrors_sanitized_stats(env, store, tmp_path):
     stats = json.loads(store.get(layout.WINNER_STATS))
     store.put(layout.WINNER_STATS, json.dumps(stats | {"winners": [dict(stats["winners"][0], group_count=1)]}).encode())
     done = pull(env, tmp_path / "fresh")
-    assert done.returncode == 1 and "FAILED winner stats enriched fields" in done.stderr
+    assert done.returncode == 0, done.stderr
+    assert "winner enrichment stripped" in done.stderr and "public reserve catalog unavailable" in done.stderr
+    assert "group_count" not in json.loads((tmp_path / "fresh" / layout.WINNER_STATS).read_bytes())["winners"][0]
 
 
 def test_only_keys_that_the_layout_names_are_read(env, store, tmp_path):

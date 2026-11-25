@@ -75,7 +75,7 @@ from sn120_v2 import layout
 from sn120_v2.errors import ContractError, V2Error
 from sn120_v2.headchain import chain_links, check_chain, heads_of
 from sn120_v2.r2 import MAX_PRESIGN_S, R2Store
-from sn120_v2.public import validate_winner_enrichment, validate_winner_stats, winner_stats_from_snapshot
+from sn120_v2.public import validate_winner_stats, winner_enrichment, winner_stats_from_snapshot
 from sn120_v2.publisher import refuse_private
 from sn120_v2.r2_names import store_env
 from sn120_v2.types import HeadManifest
@@ -330,13 +330,20 @@ class Pull:
         else:
             checked = json.loads(data)
             validate_winner_stats(mining, checked, self.public_url)
+            before = json.dumps(checked).encode()
             self._check_enrichment(mining, checked)
             refuse_private(checked, "winner-stats")
+            if json.dumps(checked).encode() != before:
+                data = json.dumps(checked).encode()
         self.put(layout.WINNER_STATS, data)
         build.write(self.site / layout.WINNER_STATS_ALIAS, data)
 
     def _check_enrichment(self, mining: dict, stats: dict, *, required: bool = False) -> None:
-        """Check optional fields after mirroring the reserve; defer the first pass on a fresh site."""
+        """Check optional fields in place; a disagreement never discards core-validated stats.
+
+        A first pass before mirroring the reserve defers. The post-pool pass strips only
+        fields it cannot reproduce, so a newer publisher reserve cannot stall the site.
+        """
         from sn120_v2.envs.reserve import load_reserve
         from sn120_v2.public import ENRICHMENT_FIELDS
 
@@ -345,15 +352,30 @@ class Pull:
         root = self.site / layout.RESERVE_MANIFEST.rsplit("/", 1)[0]
         try:
             _, catalog = load_reserve(root, with_catalog=True, allow_retired=True)
-        except V2Error:
-            if required:
-                raise
-            # A first pull mirrors the pool below. Do not keep good stats waiting for that later step.
-            self.notes.append("winner enrichment check deferred until the public reserve catalog is mirrored")
+        except V2Error as exc:
+            if not required:
+                self.notes.append("winner enrichment check deferred until the public reserve catalog is mirrored")
+                return
+            for row in stats["winners"]:
+                self._strip_enrichment(row, fields=set(row) & ENRICHMENT_FIELDS,
+                                       reason=f"public reserve catalog unavailable ({type(exc).__name__})")
             return
         for row in stats["winners"]:
-            if set(row) & ENRICHMENT_FIELDS:
-                validate_winner_enrichment(mining, row, self.store, catalog)
+            fields = set(row) & ENRICHMENT_FIELDS
+            if not fields:
+                continue
+            try:
+                derived = winner_enrichment(mining, row, self.store, catalog)
+                bad = {name for name in fields if name not in derived or row[name] != derived[name]}
+                if bad:
+                    self._strip_enrichment(row, fields=bad, reason="does not match the public crowned batch and crown-round IRT")
+            except FAILURES as exc:
+                self._strip_enrichment(row, fields=fields, reason=f"{type(exc).__name__}: {exc}")
+
+    def _strip_enrichment(self, row: dict, *, fields: set[str], reason: str) -> None:
+        for name in fields:
+            row.pop(name, None)
+        self.notes.append(f"winner enrichment stripped for {row['round_id']} ({', '.join(sorted(fields))}): {reason}")
 
     def head(self, ttl_s: int) -> None:
         """The head pointer, and the signed read links for the weight files of that head."""
@@ -674,8 +696,13 @@ def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, m
     pull.step("pool", pull.pool)
 
     def enriched_fields() -> None:
-        pull._check_enrichment(json.loads((site / layout.MINING_JSON).read_bytes()),
-                               json.loads((site / layout.WINNER_STATS).read_bytes()), required=True)
+        stats = json.loads((site / layout.WINNER_STATS).read_bytes())
+        before = json.dumps(stats).encode()
+        pull._check_enrichment(json.loads((site / layout.MINING_JSON).read_bytes()), stats, required=True)
+        data = json.dumps(stats).encode()
+        if data != before:
+            pull.put(layout.WINNER_STATS, data)
+            build.write(site / layout.WINNER_STATS_ALIAS, data)
 
     pull.step("winner stats enriched fields", enriched_fields)
     pull.step("benchmarks", pull.benchmarks)

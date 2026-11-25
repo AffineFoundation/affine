@@ -445,13 +445,36 @@ def _one_final_box(text: str) -> bool:
 
 
 def _public_batch(raw: bytes) -> tuple[Any, ...]:
-    """Strictly parse all groups, without current admission caps or recipe/token rules."""
-    from .admission import _groups
+    """Strictly parse all training rows, without current admission caps or recipe/token rules."""
+    from .admission import FORMAT_V4, FORMATS, _groups
 
     document = json.loads(raw)
-    if not isinstance(document, dict) or not isinstance(document.get("hotkey"), str) or document.get("version") not in ("affine-batch-v1", "affine-batch-v2", "affine-batch-v3"):
+    if not isinstance(document, dict) or not isinstance(document.get("hotkey"), str) or document.get("version") not in FORMATS:
         raise ValueError("public winner batch has an invalid header")
-    return tuple(_groups(document, document["hotkey"]))
+    if document["version"] != FORMAT_V4:
+        return tuple(_groups(document, document["hotkey"]))
+    stages = document.get("stages")
+    if not isinstance(stages, list) or not stages:
+        raise ValueError("public winner batch has no stages")
+    groups = []
+    for stage in stages:
+        if (not isinstance(stage, dict) or not set(stage) <= {"train", "groups", "sft"}
+                or not set(stage) & {"groups", "sft"} or "train" in stage and not isinstance(stage["train"], dict)):
+            raise ValueError("public winner batch has an invalid stage")
+        if "groups" in stage:
+            groups.extend(_groups({"hotkey": document["hotkey"], "groups": stage["groups"]}, document["hotkey"]))
+        traces = stage.get("sft", [])
+        if not isinstance(traces, list) or "sft" in stage and not traces:
+            raise ValueError("public winner batch has invalid SFT traces")
+        for trace in traces:
+            if (not isinstance(trace, dict) or set(trace) != {"prompt", "output"}
+                    or not isinstance(trace["prompt"], str) or not trace["prompt"].strip()
+                    or not isinstance(trace["output"], str)):
+                raise ValueError("public winner batch has an invalid SFT trace")
+            # The same ordered singleton view used by admission's shared v4
+            # checks. The placeholder reward is not an enrichment metric.
+            groups.append((trace["prompt"], ((trace["output"], 1.0),)))
+    return tuple(groups)
 
 
 def winner_enrichment(snapshot: Mapping[str, Any], row: Mapping[str, Any], store: Any, prompt_pool: Any) -> dict[str, Any]:
