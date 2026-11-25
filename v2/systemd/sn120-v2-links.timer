@@ -1,0 +1,15 @@
+# Starts sn120-v2-links.service every 30 minutes, also after a reboot.
+# Enable this timer and not the service. 30 minutes is the job's default --reissue-s, which the index publishes.
+
+[Unit]
+Description=SN120 v2 upload links (every 30 minutes)
+
+[Timer]
+OnCalendar=*-*-* *:10,40:00
+AccuracySec=1min
+# A run that was missed while the host was off is made at the start: a link works for 24 hours, so fresh links come first.
+Persistent=true
+Unit=sn120-v2-links.service
+
+[Install]
+WantedBy=timers.target

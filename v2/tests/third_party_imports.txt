@@ -1,0 +1,50 @@
+# Import names that v2 code may use besides the standard library and sn120_v2.
+# One import name per line (the name you write after "import", not the package
+# name on PyPI). When you add a dependency to your extra in pyproject.toml, add
+# its import name under your workstream here.
+#
+# A legacy v1 or prototype module can never be listed here.
+# tests/test_no_legacy.py enforces that.
+
+# dev
+pytest
+
+# tests: local test helpers and the site's standalone pull module
+conftest
+test_dedup
+test_generator_remote
+test_rotation_controller
+pull
+
+# gpu: train/eval workers and low-rank duplicate arithmetic
+huggingface_hub
+numpy
+safetensors
+torch
+transformers
+# triton is installed with torch on Linux. The training job only puts a lock around its kernel tuner.
+triton
+
+# r2: R2 head store (moto is the S3 fake, used by tests only)
+boto3
+botocore
+moto
+
+# chain: weights writer and chain reader
+bittensor
+
+# miner: miner tooling and llms.txt; R2 downloads need boto3 (botocore is listed with r2)
+transformers
+jinja2
+boto3
+
+# envs: math task pool and grader
+math_verify
+latex2sympy2_extended
+sympy
+
+# links: sealed upload links and activation
+nacl
+
+# Generator: optional published-prior parquet adapter; prior_index: offline builder only; the reserve consumer reads JSON
+pyarrow
