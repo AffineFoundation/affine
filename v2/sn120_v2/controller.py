@@ -44,7 +44,7 @@ from .dedup import cluster_entries, cluster_past_kings, normalized_rollouts, sta
 from .errors import BatchRejected, ConfigError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
 from .headlog import apply_lora, fold_due, fold_head, genesis_head, lora_ref
 from .journal import JOURNAL_FILE, Journal, pull
-from .judging import check_result, decide, duplicate_decision, score_confirmation
+from .judging import check_result, decide, duplicate_decision, legacy_parent_one_sample, score_confirmation
 from .params import GenesisSpec, Params
 from .payout import payees
 from .public import public_text, round_report, snapshot
@@ -850,7 +850,8 @@ class Controller:
             if usable:
                 ticket, result = usable[0]
                 try:
-                    fields = score_confirmation(ticket.draw.weights, (result.null_outcomes[0],), result.parent_outcomes)
+                    new_outcomes = result.null_outcomes[:1] if legacy_parent_one_sample(ticket.params, len(result.parent_outcomes)) else result.null_outcomes
+                    fields = score_confirmation(ticket.draw.weights, new_outcomes, result.parent_outcomes)
                 except Exception as exc:  # malformed/unavailable parent evidence can never silently confirm
                     fields = {"reason": f"no_decision: fresh parent comparison failed ({type(exc).__name__})"}
             elif request.manifest is not None:

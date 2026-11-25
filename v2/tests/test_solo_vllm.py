@@ -97,7 +97,7 @@ def test_solo_servers_prewarm_and_keep_paired_requests(build, tmp_path, monkeypa
     store.put(f"{layout.public_base_prefix(base)}/config.json", b"{}")
     store.put(f"{layout.public_master_prefix(master)}/model.part00.safetensors", b"master")
     head = HeadVersion.make(parent_version_id=None, base_hash=base, base_fp32_master_digest=master, loras=(), round_id="genesis", applied_at=1)
-    params = build.params(n_tasks=8, n_gpus=2, looks=(1.0,), eval_chunk_tasks=4)
+    params = build.params(n_tasks=8, n_gpus=2, looks=(1.0,), eval_chunk_tasks=4, min_kl_seq=0.1)
     ticket = dataclasses.replace(build.ticket(n_entries=2, n_tasks=8, params=params), head=head, issued_at=int(time.time()), expires_at=int(time.time()) + 5000)
     loras = {}
     for entry in ticket.entries:
@@ -113,8 +113,12 @@ def test_solo_servers_prewarm_and_keep_paired_requests(build, tmp_path, monkeypa
     evaluator = VllmEvaluator(store, plan.BoxConfig(tmp_path / "work", build.image), pool, grader, spawn=farm.spawn, http=farm.http, gpus_free=lambda limit, timeout: None, settings=ServeSettings(start_timeout_s=10.0, clients_per_server=8), sleep=lambda _: None, room=lambda sockets, spare: sockets + spare)
     # Solo uses the real _serve_one path with the normal server argv.
     monkeypatch.setattr("sn120_v2.gpu.evaluator.nvidia_smi", lambda: "0, 0\n1, 0\n")
-    trainer = SimpleNamespace(train=lambda request: loras[request.entry.queue_pos], close=lambda: None)
-    runner = SoloRunner(trainer, evaluator, lambda: int(time.time()), build.image, settings=SoloSettings(prewarm=True, steal_block_tasks=2), poll_s=0.01)
+    def train(request):
+        time.sleep(0.2)
+        return loras[request.entry.queue_pos]
+
+    trainer = SimpleNamespace(train=train, close=lambda: None)
+    runner = SoloRunner(trainer, evaluator, time.time, build.image, settings=SoloSettings(prewarm=True, steal_block_tasks=2), poll_s=0.01)
     budget_calls = []
     budget = evaluator.solo_client_budget
 
@@ -123,6 +127,16 @@ def test_solo_servers_prewarm_and_keep_paired_requests(build, tmp_path, monkeypa
         return budget(gpus, max_clients)
 
     evaluator.solo_client_budget = check_budget
+    kl_seconds = []
+
+    def measure_kl(ticket, entries, null, tested):
+        started = time.monotonic()
+        time.sleep(0.2)
+        kl_seconds.append(time.monotonic() - started)
+        metrics = dict(kl_seq=0.2, kl_seq_se=0.02, kl_tok=0.01, kl_k=8, kl_tokens=50)
+        return {"entries": {entry.queue_pos: metrics for entry in entries}, "null": None, "wall_s": kl_seconds[-1]}
+
+    evaluator.measure_kl = measure_kl
     result = runner.run(ticket)
     assert budget_calls == [(2, 8, 0)], "the solo budget is set before any prewarm server starts"
     assert result.null_outcomes == ("P" * 8,)
@@ -137,8 +151,11 @@ def test_solo_servers_prewarm_and_keep_paired_requests(build, tmp_path, monkeypa
     assert len(by_task) == 8
     assert all(len({body["model"] for _, body in pairs}) == 3 for pairs in by_task.values())
     phase = json.loads((tmp_path / "work" / "logs" / "phases.jsonl").read_text().splitlines()[-1])
-    assert phase["phase"] == "solo_eval" and phase["clients_per_server"] == 8
+    assert phase["phase"] == "solo_eval" and phase["clients_per_server"] is None  # close() releases the serving budget before KL
     assert phase["configured_clients_per_server"] == 8 and phase["open_files_limit"] == resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+    assert 0 < phase["eval_s"] < phase["wall_s"] < 10
+    assert 0 <= phase["train_s"] and kl_seconds
+    assert phase["eval_s"] == pytest.approx(phase["wall_s"] - phase["train_s"] - kl_seconds[0], abs=0.03)
 
 
 def test_solo_server_spawns_and_health_waits_do_not_block_other_gpus(build, tmp_path):
@@ -147,6 +164,7 @@ def test_solo_server_spawns_and_health_waits_do_not_block_other_gpus(build, tmp_
     seam._solo_lock = threading.RLock()
     seam._solo_start_locks = {}
     seam._solo_servers, seam._solo_urls, seam._solo_loaded = {}, {}, {}
+    seam._solo_base_dirs = {}
     seam._solo_server_clients, seam._solo_clients = {}, None
     seam._head, seam._table = None, 0
     seam.config = SimpleNamespace(work_dir=tmp_path)

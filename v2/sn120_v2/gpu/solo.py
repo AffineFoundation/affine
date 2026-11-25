@@ -407,6 +407,7 @@ class SoloRunner(LocalRunner):
 
     def _solo_run_round(self, ticket: RoundTicket):
         started, params = self.clock(), ticket.params
+        wall_started = time.monotonic()
         begin_round = getattr(self.evaluator, "begin_round", None)
         if begin_round is not None:
             begin_round(ticket)
@@ -425,6 +426,7 @@ class SoloRunner(LocalRunner):
         for index, entry in enumerate(entries):
             training.put((index, entry))
         train_done = [started]
+        train_done_wall = [wall_started]
         train_lock = threading.Lock()
         failed: queue.Queue = queue.Queue()
         remaining_training = [len(entries)]
@@ -495,6 +497,7 @@ class SoloRunner(LocalRunner):
                     with train_lock:
                         remaining_training[0] -= 1
                         train_done[0] = max(train_done[0], self.clock())
+                        train_done_wall[0] = time.monotonic()
                         if remaining_training[0] == 0:
                             scheduler.training_finished()
                 # Only now can this GPU have no further training assignment.
@@ -530,6 +533,7 @@ class SoloRunner(LocalRunner):
             parent_outcomes, parent_error = self._score_parent(ticket, limit)
         tested = dict(scheduler.tested)
         eval_done = self.clock()
+        eval_wall_s = time.monotonic() - train_done_wall[0]
         if params.min_kl_seq > 0 and (any(isinstance(report, LoRAArtifact) for report in reports.values()) or outcome[0]):
             # All vLLM servers must release the cards before torch loads two models.
             self.evaluator.close()
@@ -551,9 +555,9 @@ class SoloRunner(LocalRunner):
                 self.evaluator.config.work_dir,
                 "solo_eval",
                 round_id=ticket.round_id,
-                wall_s=time.monotonic() - started,
+                wall_s=time.monotonic() - wall_started,
                 train_s=train_done[0] - started,
-                eval_s=time.monotonic() - train_done[0],
+                eval_s=eval_wall_s,
                 n_gpus=params.n_gpus,
                 configured_clients_per_server=self.evaluator.clients_for(params),
                 clients_per_server=clients,

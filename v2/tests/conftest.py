@@ -127,7 +127,7 @@ class Build:
     def parent(head: HeadVersion, *, manifest="valid", uid: int = 99) -> ParentEval:
         from sn120_v2.types import HeadManifest
 
-        base_files = {"model.bin": h("parent-base")}
+        base_files = {"model.bin": sha256_hex(b"parent-base")}
         parent = HeadVersion.make(
             parent_version_id=None, base_hash=manifest_digest(base_files), base_fp32_master_digest=h("parent-master"),
             loras=(), round_id="r000000", applied_at=999,
