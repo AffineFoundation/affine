@@ -442,8 +442,9 @@ def dryrun(paths: Sequence[Path], params: Params, first_seen_unix: Sequence[int]
             batch, error = None, {"rule": exc.rule, "reason": str(exc)}
         train = body.get("train", {}) if isinstance(body, dict) else {}
         recipe = params.recipe.for_miner(train)
-        floor = max(params.min_signal_rollouts, recipe.minibatches)
-        # Read-only diagnostics: even a rejected file gets its actual activity count.
+        # V4 has no implicit minibatch floor: each stage trains with as few
+        # active rows as its resolved recipe needs.
+        floor = params.min_signal_rollouts if body.get("version") == "affine-batch-v4" else max(params.min_signal_rollouts, recipe.minibatches)
         # This is not a second admission path; ``admission`` retains the real rejection.
         active = batch_signal_counts(batch, recipe) if batch is not None else None
         if active is None and body.get("version") != "affine-batch-v4":
@@ -455,7 +456,7 @@ def dryrun(paths: Sequence[Path], params: Params, first_seen_unix: Sequence[int]
         groups = body.get("groups") if isinstance(body, dict) else None
         rollouts = batch.n_rollouts if batch is not None else sum(len(group.get("rollouts", ())) for group in groups) if isinstance(groups, list) else 0
         reg = Registration(pos, hotkey, pos)
-        frozen = frozen_batch(batch, reg, str(path)) if batch is not None else FrozenBatch(hotkey, sha256_hex(raw), str(path), body.get("version", ""), len(groups or ()), rollouts, train)
+        frozen = frozen_batch(batch, reg, str(path), params) if batch is not None else FrozenBatch(hotkey, sha256_hex(raw), str(path), body.get("version", ""), len(groups or ()), rollouts, train)
         entries.append(Entry(pos, reg, frozen))
         cap = recipe.global_norm_cap
         reports.append({"queue_pos": pos, "batch_sha256": frozen.batch_sha256, "rollouts": rollouts,

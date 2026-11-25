@@ -211,6 +211,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         # A fact of the chain, of a key format or of HTTP. No constant of this code gives it.
         "The chain shows it after about 3 minutes",
         "the 32-byte Ed25519 seed of your hotkey as 64 hex characters",
+        "an SFT trace with `sft_weight=0` contributes neither",
         "HTTP 404 on your link file",
         "`service.next_open_at` is UTC ISO-8601 with seconds and Z",
         "The site can answer HTTP 403 to a read", "HTTP 403 does not say that a file is missing", "a missing file gives HTTP 404",

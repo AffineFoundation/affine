@@ -361,9 +361,20 @@ class Batch:
         """The full admitted stage plan, read from the private frozen object at train time."""
         return tuple({"train": dict(train), "groups": list(groups), "sft": list(sft)} for groups, sft, train in self.stages)
 
-    def stage_recipes(self) -> tuple[dict[str, Any], ...]:
-        """Only stage recipe overrides belong in a ticket, never private batch text."""
-        return tuple({"train": dict(train)} for _, _, train in self.stages)
+    def stage_recipes(self, recipe: Recipe | None = None) -> tuple[dict[str, Any], ...]:
+        """Fixed-size resolved recipe metadata, never stage-count or batch text.
+
+        An empty sentinel marks an unused slot; it cannot collide with a
+        resolved recipe because every recipe has a positive rank.
+        """
+        if self.format != FORMAT_V4:
+            return ()
+        top = recipe.for_miner(self.train) if recipe is not None else None
+        stages = [
+            {"train": (top.for_miner(train).to_dict() if top is not None else dict(train))}
+            for _, _, train in self.stages
+        ]
+        return tuple(stages + [{} for _ in range(5 - len(stages))])
 
 
 def _need(ok: bool, rule: str, reason: str) -> None:
@@ -542,31 +553,32 @@ def _v4_cost(stages: Sequence[tuple[Sequence[Group], Sequence[tuple[str, str]], 
         for sizes in measured
         for size in [*sizes["groups"], *sizes["sft"]]
     )
-    for (groups, traces, train), sizes in zip(stages, measured):
+    for index, ((groups, traces, train), sizes) in enumerate(zip(stages, measured)):
         recipe = top_recipe.for_miner(train)
-        stage_tokens = 0
+        stage_active = stage_tokens = 0
         for i, group in enumerate(groups):
             local = None if sizes["groups"][i] is None else {
                 (0, j): size for j, size in sizes["groups"][i].items()
             }
             n, used = signal_counts((group,), recipe, local)
-            active += n
+            stage_active += n
             stage_tokens += used
         for size in sizes["sft"]:
-            if size is None:
-                active += 1
-                stage_tokens += 1  # legacy no-tokenizer convention: unknown cost is checked as 0 below
-                continue
-            n_prompt, n_output = size
-            used = trained_tokens(n_prompt, n_output, recipe)
-            active += used > 0
-            stage_tokens += used
+            used = 1 if size is None else trained_tokens(*size, recipe)
+            trains = used > 0 and recipe.sft_weight > 0
+            stage_active += int(trains)
+            stage_tokens += used if trains else 0
+        _need(stage_active > 0, NO_SIGNAL,
+              f"stage {index} has no nonzero-advantage GRPO rollout or positive-weight SFT trace that trains")
+        active += stage_active
         cost += recipe.steps * stage_tokens
     _need(active > 0, NO_SIGNAL, "no active GRPO rollout or verified SFT trace trains")
     _need(active >= params.min_signal_rollouts, MIN_ROLLOUTS, f"only {active} active GRPO rollouts/SFT traces; the floor is {params.min_signal_rollouts}")
+    if not measured_tokens:
+        return 0  # legacy no-tokenizer convention: unknown cost does not run the cap
     _need(params.max_train_token_steps <= 0 or cost <= params.max_train_token_steps, TRAIN_COST,
           f"training this file costs {cost} token-steps, summed over stages; the cap is {params.max_train_token_steps}")
-    return cost if measured_tokens else 0
+    return cost
 
 
 def _v4_graded(stages: Sequence[tuple[Sequence[Group], Sequence[tuple[str, str]], Mapping[str, Any]]], params: Params, grader: Grader, capped: set[tuple[int, int]], sizes: Sizes | None) -> None:
@@ -576,6 +588,8 @@ def _v4_graded(stages: Sequence[tuple[Sequence[Group], Sequence[tuple[str, str]]
     for n, (k, is_sft, _) in enumerate(places):
         if not is_sft:
             offsets.setdefault(k, n)
+    known = 0
+    total = sum(len(groups) + len(traces) for groups, traces, _ in stages)
     for k, (groups, traces, _) in enumerate(stages):
         if groups:
             start = offsets[k]
@@ -589,7 +603,7 @@ def _v4_graded(stages: Sequence[tuple[Sequence[Group], Sequence[tuple[str, str]]
                     if sizes is not None:
                         local_sizes[i, j] = sizes[flat_index, j]
                 flat_index += 1
-            _graded(groups, params, grader, local_capped, local_sizes if sizes is not None else None)
+            known += _graded(groups, params, grader, local_capped, local_sizes if sizes is not None else None, check_pool=False)
         for j, (prompt, output) in enumerate(traces):
             row = (prompt, output, False)
             official = next(iter(_grades(grader, [row])))
@@ -599,6 +613,11 @@ def _v4_graded(stages: Sequence[tuple[Sequence[Group], Sequence[tuple[str, str]]
             if isinstance(official, Exception):
                 raise Invalid(SFT_UNVERIFIED, f"{here}: the official grader failed", _fault(grader, row, official))
             _need(official == 1, SFT_UNVERIFIED, f"{here} needs a known prompt with official reward exactly 1")
+            # An SFT trace has an official reward of 1 only when the public-pool
+            # grader knows its prompt. Pool share is file-wide, not per stage.
+            known += 1
+    share = params.min_pool_prompt_frac
+    _need(known >= share * total, "pool", f"{known} of {total} prompts are tasks of the public pool; the least share is {share:g}")
 
 
 def _check_v4(raw: bytes, hotkey: str, params: Params, value: dict[str, Any], train: dict[str, Any], tokens: Tokens | None, grader: Grader | None) -> Batch:
@@ -611,7 +630,7 @@ def _check_v4(raw: bytes, hotkey: str, params: Params, value: dict[str, Any], tr
     groups = tuple(group for stage, _, _ in kept for group in stage)
     out_stages = tuple((tuple(groups), tuple(sft), dict(train)) for groups, sft, train in kept)
     checked = ("format",) + (("tokens",) if tokens is not None else ()) + (("grader",) if grader is not None else ())
-    dropped = sum(len(stage[0]) for stage in stages) - len(groups)
+    dropped = sum(len(stage_groups) + len(traces) for stage_groups, traces, _ in stages) - sum(len(stage_groups) + len(traces) for stage_groups, traces, _ in kept)
     return Batch(sha256_hex(bytes(raw)), len(raw), FORMAT_V4, groups, dropped, train, checked, cost, out_stages)
 
 
@@ -813,7 +832,7 @@ def _fault(grader: Grader, row: tuple[str, str, bool], cause: Exception) -> bool
     return isinstance(cause, GraderTimeLimit) or isinstance(next(iter(_grades(grader, [row]))), Exception)
 
 
-def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set[tuple[int, int]], sizes: Sizes | None = None) -> None:
+def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set[tuple[int, int]], sizes: Sizes | None = None, check_pool: bool = True) -> int:
     """Every submitted reward must be the official grade. A prompt the environment does not know has no grade.
 
     A row that the grader cannot grade, in time or at all, is not allowed, whatever its reward. The check stops
@@ -843,8 +862,11 @@ def _graded(groups: Sequence[Group], params: Params, grader: Grader, capped: set
                                "so it is not an official cap-hit: a shorter local cap such as 8192 does not force reward 0, "
                                "and a correct boxed answer can grade 1.0")
                 raise Invalid("grader", reason)
-    known, share = len(groups) - len(unknown), params.min_pool_prompt_frac
-    _need(known >= share * len(groups), "pool", f"{known} of {len(groups)} prompts are tasks of the public pool; the least share is {share:g}")
+    known = len(groups) - len(unknown)
+    if check_pool:
+        share = params.min_pool_prompt_frac
+        _need(known >= share * len(groups), "pool", f"{known} of {len(groups)} prompts are tasks of the public pool; the least share is {share:g}")
+    return known
 
 
 def check_batch(raw: bytes, hotkey: str, params: Params, *, tokens: Tokens | None = None, grader: Grader | None = None) -> Batch:
@@ -864,9 +886,10 @@ def check_batch(raw: bytes, hotkey: str, params: Params, *, tokens: Tokens | Non
     except BaseException as cause:
         _still_works(params, tokens, grader, cause)
         raise Invalid(CHECK_FAULT, f"the checker fails on this file: {_where(cause)}", proven=not isinstance(cause, MACHINE)) from cause
-def frozen_batch(batch: Batch, reg: Registration, uri: str) -> FrozenBatch:
+def frozen_batch(batch: Batch, reg: Registration, uri: str, params: Params | None = None) -> FrozenBatch:
     """The one FrozenBatch constructor shared by admission and reproduction."""
-    return FrozenBatch(reg.hotkey, batch.sha256, uri, batch.format, batch.n_prompts, batch.n_rollouts, dict(batch.train), batch.stage_recipes())
+    recipe = params.recipe if params is not None else None
+    return FrozenBatch(reg.hotkey, batch.sha256, uri, batch.format, batch.n_prompts, batch.n_rollouts, dict(batch.train), batch.stage_recipes(recipe))
 
 
 def batch_signal_counts(batch: Batch, recipe: Recipe) -> int:
@@ -875,7 +898,7 @@ def batch_signal_counts(batch: Batch, recipe: Recipe) -> int:
         return signal_counts(batch.groups, recipe)[0]
     total = 0
     for groups, traces, train in batch.stages:
-        total += signal_counts(groups, recipe.for_miner(train))[0] + len(traces)
+        total += signal_counts(groups, recipe.for_miner(train))[0] + (len(traces) if recipe.for_miner(train).sft_weight > 0 else 0)
     return total
 
 
@@ -1284,4 +1307,4 @@ class StoreAdmission:
         if self.store.sha256(frozen_key) != batch.sha256:
             self.store.delete(frozen_key)  # a replay must not find the damaged copy
             raise VerifyError(f"the frozen copy of {reg.hotkey} for round {round_id} does not hash to the checked bytes")
-        return frozen_batch(batch, reg, frozen_key)
+        return frozen_batch(batch, reg, frozen_key, self.params)

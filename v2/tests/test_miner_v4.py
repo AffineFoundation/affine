@@ -8,11 +8,19 @@ from pathlib import Path
 import pytest
 
 from sn120_v2.worker import LocalRunner
-from test_miner_tools import Box, draw
 
-_SPEC = importlib.util.spec_from_file_location("affine_miner_v4_tool", Path(__file__).resolve().parents[1] / "miner" / "affine_miner.py")
-tool = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(tool)
+
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_TEST_DIR = Path(__file__).resolve().parent
+_helpers = _load("affine_miner_v4_test_helpers", _TEST_DIR / "test_miner_tools.py")
+Box, draw = _helpers.Box, _helpers.draw
+tool = _load("affine_miner_v4_tool", _TEST_DIR.parent / "miner" / "affine_miner.py")
 
 HOTKEY = "hk1"
 THINK = "step " * 40
@@ -41,8 +49,8 @@ def test_check_and_reproduce_keep_the_admitted_stage_plan(build):
     assert reproduced["status"] == "winner"
     request = box.requests[0]
     stages = request.entry.batch.stages
-    assert len(stages) == 2 and stages[0]["train"] == {"lora_lr": 0.00002}
-    assert all(set(stage) == {"train"} for stage in stages)
+    assert len(stages) == 5 and stages[0]["train"]["lora_lr"] == 0.00002
+    assert stages[2:] == ({}, {}, {})
     assert "sft" not in request.entry.batch.to_json().decode()
     assert box[request.entry.batch.uri] == batch()
 

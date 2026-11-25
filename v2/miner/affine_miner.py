@@ -180,7 +180,7 @@ def reproduce(
     report = check_report(batch, params) | {"train_applied": applied_train(params, train)}
     key, now = layout.frozen_batch(ROUND_ID, hotkey), int(time.time())
     store.put(key, raw)
-    frozen = FrozenBatch(hotkey, batch.sha256, key, batch.format, batch.n_prompts, batch.n_rollouts, train, batch.stage_recipes())
+    frozen = FrozenBatch(hotkey, batch.sha256, key, batch.format, batch.n_prompts, batch.n_rollouts, train, batch.stage_recipes(params.recipe))
     entry = Entry(0, Registration(0, hotkey, 0), frozen)
     ticket = RoundTicket(ROUND_ID, LEASE_ID, BOX_ID, head, params, draw, (entry,), now, now + params.lease_timeout_s)
     result = runner.run(ticket)

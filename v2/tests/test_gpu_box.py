@@ -112,8 +112,9 @@ def test_v4_job_uses_admitted_stages_and_stage_local_recipes(box):
         {"train": {"steps": 2}, "groups": [("p1", (("good", 1.0), ("bad", 0.0)))], "sft": []},
         {"train": {"lora_lr": 0.00002, "sft_weight": 0.25}, "groups": [], "sft": [("p2", "answer")]},
     )
+    enabled = dataclasses.replace(request.params, recipe=dataclasses.replace(request.params.recipe, miner_bounds=DEFAULT_MINER_BOUNDS + (SFT_MINER_BOUND,)))
     frozen = dataclasses.replace(request.entry.batch, format="affine-batch-v4", n_prompts=2, n_rollouts=3,
-                                 stages=tuple({"train": dict(stage["train"])} for stage in stages))
+                                 stages=tuple({"train": enabled.recipe.for_miner(request.entry.batch.train).for_miner(stage["train"]).to_dict()} for stage in stages) + ({}, {}, {}))
     body = {"version": "affine-batch-v4", "hotkey": reg.hotkey, "stages": [
         {"train": stage["train"], "groups": [{"prompt": prompt, "rollouts": [{"output": output, "reward": reward} for output, reward in rollouts]} for prompt, rollouts in stage["groups"]],
          "sft": [{"prompt": prompt, "output": output} for prompt, output in stage["sft"]]}
@@ -122,10 +123,8 @@ def test_v4_job_uses_admitted_stages_and_stage_local_recipes(box):
     raw = json.dumps(body).encode()
     frozen = dataclasses.replace(frozen, batch_sha256=sha256_hex(raw))
     box.store.put(frozen.uri, raw)
-    request = dataclasses.replace(request, entry=dataclasses.replace(request.entry, batch=frozen),
-                                  params=dataclasses.replace(request.params, recipe=dataclasses.replace(
-                                      request.params.recipe, miner_bounds=DEFAULT_MINER_BOUNDS + (SFT_MINER_BOUND,))))
-    job = FakeJob()
+    request = dataclasses.replace(request, entry=dataclasses.replace(request.entry, batch=frozen), params=enabled)
+    job = FakeJob({"status": "ok", "loss": -0.2, "step_norm": 0.5, "tokens": 9, "gpu_class": "fake", "train_steps": 3})
     made = trainer(box, job)
     made.resident.prune = lambda keep: None
     made._rows = lambda *args: (_ for _ in ()).throw(AssertionError("v4 must use the admitted stage plan, not legacy rows"))

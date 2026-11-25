@@ -78,7 +78,7 @@ class LoraTrainer:
             job.update(recipe=recipe.to_dict(), seed=request.seed)
             if staged:
                 stage_specs = self._read_batch(request)
-                self._v4_stages(batch, stage_specs)
+                self._v4_stages(batch, stage_specs, params)
                 job["stages"] = [
                     {"recipe": (stage_recipe := recipe.for_miner(stage.get("train", {}))).to_dict(), "rows": staged_rows(stage, stage_recipe)}
                     for stage in stage_specs
@@ -94,7 +94,7 @@ class LoraTrainer:
             # tokens: output tokens that trained in the last full pass. forward_tokens counts every pass, including v4 old-policy rescoring.
             # Speed per GPU = forward_tokens / step_s / n_gpus.
             # updates: the Adam updates of every job that reports more than one optimizer update.
-            facts = {key: report.get(key) for key in ("load_s", "step_s", "n_gpus", "rows", "forward_tokens", "tokens", "step_norm", "step_norm_before_cap", "truncated_rows", "dropped_rows", "updates", "cuda_max_memory_allocated", "cuda_max_memory_reserved", "process_max_rss_bytes")}
+            facts = {key: report.get(key) for key in ("load_s", "step_s", "n_gpus", "rows", "forward_tokens", "tokens", "step_norm", "step_norm_before_cap", "truncated_rows", "dropped_rows", "updates", "train_steps", "cuda_max_memory_allocated", "cuda_max_memory_reserved", "process_max_rss_bytes")}
             log_phase(self.config.work_dir, "train", round_id=request.round_id, queue_pos=entry.queue_pos, steps=recipe.steps, wall_s=time.monotonic() - started, **facts)
             return LoRAArtifact(
                 lora_hash=manifest_digest(files),
@@ -109,7 +109,7 @@ class LoraTrainer:
                 target_modules=recipe.target_modules,
                 report=TrainReport(
                     seed=request.seed,
-                    steps=recipe.steps,
+                    steps=report.get("train_steps", recipe.steps),
                     loss=report["loss"],
                     step_norm=report["step_norm"],
                     norm_before_cap=report.get("step_norm_before_cap", report["step_norm"]),
@@ -146,13 +146,17 @@ class LoraTrainer:
         return training_rows(self._read_batch(request), group_size)
 
     @staticmethod
-    def _v4_stages(batch: FrozenBatch, stages: Sequence[dict]) -> None:
-        """Cross-check the small recipe-only ticket against the verified private object."""
-        if not batch.stages or len(batch.stages) != len(stages):
-            raise BatchRejected("the v4 ticket and frozen batch have different stage counts")
-        if any(dict(ticket.get("train", {})) != dict(stage.get("train", {}))
-               for ticket, stage in zip(batch.stages, stages)):
-            raise BatchRejected("the v4 ticket and frozen batch have different stage recipes")
+    def _v4_stages(batch: FrozenBatch, stages: Sequence[dict], params: Params) -> None:
+        """Match the re-admitted object to the fixed-size recipe-only ticket.
+
+        Padding never enters the execution plan. Resolved recipes preserve
+        top-level values such as an SFT weight inherited by every stage.
+        """
+        top = params.recipe.for_miner(batch.train)
+        resolved = tuple({"train": top.for_miner(stage.get("train", {})).to_dict()} for stage in stages)
+        padded = resolved + tuple({} for _ in range(5 - len(resolved)))
+        if len(stages) > 5 or batch.stages != padded:
+            raise BatchRejected("the v4 ticket and verified frozen batch have different stage recipes")
 
     def _run(self, job_dir: Path, request: TrainRequest) -> dict:
         argv = [sys.executable, "-m", "sn120_v2.gpu.train_job", str(job_dir)]

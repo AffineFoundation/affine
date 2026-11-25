@@ -121,8 +121,7 @@ def run_stages(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -
     seed = job["seed"]
     torch.manual_seed(seed)
     replicas = [StageReplica(job["base_dir"], device, job["dtype"], top, seed) for device in devices]
-    first = replicas[0]
-    check_names(job["base_dir"], list(first.layers))
+    check_names(job["base_dir"], list(replicas[0].layers))
     tokenizer = transformers.AutoTokenizer.from_pretrained(job["base_dir"], local_files_only=True)
     losses, grad_norms, stage_reports = [], [], []
     all_rows = dropped = truncated = forward_tokens = 0
@@ -143,40 +142,40 @@ def run_stages(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -
             dropped += cut
             truncated += sum(row["truncated"] for row in rows)
             all_rows += len(rows)
-            active = sorted((row for row in rows if row["kind"] == "sft" or row["advantage"] != 0), key=lambda row: -len(row["tokens"]))
+            active = sorted((row for row in rows if (row["kind"] == "sft" and recipe.sft_weight > 0) or (row["kind"] == "grpo" and row["advantage"] != 0)), key=lambda row: -len(row["tokens"]))
             if not active:
                 raise BatchRejected(f"stage {index} has no trainable row")
-            if len(replicas) > len(active):
-                replicas = replicas[:len(active)]
-                first = replicas[0]
+            current = replicas[:len(active)]
+            first = current[0]
             if index == 0:
-                for replica in replicas:
+                for replica in current:
                     replica.warm_up((active[0]["prompt_ids"] + active[0]["tokens"])[:WARM_UP_TOKENS])
             optimizer = torch.optim.Adam(first.weights, lr=recipe.lora_lr, eps=recipe.adam_eps)
             order = random.Random(seed)
-            shares = [active[i::len(replicas)] for i in range(len(replicas))]
+            shares = [active[i::len(current)] for i in range(len(current))]
             # q_old, masks and counts always include all earlier stage updates.
-            list(pool.map(lambda pair: score_old(pair[0], pair[1]), zip(replicas, [[row for row in share if row["kind"] == "grpo"] for share in shares])))
+            list(pool.map(lambda pair: score_old(pair[0], pair[1]), zip(current, [[row for row in share if row["kind"] == "grpo"] for share in shares])))
             # A later minibatch may place a row on another replica. mixed_rows
             # brings each GRPO row's old-policy tensors to its current device.
             # SFT needs no old-policy pass.
             grpo_tokens = sum(len(row["prompt_ids"]) + len(row["tokens"]) for row in active if row["kind"] == "grpo")
             sft_tokens = sum(len(row["prompt_ids"]) + len(row["tokens"]) for row in active if row["kind"] == "sft")
             forward_tokens += grpo_tokens * (recipe.steps + 1) + sft_tokens * recipe.steps
-            trained = 0
-            stage_losses = 0
+            trained = stage_losses = 0
             for _ in range(recipe.steps):
                 for group in minibatches_of(active, recipe.minibatches, order):
-                    shares = [group[i::len(replicas)] for i in range(len(replicas))]
-                    results = list(pool.map(lambda pair: pair[0].mixed_rows(pair[1], len(group)), zip(replicas, shares)))
-                    norm = _step(replicas, optimizer, recipe)
+                    shares = [group[i::len(current)] for i in range(len(current))]
+                    results = list(pool.map(lambda pair: pair[0].mixed_rows(pair[1], len(group)), zip(current, shares)))
+                    norm = _step(current, optimizer, recipe)
                     losses.append(sum(loss for loss, _ in results))
                     grad_norms.append(norm)
-                    trained += sum(count for _, count in results)
+                    trained = sum(count for _, count in results)
                     stage_losses += 1
-            stage_reports.append({"index": index, "seed": seed, "rows": len(rows), "steps": recipe.steps, "updates": stage_losses, "trained_tokens": trained})
+            stage_recipe = {key: getattr(recipe, key) for key in ("lora_lr", "adam_eps", "steps", "minibatches", "group_size", "sample_temperature", "sft_weight")}
+            stage_reports.append({"index": index, "seed": seed, "rows": len(rows), "steps": recipe.steps, "updates": stage_losses, "trained_tokens": trained, "recipe": stage_recipe})
     facts = {"losses": losses, "grad_norms": grad_norms, "trained_tokens": stage_reports[-1]["trained_tokens"], "rows": all_rows,
              "truncated_rows": truncated, "dropped_rows": dropped, "stages": stage_reports}
     result = save(first, top, job, out_dir, facts)
-    result.update(load_s=loaded - started, step_s=time.monotonic() - loaded, n_gpus=len(replicas), rows=all_rows, updates=len(losses), forward_tokens=forward_tokens)
+    result.update(load_s=loaded - started, step_s=time.monotonic() - loaded, n_gpus=len(current), rows=all_rows, updates=len(losses), forward_tokens=forward_tokens,
+                  train_steps=sum(row["steps"] for row in stage_reports))
     return result

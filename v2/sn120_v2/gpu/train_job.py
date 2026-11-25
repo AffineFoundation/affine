@@ -509,6 +509,9 @@ def save(replica: Replica, recipe: Recipe, job: dict, out_dir: Path, facts: dict
         used.pop("adam_eps")  # a default-eps report keeps the old layout; a chosen epsilon is always recorded
     # step_norm_before_cap is the norm that training gave; step_norm is the norm of the stored LoRA.
     report = {"optimizer": OPTIMIZER if recipe.adam_eps != 1e-8 else "adam, fresh per LoRA, betas 0.9/0.999, eps 1e-8, weight decay 0", "seed": job["seed"], "step_norm": norm, "step_norm_before_cap": uncapped, "recipe_values": used, **facts}
+    if "stages" in facts:
+        # Only v4 replaces the flat optimizer metadata with its actual stages.
+        report["recipe_values"] = {"top_level_shape": {key: getattr(recipe, key) for key in ("rank", "alpha", "max_grad_norm", "global_norm_cap")}, "stages": [row["recipe"] for row in facts["stages"]]}
     out_dir.mkdir(parents=True, exist_ok=True)
     save_file(tensors, str(out_dir / "adapter_model.safetensors"))
     (out_dir / "adapter_config.json").write_bytes(canonical_json(config))

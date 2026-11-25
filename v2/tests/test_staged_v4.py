@@ -160,7 +160,8 @@ def test_stages_fresh_adam_rescore_and_deterministic_order(head_dir, tmp_path, m
     assert [row["updates"] for row in report["stages"]] == [1, 1]
     assert [row["seed"] for row in report["stages"]] == [staged.stage_seed(7, 0), staged.stage_seed(7, 1)]
     assert len(report["losses"]) == 2 and len(report["grad_norms"]) == 2
-    assert report["recipe_values"]["steps"] == 1
+    assert report["recipe_values"]["stages"] == [row["recipe"] for row in report["stages"]]
+    assert [row["recipe"]["sft_weight"] for row in report["stages"]] == [1.0, 0.5]
     assert result["updates"] == 2 and result["rows"] == 3
     assert "rows" not in made["stages"][0] and "rows" not in made["stages"][1]
     first = hash_tree(tmp_path / "a")
@@ -173,6 +174,28 @@ def test_two_replicas_match_one_for_grpo_then_sft(head_dir, tmp_path):
     two = train_job.train(job(head_dir), tmp_path / "two", ["cpu", "cpu"])
     assert one["loss"] == pytest.approx(two["loss"], abs=1e-7)
     assert one["step_norm"] == pytest.approx(two["step_norm"], abs=1e-7)
+
+
+def test_stage_reports_last_pass_tokens_and_restores_later_replicas(head_dir, tmp_path, monkeypatch):
+    made = job(head_dir)
+    later_rows = json.loads(json.dumps(GRPO_ROWS))
+    later_rows.append(dict(later_rows[0], output="cab", advantage=0.25))
+    made["stages"] = [
+        {"recipe": recipe(sft_weight=1.0).to_dict(), "rows": json.loads(json.dumps(SFT_ROWS))},
+        {"recipe": recipe(steps=3, minibatches=2).to_dict(), "rows": later_rows},
+    ]
+    seen = []
+    original = staged.StageReplica.mixed_rows
+    monkeypatch.setattr(staged.StageReplica, "mixed_rows",
+                        lambda replica, rows, n: seen.append((replica.device, len(rows), n)) or original(replica, rows, n))
+    result = train_job.train(made, tmp_path / "restored", ["cpu", "cpu"])
+    report = json.loads((tmp_path / "restored" / "train_report.json").read_text())
+    assert result["n_gpus"] == 2
+    assert sum(row["updates"] for row in report["stages"]) == 7
+    assert report["stages"][-1]["trained_tokens"] == report["trained_tokens"]
+    assert any(row[2] == 2 for row in seen), seen
+    assert [row["recipe"]["steps"] for row in report["stages"]] == [1, 3]
+    assert report["recipe_values"]["top_level_shape"]["rank"] == 2
 
 
 @pytest.mark.parametrize("minibatches", [1, 2])

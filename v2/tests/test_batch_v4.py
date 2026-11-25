@@ -118,6 +118,58 @@ def test_global_caps_include_sft():
         {"output": THINK + "\\boxed{1}", "reward": 1}, {"output": THINK + "\\boxed{0}", "reward": 0},
     ]}]}, {"sft": [{"prompt": "three four", "output": THINK + "\\boxed{1}"}]}])
     assert check(body, params=p).n_rollouts == 2
+    assert check(body, params=p).dropped_groups == 1
+
+
+def test_every_stage_must_train_and_zero_weight_sft_is_not_signal():
+    mixed = {"prompt": "one two", "rollouts": [
+        {"output": THINK + "\\boxed{1}", "reward": 1},
+        {"output": THINK + "\\boxed{0}", "reward": 0},
+    ]}
+    inactive = {"prompt": "three four", "rollouts": [{"output": THINK + "\\boxed{1}", "reward": 1}]}
+    assert rule(raw([{"groups": [mixed]}, {"groups": [inactive]}])) == "no_signal"
+    enabled = dataclasses.replace(params(), recipe=dataclasses.replace(Recipe(), miner_bounds=DEFAULT_MINER_BOUNDS + (SFT_MINER_BOUND,)))
+    sft = {"sft": [{"prompt": "three four", "output": THINK + "\\boxed{1}"}]}
+    assert rule(raw([{"train": {"sft_weight": 0}, **sft}]), params=enabled) == "no_signal"
+    assert rule(raw([{"train": {"sft_weight": 0}, **sft}]), params=dataclasses.replace(enabled, min_signal_rollouts=2)) == "no_signal"
+
+
+def test_v4_without_tokenizer_keeps_zero_unknown_cost_and_nominal_activity():
+    body = raw([{"train": {"steps": 2}, "sft": [{"prompt": "one two", "output": THINK + "\\boxed{1}"}]}])
+    p = dataclasses.replace(params(), max_train_token_steps=1)
+    admitted = check_batch(body, HOTKEY, p, tokens=None, grader=grade)
+    assert admitted.train_token_steps == 0 and admitted.n_rollouts == 1
+
+
+def test_fixed_size_ticket_preserves_resolved_stage_recipes_not_stage_count():
+    body = raw([{"train": {"sft_weight": 0.25}, "sft": [{"prompt": "one two", "output": THINK + "\\boxed{1}"}]}],
+               train={"steps": 2, "sft_weight": 0.5})
+    enabled = dataclasses.replace(params(), recipe=dataclasses.replace(Recipe(), miner_bounds=DEFAULT_MINER_BOUNDS + (SFT_MINER_BOUND,)))
+    admitted = check(body, params=enabled)
+    ticket = frozen_batch(admitted, Registration(1, HOTKEY, 0), "private/batch.json", enabled)
+    assert len(ticket.stages) == 5 and ticket.stages[-1] == {}
+    assert ticket.stages[0]["train"]["sft_weight"] == 0.25
+    assert ticket.stages[0]["train"]["steps"] == 2
+
+
+def test_sft_prompts_count_toward_the_public_pool_fraction():
+    unknown = raw([
+        {"groups": [{"prompt": "unknown", "rollouts": [
+            {"output": THINK + "\\boxed{1}", "reward": 1},
+            {"output": THINK + "\\boxed{0}", "reward": 0},
+        ]}]},
+        {"sft": [{"prompt": "one two", "output": THINK + "\\boxed{1}"}]},
+    ])
+    assert rule(unknown, params=params(min_pool_prompt_frac=0.5)) == ""
+    assert rule(unknown, params=params(min_pool_prompt_frac=0.75)) == "pool"
+    wrong = raw([
+        {"groups": [{"prompt": "known", "rollouts": [
+            {"output": THINK + "\\boxed{1}", "reward": 1},
+            {"output": THINK + "\\boxed{0}", "reward": 0},
+        ]}]},
+        {"sft": [{"prompt": "known", "output": THINK + "\\boxed{1}"}]},
+    ])
+    assert rule(wrong, params=params(min_pool_prompt_frac=0.5)) == ""
 
 
 def test_normalized_rollouts_includes_all_sft_and_stages():
@@ -192,7 +244,9 @@ def test_ticket_has_only_stage_recipes_and_cost_cap_sums_stages():
     ])
     batch = check(body)
     ticket = frozen_batch(batch, Registration(1, HOTKEY, 0), "private/batch.json")
-    assert ticket.stages == ({"train": {"steps": 2}}, {"train": {"steps": 3}})
+    assert len(ticket.stages) == 5
+    assert ticket.stages[:2] == ({"train": {"steps": 2}}, {"train": {"steps": 3}})
+    assert ticket.stages[2:] == ({}, {}, {})
     assert "one two" not in ticket.to_json().decode() and "sft" not in ticket.to_json().decode()
     cap = dataclasses.replace(params(), max_train_token_steps=batch.train_token_steps - 1)
     assert rule(body, params=cap) == "train_cost"
@@ -234,6 +288,14 @@ def test_v4_dryrun_reports_admitted_counts_and_fails_open_on_invalid_files(tmp_p
     assert report["entries"][0]["rollouts"] == 0
     assert report["entries"][0]["nonzero_advantage_rollouts"] is None
     assert report["entries"][0]["admission"]["rule"] == "sft_keys"
+    path.write_bytes(raw([{"groups": [{"prompt": "one two", "rollouts": [
+        {"output": THINK + "\\boxed{1}", "reward": 1},
+        {"output": THINK + "\\boxed{0}", "reward": 0},
+    ]}]}], train={"minibatches": 100}))
+    entry = dryrun([path], params())["entries"][0]
+    assert entry["nonzero_advantage_rollouts"] == 2
+    assert entry["min_signal_rollouts"] == 1
+    assert entry["would_fail_min_rollouts"] is False
 
 
 def test_confirmation_excludes_every_v4_grpo_and_sft_prompt(build, tmp_path):
