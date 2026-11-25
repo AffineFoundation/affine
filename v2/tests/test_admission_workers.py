@@ -177,10 +177,22 @@ def test_crash_does_not_increment_a_previous_proven_fault_count(build):
     assert adm._tries[HOTKEYS[4]][2] == 0
 
 
-def test_worker_knob_is_strict_and_defaults_to_serial():
-    assert check_workers({}) == check_workers({WORKERS_ENV: " "}) == 1
-    assert check_workers({WORKERS_ENV: "64"}) == MAX_WORKERS == 64
-    assert check_workers({WORKERS_ENV: " 8\n"}) == 8
+def test_worker_knob_is_strict_and_defaults_to_params():
+    from sn120_v2.params import Params
+    assert check_workers({}, Params(check_workers=8)) == 8
+    assert check_workers({}, Params()) == 1
+    assert check_workers({WORKERS_ENV: "3"}, Params(check_workers=8)) == 3
+    assert check_workers({WORKERS_ENV: " "}, Params(check_workers=8)) == 8
+    assert check_workers({}) == 1
+    assert check_workers({WORKERS_ENV: "64"}, Params()) == MAX_WORKERS == 64
+    assert check_workers({WORKERS_ENV: " 8\n"}, Params()) == 8
     for bad in ("0", "65", "08", "+8", "8.0", "²", "８", "1" * 5000):
         with pytest.raises(ConfigError, match=WORKERS_ENV):
-            check_workers({WORKERS_ENV: bad})
+            check_workers({WORKERS_ENV: bad}, Params(check_workers=8))
+    for bad in (0, 65, -1, True, 1.0, "8", None):
+        with pytest.raises(ConfigError, match="check_workers"):
+            Params(check_workers=bad)
+    default = Params()
+    assert "check_workers" in Params.LEFT_OUT_AT_DEFAULT and "check_workers" not in default.to_dict()
+    assert Params.from_dict(default.to_dict()).params_hash == default.params_hash
+    assert Params(check_workers=2).params_hash != default.params_hash

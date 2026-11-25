@@ -60,7 +60,7 @@ def box(tmp_path, monkeypatch):
     return store
 
 
-def start(tmp_path, store) -> list[str]:
+def start(tmp_path, store, **param_changes) -> list[str]:
     """Stage made-up genesis files, bootstrap through the command line, and return the common arguments."""
     base_files = {name: sha256_hex(data) for name, data in BASE.items()}
     master_files = {name: sha256_hex(data) for name, data in MASTER.items()}
@@ -70,7 +70,7 @@ def start(tmp_path, store) -> list[str]:
     for name, data in MASTER.items():
         store.put(layout.public_master_file(genesis.base_fp32_master_digest, name), data)
     chain = ChainSnapshot(120, 50, 60, (Registration(0, "owner", 1), Registration(1, "hk1", 101, 1), Registration(2, "hk2", 102, 1)))
-    params = Params(n_tasks=200, recipe=Recipe(image_digests=(IMAGE,), global_norm_cap=3.5))
+    params = Params(n_tasks=200, recipe=Recipe(image_digests=(IMAGE,), global_norm_cap=3.5), **param_changes)
     for name, data in (("genesis.json", genesis.to_json()), ("chain.json", chain.to_json()), ("params.json", params.to_json())):
         (tmp_path / name).write_bytes(data)
     (tmp_path / "genesis_files.json").write_text(json.dumps({"base_files": base_files, "master_files": master_files}))
@@ -196,6 +196,26 @@ def test_the_count_of_check_streams_is_a_setting_and_a_setting_that_the_shell_do
     monkeypatch.setenv(STREAMS_ENV, "0")
     with pytest.raises(ConfigError, match=STREAMS_ENV):
         stack()
+
+def test_check_workers_params_supplies_the_default_and_env_overrides_it(tmp_path, box, monkeypatch):
+    start(tmp_path, box, check_workers=2)
+    made = []
+    monkeypatch.setattr(assembly, "BoxCheckWorker", lambda *args: made.append(args) or object())
+
+    def stack():
+        return assembly.stack(StackContext(tmp_path / "state", Params(), "run"))
+
+    chosen = stack()
+    assert chosen.admission.workers == 2 and chosen.admission.worker is not None and len(made) == 1
+    assert f"{WORKERS_ENV} is NOT SET" in chosen.settings[2] and "2 isolated processes" in chosen.settings[2]
+    monkeypatch.setenv(WORKERS_ENV, "3")
+    overridden = stack()
+    assert overridden.admission.workers == 3 and len(made) == 2
+    assert f"{WORKERS_ENV}=3" in overridden.settings[2] and "3 isolated processes" in overridden.settings[2]
+    monkeypatch.setenv(WORKERS_ENV, "1")
+    serial = stack()
+    assert serial.admission.workers == 1 and serial.admission.worker is None and len(made) == 2
+    assert code_digest() == plan.code_digest() == "1c8f7c278ab25dbd9c74126b279b26cc6278e8a5c9e22158a47001ec4d076d07"
 
 
 @pytest.mark.parametrize("value", ["\u00b2", "\u2460", "\uff18", "08", "0", "33", "abc"])

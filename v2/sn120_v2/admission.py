@@ -121,11 +121,11 @@ WORKERS_ENV, SERIAL_WORKERS, MAX_WORKERS = "SN120_CHECK_WORKERS", 1, 64
 WORKER_COUNTS = {str(count): count for count in range(SERIAL_WORKERS, MAX_WORKERS + 1)}
 
 
-def check_workers(environ: Mapping[str, str] = os.environ) -> int:
-    """How many waiting files are checked in processes. Not set: serial, exactly as before."""
+def check_workers(environ: Mapping[str, str] = os.environ, params: Params | None = None) -> int:
+    """Waiting-file processes: an explicit environment value, else the Params setting."""
     text = environ.get(WORKERS_ENV, "").strip()
     if not text:
-        return SERIAL_WORKERS
+        return params.check_workers if params is not None else SERIAL_WORKERS
     if text not in WORKER_COUNTS:
         raise ConfigError(
             f"{WORKERS_ENV} must be a whole number from {SERIAL_WORKERS} to {MAX_WORKERS}, written in the digits 0 to 9 with no zero in front (8, not 08)"

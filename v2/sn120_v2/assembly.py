@@ -24,7 +24,8 @@ Every setting comes from the environment. A missing one is an error.
                             Read by each command that makes the live check: ``run``, ``status``, ``publish``
                             and ``bootstrap``
   SN120_CHECK_WORKERS (optional) how many waiting files are checked in isolated processes, 1 to 64.
-                            Not set: 1, the original serial path. Result application stays in queue order.
+                            Not set: params.check_workers, whose default 1 keeps the original serial path.
+                            Result application stays in queue order.
                             Read by each command that makes the live check: ``run``, ``status``, ``publish``
                             and ``bootstrap``
   SN120_AFTER_KING (optional)  "serial" (the default): after a king, each step waits for the one before it.
@@ -87,17 +88,18 @@ BOX_COMMANDS = ("run", "checkpoint")  # the commands that work on the local head
 class BoxTokens:
     """The same verified head tokenizer, constructed independently in a child."""
 
-    def __init__(self, cache: Path, manifest: HeadManifest) -> None:
+    def __init__(self, cache: Path, manifest: Callable[[], HeadManifest]) -> None:
         self.cache, self.manifest = cache, manifest
 
     def load(self) -> HFTokens:
-        directory = self.cache / self.manifest.head.base_hash
-        for name, sha in sorted(self.manifest.base_files.items()):
+        manifest = self.manifest()
+        directory = self.cache / manifest.head.base_hash
+        for name, sha in sorted(manifest.base_files.items()):
             if name.endswith(WEIGHT_SUFFIX):
                 continue
             path = directory / name
             if not path.is_file() or file_sha256(path) != sha:
-                raise VerifyError(f"the cached {name} of base {self.manifest.head.base_hash[:16]} does not match the head manifest")
+                raise VerifyError(f"the cached {name} of base {manifest.head.base_hash[:16]} does not match the head manifest")
         return HFTokens(AutoTokenizer.from_pretrained(str(directory), local_files_only=True))
 
 
@@ -105,13 +107,11 @@ class BoxCheckWorker:
     """Picklable recipe for one spawned file-check process."""
 
     def __init__(self, tokens: HeadTokens, pool: Any, grade_workers: int) -> None:
-        manifest = tokens.journal_manifest
-        if manifest is None:
-            raise ConfigError("the parallel file check needs the head manifest")
-        # Ensure the tokenizer cache is complete in the parent. Children only
-        # read these verified local files and never inherit a tokenizer object.
-        tokens._load()
-        self.tokens = BoxTokens(tokens.cache, manifest)
+        # A start inside the first bootstrap has no head yet. Resolve the
+        # manifest only if a child actually starts, never while assembling.
+        # The parent warms the verified tokenizer cache before spawning.
+        self.source = tokens
+        self.tokens = BoxTokens(tokens.cache, lambda: get_record(tokens.store, layout.CURRENT, HeadManifest))
         admission_pool = getattr(pool, "admission_pool", pool)
         task_ids = tuple(admission_pool.task_ids)
         self.tasks = tuple(admission_pool.task(task_id) for task_id in task_ids)
@@ -120,6 +120,16 @@ class BoxCheckWorker:
     def start(self, params: Params):
         from .checkpool import checked
         from .envs.math_pool import MathPool
+
+        # Pin the parent's resolved head and verified local cache. This method
+        # runs once in the spawning parent; the process task sends only the
+        # recipe with that immutable manifest, never a store connection.
+        self.source._load()
+        manifest = get_record(self.source.store, layout.CURRENT, HeadManifest)
+        return self._start(params, BoxTokens(self.source.cache, lambda: manifest))
+
+    def _start(self, params: Params, tokens: BoxTokens):
+        from .checkpool import checked
 
         pool = MathPool(self.tasks, "parallel-admission")
         tokens = self.tokens.load()
@@ -220,7 +230,7 @@ def stack(context: StackContext) -> Stack:
     grades = LazyPool(lambda: GradePool(workers=ADMISSION_GRADE_WORKERS, timeout_s=ADMISSION_GRADE_TIMEOUT_S))  # starts at the first file
     # One chunk is one row for each worker: a file whose rows all hang costs one time limit, not several.
     streams = check_streams()
-    workers = check_workers()
+    workers = check_workers(params=params)
     worker = BoxCheckWorker(tokens, pool_runtime if pool_runtime else pool, ADMISSION_GRADE_WORKERS) if workers > 1 else None
     admission = StoreAdmission(store, params, tokens=tokens, grader=pool_grader(pool_runtime if pool_runtime else pool, grades, chunk=ADMISSION_GRADE_WORKERS), streams=streams, workers=workers, worker=worker)
     order = after_king()

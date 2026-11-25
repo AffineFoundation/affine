@@ -208,6 +208,7 @@ class Params(Record):
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
         "eval_merged", "null_prune_from_round", "min_kl_seq", "min_kl_tok", "kl_rollouts",
         "kl_max_tokens", "kl_time_limit_s", "confirm_next_round", "max_stages", "train_tokens_per_s_floor",
+        "check_workers",
     )
 
     netuid: int = 120
@@ -297,6 +298,8 @@ class Params(Record):
     fold_every_k: int = 1  # fold stacked LoRAs into a new base after this many applies; 1 = every green
 
     # Admission. The batch checker and the miner contract read these same values.
+    # Optional process checks; SN120_CHECK_WORKERS overrides this setting when set.
+    check_workers: int = 1
     max_batch_bytes: int = 128 * 1024 * 1024
     max_prompts: int = 2000
     max_rollouts: int = 8000
@@ -451,6 +454,7 @@ class Params(Record):
             "train_time_budget_s must leave time for the scoring inside round_time_limit_s",
         )
         _need(type(self.max_stages) is int and 1 <= self.max_stages <= 5, "max_stages must be an integer from 1 to 5")
+        _need(type(self.check_workers) is int and 1 <= self.check_workers <= 64, "check_workers must be an integer from 1 to 64")
         _need(type(self.train_tokens_per_s_floor) is int and self.train_tokens_per_s_floor >= 0, "train_tokens_per_s_floor must be a nonnegative integer")
         _need(self.train_tokens_per_s_floor <= 0 or self.train_time_budget_s >= math.ceil(self.max_train_token_steps / self.train_tokens_per_s_floor) + 600,
               "train_time_budget_s must cover max_train_token_steps / train_tokens_per_s_floor, rounded up, plus 600 seconds")
