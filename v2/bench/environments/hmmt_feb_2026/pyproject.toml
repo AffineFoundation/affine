@@ -1,0 +1,16 @@
+[project]
+name = "hmmt-feb-2026"
+version = "0.1.0"
+description = "HMMT February 2026 (MathArena / HMMT, CC BY-NC-SA 4.0) -- Affine bench env"
+requires-python = ">=3.11"
+dependencies = ["verifiers>=0.4.0", "math-verify>=0.8.0", "datasets", "affine-math-grader"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["hmmt_feb_2026"]
+
+[tool.uv.sources]
+affine-math-grader = { path = "../affine_math_grader", editable = true }

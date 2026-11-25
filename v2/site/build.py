@@ -63,6 +63,7 @@ FLAGS = ("front", "demoted", "held")
 SCORED, QUEUED, RUNNING, FAILED, NO_RUN = "scored", "queued", "running", "failed", "none"
 RUN_STATE = {"scored": SCORED, "done": SCORED, "queued": QUEUED, "running": RUNNING, "evaluating": RUNNING, "failed": FAILED}
 KING, GENESIS = "king", "genesis"
+HOME_REFS = ("qwen3.5-9b",)  # once its official v2 row exists, its frozen v1 row stays off the home page only
 
 
 def fetch(location: str) -> bytes:
@@ -190,10 +191,9 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
     not copied.
     """
     bench = bench or {"benchmarks": [], "results": [], "models": [], "updated_at": None}
-    # Disabled, in_avg=false benchmarks keep their published history as a display-only column.
-    # GSM8K is the leftover original test set: keep its scores in the file, drop only the column (Jacob, 19 Nov 2026).
+    # Retired columns keep their scores in cells/results; only the display column is removed.
     def visible(b: dict[str, Any]) -> bool:
-        if b.get("id") == "gsm8k" and not b.get("enabled"):
+        if b.get("hide_column"):
             return False
         if str(b.get("id") or "").endswith(":full") or b.get("full_of"):
             return False
@@ -203,13 +203,11 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
                      key=lambda b: (b["suite"], b.get("order") or 0))
     columns = []
     for b in enabled or (kept or {}).get("columns", ()):
-        if b.get("id") == "gsm8k" and not b.get("enabled"):
+        if b.get("hide_column"):
             continue
         if str(b.get("id") or "").endswith(":full") or b.get("full_of"):
             continue
         column = {"id": b["id"], "label": b["label"], "in_avg": b.get("in_avg", True), "suite": b.get("suite")}
-        if column["id"] == "arxivmath":
-            column["in_avg"] = True  # count fully in Avg (Jacob, 19 Nov 2026)
         columns.append(column)
     counted = [b["id"] for b in columns if b["in_avg"]]
     cells: dict[str, dict[str, Any]] = {}
@@ -251,11 +249,16 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
             rows.append(row(round_id, KING, NO_RUN, round_id, head["version_id"], head["applied_at"], {}))
 
     order = {KING: 0, GENESIS: 2}  # kings, newest first; then the other models, best average first (the page orders them by size); the genesis head is last
+    official_qwen = next((made for made, model in zip(rows, bench["models"])
+                          if model["model_id"] == "ref-qwen3.5-9b"), None)
+    if official_qwen:
+        rows = [made for made in rows if made["label"].lower() not in HOME_REFS or made is official_qwen]
     have = {made["label"] for made in rows if made["kind"] not in order}
     for old in (kept or {}).get("rows", ()):
         if old.get("kind") not in order and old["label"] not in have:
             state = RUN_STATE.get(old.get("status"), old.get("status") or NO_RUN)
             rows.append(row(old["label"], old.get("kind"), state, None, None, None, old["cells"]) | {"v1": True})
+
     rows.sort(key=lambda made: (order.get(made["kind"], 1), -(made["at"] or 0) if made["kind"] == KING else -(made["avg"] or 0)))
     return {"updated_at": bench["updated_at"], "rows": rows, "columns": columns}
 

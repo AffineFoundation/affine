@@ -34,14 +34,14 @@ def green(v2, uid):
 
 class Node:
     """The rented box as the daemon sees it over ssh: a fetch, one runner, and its result files."""
-    def __init__(self): self.cmds, self.stdin, self.fetched, self.dies = [], [], False, False
+    def __init__(self): self.cmds, self.stdin, self.fetched, self.dies = [], [], set(), False
 
     def run(self, cmd, inp=None, timeout=0):
-        self.cmds.append(cmd); self.stdin.append(inp); self.fetched |= "gate_fetch.py" in cmd
+        self.cmds.append(cmd); self.stdin.append(inp)
         return types.SimpleNamespace(stdout=self.out(cmd), stderr="", returncode=0)
 
     def out(self, cmd, timeout=0):
-        if ".verified" in cmd: return "yes" if self.fetched else ""
+        if ".verified" in cmd: return "yes" if cmd.split(f"{C.NODE_KINGS}/", 1)[1].split("/", 1)[0] in self.fetched else ""
         if "echo ok=1" in cmd: return "done=\nalive=\nlines=0\nok=1\n" if self.dies else "done=1\nalive=\nlines=4\nok=1\n"
         if "summary.json" in cmd:
             bid = cmd.split(" 2>")[0].split("/")[-2]  # .../runs/<model>/<benchmark>/summary.json
@@ -67,6 +67,9 @@ def world(monkeypatch, tmp_path):
     store = Store(v2.store)
     empty_host(monkeypatch)
     monkeypatch.setattr(source, "store", lambda: store)
+    monkeypatch.setattr(D, "fetch_king", lambda ck, node: (node.fetched.add(ck), dict(status="rc0", out="fetched"))[1]
+                         if node.run("fetch king " + ck, inp=json.dumps(source.presigned(ck))) else None)  # the real fetch is covered separately
+    monkeypatch.setattr(D, "fetch_reference", lambda m, node: (node.fetched.add(m["model_id"]), dict(status="rc0", out="fetched"))[1])
     monkeypatch.setattr(D, "NODE", node); monkeypatch.setattr(P, "IDLE_RELEASE_S", 0)
     monkeypatch.setattr(P, "rent", lambda S, log: (S.setdefault("rents", []).append(1), P.save(POD), dict(POD))[-1])
     monkeypatch.setattr(P, "listed", lambda: [dict(id=POD["id"], name=P.NAME), dict(id="someone-elses-pod", name="other")])
@@ -123,51 +126,59 @@ def test_rows_are_the_launch_model_and_each_folded_king_read_from_public_files_o
 def test_genesis_is_benchmarked_once_and_each_new_king_once_each_on_a_pod_released_by_exact_id(world, capsys):
     v2, store, node, removed = world
     genesis = v2.controller.state.head
-    D.step()  # rent, fetch and launch the launch model
-    assert states() == {ids(genesis): "evaluating"} and len(D.S["rents"]) == 1
-    D.step()  # collect and release
-    assert states() == {ids(genesis): "scored"} and D.queue() == []
+    D.step()  # rent, fetch and launch the official reference first
+    assert states() == {"ref-qwen3.5-9b": "evaluating", ids(genesis): "queued"} and len(D.S["rents"]) == 1
+    D.step()  # collect the reference, then genesis on the same pod
+    assert states() == {"ref-qwen3.5-9b": "scored", ids(genesis): "evaluating"}
+    D.step()  # collect genesis and release the one shared pod
+    assert states() == {"ref-qwen3.5-9b": "scored", ids(genesis): "scored"} and D.queue() == []
     assert removed == [("rm", POD["id"], "--name-only", "-y")] and not D.C_POD
     for _ in range(3):  # listed again at each poll: no second run, no second rent, no second write of the table
         D.step()
     assert len(D.S["rents"]) == 1
-    assert [json.loads(t)["models"][0]["status"] for t in store.tables] == ["evaluating", "scored"]  # one write per change
+    assert [json.loads(t)["models"][0]["status"] for t in store.tables] == ["evaluating", "scored", "scored"]  # one write per change
     # the expiring links reach the node on stdin only: never in a command line, never in a log line
-    assert sum("signed.example" in (s or "") for s in node.stdin) == 1
+    signed_inputs = [s for s in node.stdin if "signed.example" in (s or "")]
+    assert signed_inputs and all("signed.example" not in cmd for cmd in node.cmds)
+    assert sum(cmd.startswith("fetch king ") for cmd in node.cmds) == len(signed_inputs) == 1
     assert "signed.example" not in " ".join(node.cmds) + capsys.readouterr().out
 
     king = green(v2, 1)
     assert [m["base_hash"] for m in D.queue()] == [king.base_hash]  # only the new king is queued
     D.step()
-    assert states() == {ids(genesis): "scored", ids(king): "evaluating"}
+    assert states() == {"ref-qwen3.5-9b": "scored", ids(genesis): "scored", ids(king): "evaluating"}
     D.step()
     row = next(m for m in table()["models"] if m["model_id"] == ids(king))
     assert (row["status"], row["benchmarks_done"], row["benchmarks_total"], row["fails"]) == ("scored", len(RUNNABLE), len(RUNNABLE), 0)
     assert (row["round_id"], row["head_version_id"], row["uid"], row["hotkey"]) == (king.round_id, king.version_id, 1, "hk1")
     assert len(D.S["rents"]) == 2 and json.loads(store.tables[-1])["models"] == table()["models"]  # the store holds the table
 
-    # the site's reader of today takes the file as it is: the king first, the launch model last
+    # the site's reader of today takes the file as it is: the king first, reference next, the launch model last
     view = BENCH_VIEW(table())
-    assert [(r["kind"], r["status"], r["round_id"]) for r in view["rows"]] == [("king", "scored", king.round_id), ("genesis", "scored", "genesis")]
+    assert [(r["kind"], r["status"], r["round_id"]) for r in view["rows"]] == [
+        ("king", "scored", king.round_id), ("reference", "scored", None), ("genesis", "scored", "genesis")]
     assert all(set(r["cells"]) >= {b["id"] for b in RUNNABLE} and r["avg"] == 0.5 for r in view["rows"])
 
 
-def test_disabled_gsm8k_keeps_its_published_history_as_a_display_only_column(world):
+def test_disabled_gsm8k_keeps_its_published_history_but_hides_its_column(world):
     v2, store, _, _ = world
     D.step()
     published = table()
     by_id = {b["id"]: b for b in published["benchmarks"]}
-    assert "gsm8k" not in by_id and by_id["gsm8k_platinum"]["enabled"] and by_id["gsm8k_platinum"]["in_avg"] is False
+    assert "gsm8k" not in by_id and "gsm8k_platinum" not in by_id
+    assert set(by_id) == {b["id"] for b in RUNNABLE}
     old = dict(model_id=ids(v2.controller.state.head), benchmark_id="gsm8k", env_version="gsm8k/v1/bench-v2", score=0.91)
     saved = json.loads(pathlib.Path(TABLE).read_text())
     saved["results"].append(old)
     pathlib.Path(TABLE).write_text(json.dumps(saved))
-    publish.publish(source.models(), dict(D.S))
+    publish.publish(D.model_rows(), dict(D.S))
     view = BENCH_VIEW(table())
-    historical = {c["id"]: c for c in view["columns"]}["gsm8k"]
-    assert historical["in_avg"] is False
+    historical = {b["id"]: b for b in table()["benchmarks"]}["gsm8k"]
+    assert historical["hide_column"] is True and historical["in_avg"] is False
+    assert "gsm8k" not in {column["id"] for column in view["columns"]}
     assert not {b["id"] for b in table()["benchmarks"] if b.get("enabled")} & {"gsm8k"}
-    assert view["rows"][0]["cells"]["gsm8k"]["score"] == 0.91
+    genesis_row = next(row for row in view["rows"] if row["kind"] == "genesis")
+    assert genesis_row["cells"]["gsm8k"]["score"] == 0.91
 
 
 def test_a_host_with_an_empty_disk_reads_the_published_table_and_runs_no_row_again(world, monkeypatch):
@@ -175,7 +186,7 @@ def test_a_host_with_an_empty_disk_reads_the_published_table_and_runs_no_row_aga
     king = green(v2, 1)
     for _ in range(4):
         D.step()
-    assert set(states().values()) == {"scored"} and len(states()) == 2 and len(D.S["rents"]) == 1  # one pod serves both waiting rows
+    assert set(states().values()) == {"scored"} and len(states()) == 3 and len(D.S["rents"]) == 1  # one pod serves the reference, genesis and king
     before = table()
 
     empty_host(monkeypatch)
@@ -216,19 +227,25 @@ def test_reference_rows_that_an_operator_put_in_the_table_stay(world, where):
     store.inner.put(layout.BENCHMARKS, seed.encode()) if where == "store" else pathlib.Path(TABLE).write_text(seed)
     D.step(); D.step()
     rows = BENCH_VIEW(json.loads(store.tables[-1]))["rows"]
-    # the site builder puts the genesis head last, under the other models
-    assert [(r["label"], r["kind"], r["status"]) for r in rows[:2]] == [("Qwen3.5-9B", "reference", "scored"), ("GLM-Z1-9B-0414", "reference", "failed")]
-    assert (rows[2]["kind"], rows[2]["status"]) == ("genesis", "scored") and rows[0]["cells"]["math500"]["score"] == 0.9 and not rows[1]["cells"]
-    assert len(D.S["rents"]) == 1 and D.queue() == []  # a reference row is never run by this service
+    # one Qwen row on home: the official v2 run replaces the duplicate display row, but the old store row and scores remain
+    qwen = [r for r in rows if r["label"] == "Qwen3.5-9B"]
+    assert len(qwen) == 1 and not qwen[0].get("v1") and qwen[0]["status"] == "scored"
+    other = next(r for r in rows if r["label"] == "GLM-Z1-9B-0414")
+    assert (other["kind"], other["status"], other["cells"]) == ("reference", "failed", {})
+    assert next(r for r in rows if r["kind"] == "genesis")["status"] == "running"
+    old = next(m for m in table()["models"] if m["model_id"] == "qwen3.5-9b")
+    assert old["status"] == "scored" and table()["results"][0]["score"] == 0.9  # v1 scores are not dropped by merge-only publish
+    assert len(D.S["rents"]) == 1  # the configured official reference runs; other reference rows never do
 
 
-def test_a_row_that_fails_three_times_is_failed_until_the_operator_queues_it_again(world):
+def test_a_row_that_fails_three_times_is_failed_until_the_operator_queues_it_again(world, monkeypatch):
     v2, store, node = world[:3]
+    monkeypatch.setattr(R, "references", list)  # the existing genesis failure/retry contract, isolated from the reference-first run
     mid = ids(v2.controller.state.head)
     node.dies = True
     seen = []
     for _ in range(D.MAX_FAIL + 1):  # a runner that is found dead is started again in the same step, MAX_FAIL times in all
-        D.step(); seen.append((states()[mid], table()["models"][0]["fails"]))
+        D.step(); model = next(m for m in table()["models"] if m["model_id"] == mid); seen.append((states()[mid], model["fails"]))
     assert seen == [("evaluating", 0), ("evaluating", 1), ("evaluating", 2), ("failed", 3)]
     D.step()
     assert states() == {mid: "failed"} and D.queue() == [] and not D.C_POD  # no further try, and the pod is given back
@@ -246,7 +263,9 @@ def test_release_gives_the_pod_back_and_the_next_start_runs_the_row_again(world)
     D.cli("release", [])
     assert removed == [("rm", POD["id"], "--name-only", "-y")] and not D.C_POD and not D.S["running"]
     D.step(); D.step()
-    assert states() == {ids(v2.controller.state.head): "scored"} and len(D.S["rents"]) == 2
+    assert states() == {"ref-qwen3.5-9b": "scored", ids(v2.controller.state.head): "evaluating"} and len(D.S["rents"]) == 2
+    D.step()
+    assert states() == {"ref-qwen3.5-9b": "scored", ids(v2.controller.state.head): "scored"} and len(D.S["rents"]) == 2
     with pytest.raises(SystemExit):
         D.cli("no-such-command", [])
 

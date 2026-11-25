@@ -210,9 +210,9 @@ def publish(rows, S, max_fail=3):
             latest = max(scored, key=lambda r: _protocol_rank(r.get("env_version"), r.get("budget")))
             budget, profile = latest.get("budget"), latest.get("profile")
         else:
-            st = R.resolve_settings(mid, m.get("kind"))
+            st = R.resolve_settings(mid, m.get("kind"), m.get("profile"))
             budget, profile = st["budget"], st["profile"]
-        models.append({k: m.get(k) for k in ("model_id", "label", "kind", "base_hash", "round_id", "head_version_id", "crowned_at", "uid", "hotkey")}
+        models.append({k: m.get(k) for k in ("model_id", "label", "kind", "base_hash", "round_id", "head_version_id", "crowned_at", "uid", "hotkey", "repo", "revision", "reasoning_parser")}
                       | dict(status=status, benchmarks_done=n_done, benchmarks_total=len(runnable), fails=fails, budget=budget, profile=profile))
 
     # A published row that is no longer listed stays while it has a result. It is not in work: only a listed row is run.
@@ -231,15 +231,16 @@ def publish(rows, S, max_fail=3):
         version="affine-bench-v2",
         updated_at=time.time(),
         serving=sv,
-        about="Public math benchmarks of the SN120 v2 launch model and of every king (the folded head of each applied winner). "
-              "A row of another kind (a reference model) is not run by this service: it is kept as it was put in. "
+        about="Public math benchmarks of the SN120 v2 launch model, every king (the folded head of each applied winner), "
+              "and official public reference models run with the same v2 protocol. "
+              "Other reference rows already in the table are preserved. "
               "Merge-only publish: a published result is never dropped. "
               "Each result row carries env_version, budget, and cap_rate so the protocol is unambiguous. "
               "Where two protocols exist, the table shows the latest; results_prior holds superseded rows. "
               "Score = mean over problems of the per-problem mean over rollouts (an errored rollout counts as wrong); "
               "se = task-clustered standard error; complete=false marks a row that lost samples. "
               "Aggregates only. Informational; never used for promotions or weights.",
-        benchmarks=[{k: b.get(k) for k in ("id", "label", "suite", "env", "source", "dataset", "rollouts", "enabled", "order", "pooled_from", "harness", "runtime")}
+        benchmarks=[{k: b.get(k) for k in ("id", "label", "suite", "env", "source", "dataset", "rollouts", "enabled", "order", "pooled_from", "harness", "runtime", "hide_column")}
                     | dict(in_avg=b.get("in_avg", True)) for b in bs if b.get("enabled")],
         suites=sorted({b["suite"] for b in bs if b.get("enabled")}),
         models=models,
@@ -255,7 +256,7 @@ def publish(rows, S, max_fail=3):
     # An empty display-only column does not hide the other columns or force every row to have a score.
     result_bids = {r.get("benchmark_id") for r in recs + results_prior}
     published_bs = [b for b in bs if b.get("enabled") or (b.get("enabled") is False and b["id"] in result_bids)]
-    out["benchmarks"] = [{k: b.get(k) for k in ("id", "label", "suite", "env", "source", "dataset", "rollouts", "enabled", "order", "pooled_from", "harness", "runtime")}
+    out["benchmarks"] = [{k: b.get(k) for k in ("id", "label", "suite", "env", "source", "dataset", "rollouts", "enabled", "order", "pooled_from", "harness", "runtime", "hide_column")}
                          | dict(in_avg=b.get("in_avg", True)) for b in published_bs]
     t = OUT + ".tmp"; json.dump(out, open(t, "w"), separators=(",", ":")); os.chmod(t, 0o644); os.replace(t, OUT)
 
