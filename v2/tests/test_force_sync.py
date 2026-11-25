@@ -69,7 +69,7 @@ def test_run_refuses_a_sync_that_removes_many_seats_and_the_operator_applies_it_
 
     assert main(["force-sync", *box.common]) == 0, "without the count: the list only"
     out = capsys.readouterr().out
-    assert "(41 registrations) give the same changes to the queue of 57 seats" in out and "remove 20 seats, add 0 seats, change the hotkey of 0 seats" in out
+    assert "(41 registrations) give the same changes to the queue of 57 seats" in out and "remove 20 seats, add 0 seats, refresh the hotkey or coldkey of 0 seats" in out
     assert out.count("\n  remove uid") == 20 and "remove uid   41 registration block       141 hk41 (normal)" in out
     assert out.rstrip().endswith("give the same command with --confirm-remove 20")
     assert records(box) == before, "the list writes nothing and does not take over the journal"
