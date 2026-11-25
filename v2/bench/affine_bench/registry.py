@@ -29,18 +29,27 @@ def benchmark(bid):
     return next(b for b in benchmarks() if b["id"] == bid)
 
 
+def references():
+    """Official public models run by this service with the v2 benchmark protocol."""
+    return [dict(model_id=r["model_id"], label=r["label"], kind=r["kind"], repo=r["repo"], revision=r["revision"],
+                 profile=r["profile"], reasoning_parser=r["reasoning_parser"], crowned_at=None)
+            for r in _load("references.toml").get("reference", [])]
+
+
 def model_settings():
     """Per-model native sampling + budgets (bench-v2). See config/model_settings.toml."""
     return _load("model_settings.toml")
 
 
-def resolve_settings(model_id, kind=None):
+def resolve_settings(model_id, kind=None, profile=None):
     """Sampling + max_model_len for one model. Kings / Genesis use the qwen3.5-family profile.
     max_tokens is capped at global_max_tokens_ceiling; max_model_len = min(budget + headroom, native_context)."""
     ms = model_settings()
     profiles = ms["profiles"]
     mmap = ms.get("models", {})
-    if kind in ("king", "genesis") or (model_id or "").startswith(("king-", "genesis-")):
+    if profile:
+        pname = profile
+    elif kind in ("king", "genesis") or (model_id or "").startswith(("king-", "genesis-")):
         pname = ms.get("king_profile") or ms.get("default_profile")
     else:
         pname = mmap.get(model_id) or ms.get("default_profile")

@@ -1,0 +1,10 @@
+# Official public references run with the same v2 protocol as genesis and kings.
+# Public, pinned Hugging Face weights only: no write token or store credential is sent to the node.
+[[reference]]
+model_id = "ref-qwen3.5-9b"
+label = "Qwen3.5-9B"
+kind = "reference"
+repo = "Qwen/Qwen3.5-9B"
+revision = "c202236235762e1c871ad0ccb60c8ee5ba337b9a"
+profile = "qwen3.5-family"
+reasoning_parser = "qwen3"

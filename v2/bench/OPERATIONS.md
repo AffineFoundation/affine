@@ -4,7 +4,7 @@ This file is for the operator. It says which host runs the service, which GPUs i
 
 Words used here:
 
-- **Row**: one model in the benchmark table. A row is the launch model (the genesis head), or a king.
+- **Row**: one model in the benchmark table. A row is an official public reference, the launch model (the genesis head), or a king.
 - **King**: the model after a round that a miner won. The row is the folded head: the base with the winner's LoRA merged in.
 - **Node**: the GPU machine that the service rents on Lium for the time of a run.
 - **Store**: the R2 bucket of v2.
@@ -12,48 +12,53 @@ Words used here:
 ## 1. What the service does
 
 - It reads three kinds of public files from the store: `public/head.json`, `public/heads/<id>.json` and `public/rounds/<round>/round.json`. It calls nothing on the GPU box.
-- From them it makes one row for the launch model and one row for each king.
-- A row with a missing result is queued. The newest row runs first. One row runs at a time.
-- For a queued row the service rents one node, loads the row's weights from the store with read links that expire, runs the 10 benchmarks of `bench/config/benchmarks.toml`, and copies the scores.
+- From them it makes one row for the launch model and one row for each king. `bench/config/references.toml` adds the official public reference row, Qwen3.5-9B.
+- A row with a missing result is queued in this order: official references, genesis, then kings newest first. One row runs at a time.
+- For a queued row the service rents one node and runs the 6 benchmarks of `bench/config/benchmarks.toml`. Genesis and kings load from the store with expiring read links. The official reference uses a public, pinned Hugging Face snapshot with no write token or store credential on the node.
 - It writes one object: `public/benchmarks.json`. It writes it on each change of a row or of a result. It deletes nothing in the store.
 - The public pull on AffineValidator copies that object to the site, as it does today for the other public files. The site builder already reads it.
 - The table is for information only. No code that picks a winner or sets weights reads it.
 
-A row is run once. The service reads the published table before its first step. A result that is in the table is done, also on a host with an empty disk.
+A row is run once. The service reads the published table before its first step. A result that is in the table is done, also on a host with an empty disk. Publishing is merge-only: retired benchmark scores and v1 reference history are not deleted.
 
-### GSM8K-Platinum (18 Nov 2026)
+### Option A public math columns (25 Nov 2026 UTC)
 
-The original GSM8K test set has approximately 110 flawed or ambiguous questions and 10 wrong answer keys. The benchmark now
-uses **GSM8K-Platinum** (`madrylab/gsm8k-platinum`, revision
-`e762492455a1cf7967de89f05b6bef72fc713b66`, `main/test`): the cleaned 1,209-question set, rather than the original 1,319
-questions. Its prompt, one-rollout scoring and verifier are the same as the old local GSM8K environment. The dataset revision
-is pinned, its file order is preserved, and the task indices are 0 through 1208.
+The six enabled and counted columns are HMMT Feb 2025, HMMT Nov 2025, HMMT Feb 2026, BRUMO 2025, CMIMC 2025 and
+BeyondAIME. Every one uses 8 rollouts and a pinned public dataset. Avg is their unweighted mean; no pooled-all-six
+column is counted. A row missing any one of the six has no Avg.
 
-`gsm8k_platinum` is enabled but initially has `in_avg = false`. The operator flips it to `true` once every shown row has a
-`gsm8k_platinum` result. Until the backfill finishes, counting it would leave rows without an Avg or make their averages
-incomparable. The original `gsm8k` benchmark is disabled. As of 19 Nov 2026, the v2 table no longer shows the GSM8K column;
-its published scores remain in the store and in `public/benchmarks.json`. ArXivMath now counts fully in Avg. The root-level
-v1 `bench/` is unchanged.
+The saturated and older columns are disabled, removed from Avg and marked `hide_column = true`. Their registry entries,
+store results and row cells remain. The home table hides those columns; the v1 archive is unchanged. The official v2
+Qwen3.5-9B row supersedes only its duplicate frozen v1 row on the home table after the v2 row exists.
 
-AffineValidator's checkout has local uncommitted edits to `v2/site/build.py`. The site-builder hunk of this change must be
-merged by hand there, or left out by the operator's decision; do not discard those local edits. Without that hunk, the old
-GSM8K results stay in the store but the disabled column is not displayed by the site.
+Deploying the new registry queues the missing six-benchmark runs for the official reference, genesis and each king, in
+that priority order (kings newest first). It does not rent until the existing daemon is updated and processes the queue.
+There is still only one daemon, one pod and one node run. To roll the site change back, revert the benchmark registry
+and site-builder changes; already-published new-benchmark results remain in the store because publication is merge-only.
+
+### GSM8K-Platinum history (18 Nov 2026)
+
+The original GSM8K test set had approximately 110 flawed or ambiguous questions and 10 wrong answer keys.
+**GSM8K-Platinum** (`madrylab/gsm8k-platinum`, revision
+`e762492455a1cf7967de89f05b6bef72fc713b66`, `main/test`) replaced it with the cleaned 1,209-question set. Option A
+subsequently retired both GSM8K columns: they are disabled, hidden and outside Avg. Their published scores remain in
+the store and row cells. The root-level v1 `bench/` is unchanged.
+
+The operator's AffineValidator checkout may have local edits to `v2/site/build.py`. Merge the site-builder change by
+hand there or leave it out by the operator's decision; do not discard those local edits. Without the site hunk, retired
+columns and the official-v2 Qwen display rule are not applied.
 
 For past kings, expect scores of approximately **0.92–0.96 on original GSM8K to become 0.96–0.98 on Platinum**. This is an
 expected range, not a guarantee for every model.
 
-**Deploying this change queues a backfill: every existing launch-model and king row, including the v1 king (23 rows as of
-18 Nov 2026), needs a `gsm8k_platinum` run.** Budget this as 23 separate per-row node evaluations: for each row, the node
-must obtain and verify that row's weights (downloading them when not already cached) and start vLLM for that model. Only the
-missing Platinum benchmark runs; the other benchmarks are not rerun. The service processes one row at a time on its rented
-node and normally reuses that node while rows remain queued, rather than renting 23 nodes at once. Each new rent repeats
-installation and weight download; a released/replacement node also means repeating that setup. New rents still obey
-`BENCH_MAX_RENTS_PER_DAY` (8 rents in 24 hours by default). No backfill is billed until this code is deployed and the queue
-is processed.
+**The Platinum backfill was superseded by Option A. Deploying the current registry does not queue Platinum or any other
+retired benchmark.** The 18 Nov 2026 plan had 23 existing launch-model and king rows needing a `gsm8k_platinum` run. Each
+would have been a separate per-row evaluation on the single rented node, obtaining and verifying that row's weights and
+starting vLLM. Each new rent would repeat installation and weight download, subject to `BENCH_MAX_RENTS_PER_DAY` (8 rents in
+24 hours by default). That historical backfill is not billed and is no longer scheduled. The current Option A queue and
+deployment decision are described above.
 
-The operator must decide between **letting that backfill run** and **holding it**. To hold it, leave this change undeployed
-and the service on its current revision. Deploying the new registry and starting the daemon opts into the queued work.
-Before choosing, an offline estimate can be made from the saved private per-task files:
+For historical estimation from saved private per-task files:
 
 ```
 python -m affine_bench.backfill_gsm8k_platinum "$BDIR/state/private" --out gsm8k-platinum-estimates.json
@@ -96,7 +101,7 @@ Details of A:
 - The service asks Lium for a whole node of the secure tier, in this order: 8x B300, 8x B200, 8x H200, 8x H100 (`BENCH_GPU_PREF`, default `B300:8 B200:8 H200:8 H100:8`). It takes the cheapest free node of the first kind that has one at or below the cap.
 - The node has the name `affine-v2-bench-1`. The service rents no second node while Lium lists a pod of that name.
 - It gives the node back 900 seconds after the queue is empty (`BENCH_IDLE_RELEASE_S`). It removes only the pod with the exact Lium id that it rented.
-- Each new rent installs the software again and loads the weights again. The launch model's weights are 18.85 GB (the sum in `public/read_links.json`).
+- Each new rent installs the software again and loads the weights again. The launch model's weights are 18.85 GB (the sum in `public/read_links.json`). The public Qwen reference has no store credential; its snapshot download uses `token=False`.
 - The time and the price of one row on v2 are not measured. v1's figures, from v1's public file `https://affine.io/benchmarks.json` on 14 Nov 2026: a median of 3582 seconds for one model (`progress.median_model_wall_s`), on a node of 8x B300 at 32.0 dollars per hour (`node`). v1 ran the same 10 benchmarks with the same harness.
 
 Details of B:
@@ -157,9 +162,9 @@ mkdir -p "$BDIR/state" "$BDIR/site" "$BDIR/secrets" && chmod 700 "$BDIR/secrets"
    bench status
    ```
 
-   The output has `"queue_len": 1`, the id `genesis-87de8304e9d33dde` with `new-genesis` under `next`, and `"pod": null`, while the head is the launch model and the table has no result. A store error here means that the token cannot read.
+   The output has the official `ref-qwen3.5-9b` reference first under `next`, then `genesis-87de8304e9d33dde`, then any kings with missing enabled results. `"pod": null` while no pod is rented. A store error here means that the token cannot read.
 
-6. **The reference rows need no seed.** The service makes no row of a reference model, and none is put into its table. The site's builder (`v2/site/build.py`) takes the reference models from the frozen v1 history on AffineValidator, on each build, whatever this table holds. So start with an empty `$BDIR/site`: copy no file into it.
+6. **The official reference needs no seed or HF token.** `bench/config/references.toml` supplies its public model id, pinned revision and profile. The service builds that row itself and downloads the public snapshot on the node. The site's builder (`v2/site/build.py`) takes the other reference models from the frozen v1 history on AffineValidator, on each build, whatever this table holds. So start with an empty `$BDIR/site`: copy no file into it.
 
    This holds only when AffineValidator runs the site builder that has this rule. Before the next step, on AffineValidator (`REPO` and `SITE` as in `v2/site/OPERATIONS.md`):
 
@@ -178,7 +183,7 @@ mkdir -p "$BDIR/state" "$BDIR/site" "$BDIR/secrets" && chmod 700 "$BDIR/secrets"
    bench publish
    ```
 
-   It prints a line with `"event": "table-read"`, a line with `"event": "table-written"` whose `rows` has `"genesis-87de8304e9d33dde": "queued"`, one entry for each other id that step 5 listed and no reference model, and then `published`. A store error here means that the token cannot write.
+   It prints a line with `"event": "table-read"`, a line with `"event": "table-written"` whose `rows` has `"ref-qwen3.5-9b": "queued"`, `"genesis-87de8304e9d33dde": "queued"`, and one entry for each other id that step 5 listed, then `published`. A store error here means that the token cannot write.
 
    After the pull's next run (one minute): `curl -s -o /dev/null -w '%{http_code}\n' https://affine.io/public/benchmarks.json` prints `200`. The site's table has the same reference models as before, and its row `Genesis` has the state `queued` in place of `no run yet`.
 
@@ -212,9 +217,9 @@ The log has one JSON line for each event. For the launch model, in this order:
 | `rented` | A node is rented. The line has `pod`, `lium_id`, `gpu` and `usd_h`. `usd_h` is not above your cap. |
 | `bootstrapped` | The software is on the node. `minutes` is the time since the rent. |
 | `fetch` | The weights are on the node and each file's sha256 is checked. `status` is `rc0`. |
-| `launched` | The run is started. `model` is `genesis-87de8304e9d33dde`, and `bids` names 10 benchmarks. |
+| `launched` | The run is started. `model` is `ref-qwen3.5-9b` first, then `genesis-87de8304e9d33dde`; `bids` names 6 benchmarks. |
 | `table-written` | The table is in the store. `rows` shows the row as `evaluating`. |
-| `collected` | The run is done. `scores` has a number for each of the 10 benchmarks. |
+| `collected` | The run is done. `scores` has a number for each of the 6 benchmarks. |
 | `table-written` | `rows` shows the row as `scored`. |
 | `released` | 900 seconds after the queue is empty, the node is given back. `hours` is the time that it was rented. |
 
@@ -224,7 +229,7 @@ Checks from any machine:
 curl -s https://affine.io/public/benchmarks.json | python3 -c 'import json,sys; print([(m["model_id"], m["status"], m.get("benchmarks_done"), m.get("benchmarks_total")) for m in json.load(sys.stdin)["models"] if m.get("kind") in ("king", "genesis")])'
 ```
 
-- It prints `[('genesis-87de8304e9d33dde', 'scored', 10, 10)]` after the first run.
+- It prints `[('genesis-87de8304e9d33dde', 'scored', 6, 6)]` after the first run.
 - After each round that a miner wins, a row `king-<16 hex>` comes within one poll (30 seconds) of the publication of the new head. It goes from `queued` to `evaluating` to `scored`.
 - The site's table shows the same rows. A state that is not `scored` is shown as a label on the row.
 - `"$LIUM" ps` has no pod with the name `affine-v2-bench-1` once the log says `released`.
@@ -301,8 +306,9 @@ Proven by tests on a CPU (`v2/bench/tests/`), with the store of v2's simulation,
 - The launch model runs once, each king runs once, and a row that is listed again is not run again.
 - A host with an empty disk reads the published table and runs no row again. If the table cannot be read, nothing is rented.
 - The only write to the store is `public/benchmarks.json`. The read links go to the node on standard input only, never into a command line or the log.
-- A reference row that is in the table before the first write stays, with its results.
-- The site builder (`v2/site/build.py`) reads the table as it is, and adds the reference models from the frozen v1 history (`v2/tests/test_site_build.py`, `v2/tests/test_site_pull.py`).
+- The configured official reference runs first, followed by genesis and then kings newest first. One row runs at a time.
+- Its pinned public Hugging Face download uses no HF write token, PAT or store credential.
+- A reference row that is in the table before the first write stays, with its results. Once the official v2 Qwen row exists, only that Qwen row appears on home; the other stored row and its scores remain.
 
 Not proven:
 

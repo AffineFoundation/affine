@@ -4,17 +4,93 @@
 #   suite     math | code | terminal | search | agent ... (columns are grouped by suite)
 #   env       verifiers taskset id installed on the node (vf-eval <env>)
 #   source    where the env comes from: hub:<owner>/<name>@<version> or repo:bench/environments/<dir>
+#   dataset   public Hub dataset, pinned revision, split and exact row count
 #   rollouts  -r: samples per problem (score = mean over problems of the per-problem mean)
 #   harness / runtime  verifiers agent harness + runtime (null = one plain chat turn, no tools)
 #   enabled   the daemon only schedules enabled benchmarks
-#   in_avg    false = display-only column on affine.io: left out of Avg, the reference (Pareto) filter, column stars and shading;
-#             flip to true (or delete the line) once every shown row has it (default true)
-#   publish_per_task  removed: v2 has no hidden/held-out benchmark set. Full rollouts are public; the MATH test split is public.
+#   in_avg    false = display-only column on affine.io: left out of Avg, the reference (Pareto) filter, column stars and shading
+#   hide_column  true = omit the home-table column but keep every published result in cells/results (used for retired benches)
+#   publish_per_task  removed: v2 has no hidden/held-out benchmark set. Every rollout is public.
 [defaults]
 harness = "null"
 runtime = "subprocess"
 version = 1
 
+# Option A (25 Nov 2026 UTC): six counted public math contests, all at k=8.
+# Avg is their unweighted mean, with no pooled-all-six column.
+[[benchmark]]
+id = "hmmt_feb_2025"
+label = "HMMT Feb 2025"
+suite = "math"
+env = "hmmt_feb_2025"
+source = "repo:bench/environments/hmmt_feb_2025"
+dataset = "MathArena/hmmt_feb_2025@6fdc4277120810ff75aa22d2d5489b91f7a262a1 (train, 30)"
+rollouts = 8
+enabled = true
+in_avg = true
+order = 10
+
+[[benchmark]]
+id = "hmmt_nov_2025"
+label = "HMMT Nov 2025"
+suite = "math"
+env = "hmmt_nov_2025"
+source = "repo:bench/environments/hmmt_nov_2025"
+dataset = "MathArena/hmmt_nov_2025@118dbfb45c4c9467c672268ed55166642897aa46 (train, 30)"
+rollouts = 8
+enabled = true
+in_avg = true
+order = 20
+
+[[benchmark]]
+id = "hmmt_feb_2026"
+label = "HMMT Feb 2026"
+suite = "math"
+env = "hmmt_feb_2026"
+source = "repo:bench/environments/hmmt_feb_2026"
+dataset = "MathArena/hmmt_feb_2026@589a53fe152febc0f4f99f3e561007bf8da8e664 (train, 33)"
+rollouts = 8
+enabled = true
+in_avg = true
+order = 30
+
+[[benchmark]]
+id = "brumo_2025"
+label = "BRUMO 2025"
+suite = "math"
+env = "brumo_2025"
+source = "repo:bench/environments/brumo_2025"
+dataset = "MathArena/brumo_2025@6de9bc0987f5710c6376ee980e1483dbeb55cfda (train, 30)"
+rollouts = 8
+enabled = true
+in_avg = true
+order = 40
+
+[[benchmark]]
+id = "cmimc_2025"
+label = "CMIMC 2025"
+suite = "math"
+env = "cmimc_2025"
+source = "repo:bench/environments/cmimc_2025"
+dataset = "MathArena/cmimc_2025@7b3ca7c4b417d31b1f97f781f39fc4f97f1b9185 (train, 40)"
+rollouts = 8
+enabled = true
+in_avg = true
+order = 50
+
+[[benchmark]]
+id = "beyondaime"
+label = "BeyondAIME"
+suite = "math"
+env = "beyondaime"
+source = "repo:bench/environments/beyondaime"
+dataset = "ByteDance-Seed/BeyondAIME@c705198ae1043810b1e1693bd879250b51a7a523 (test, 100)"
+rollouts = 8
+enabled = true
+in_avg = true
+order = 60
+
+# Retired display columns. These remain in the registry and their already-published scores remain in the store.
 [[benchmark]]
 id = "math500"
 label = "MATH-500"
@@ -23,8 +99,10 @@ env = "local-math500"
 source = "hub:primeintellect/math500@0.1.18"
 dataset = "HuggingFaceH4/MATH-500@6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be (test, 500)"
 rollouts = 1
-enabled = true
-order = 10
+enabled = false
+in_avg = false
+hide_column = true
+order = 110
 
 [[benchmark]]
 id = "math"
@@ -34,16 +112,20 @@ env = "math-test"
 source = "repo:bench/environments/math-test"
 dataset = "DigitalLearningGmbH/MATH-lighteval@0530c78699ea5e8eb5530600900e1f328b48acad (default/test, 5000)"
 rollouts = 1
-enabled = true
-order = 20
+enabled = false
+in_avg = false
+hide_column = true
+order = 120
 
 [[benchmark]]
 id = "aime"
 label = "AIME 22-26"
 suite = "math"
 pooled_from = ["aime22", "aime23", "aime24", "aime25", "aime26"]
-enabled = true
-order = 30
+enabled = false
+in_avg = false
+hide_column = true
+order = 130
 
 [[benchmark]]
 id = "aime22"
@@ -53,8 +135,10 @@ env = "aime22"
 source = "repo:bench/environments/aime22"
 dataset = "di-zhang-fdu/AIME_1983_2024@3e2cc86390666c5c756622afc0eeb9e6194496bc (Year 2022, 30)"
 rollouts = 16
-enabled = true
-order = 31
+enabled = false
+in_avg = false
+hide_column = true
+order = 131
 
 [[benchmark]]
 id = "aime23"
@@ -64,8 +148,10 @@ env = "aime23"
 source = "repo:bench/environments/aime23"
 dataset = "di-zhang-fdu/AIME_1983_2024@3e2cc86390666c5c756622afc0eeb9e6194496bc (Year 2023, 29) + 2023 I-15 from AoPS"
 rollouts = 16
-enabled = true
-order = 32
+enabled = false
+in_avg = false
+hide_column = true
+order = 132
 
 [[benchmark]]
 id = "aime24"
@@ -75,8 +161,10 @@ env = "local-aime24"
 source = "hub:primeintellect/aime24@0.1.0"
 dataset = "HuggingFaceH4/aime_2024@2fe88a2f1091d5048c0f36abc874fb997b3dd99a (30)"
 rollouts = 16
-enabled = true
-order = 33
+enabled = false
+in_avg = false
+hide_column = true
+order = 133
 
 [[benchmark]]
 id = "aime25"
@@ -86,8 +174,10 @@ env = "local-aime25"
 source = "hub:primeintellect/aime25@0.1.0"
 dataset = "pinned in the hub wheel (AIME 2025 I+II, 30)"
 rollouts = 16
-enabled = true
-order = 34
+enabled = false
+in_avg = false
+hide_column = true
+order = 134
 
 [[benchmark]]
 id = "aime26"
@@ -97,8 +187,10 @@ env = "local-aime26"
 source = "hub:primeintellect/aime26@0.1.0"
 dataset = "pinned in the hub wheel (AIME 2026 I+II, 30)"
 rollouts = 16
-enabled = true
-order = 35
+enabled = false
+in_avg = false
+hide_column = true
+order = 135
 
 [[benchmark]]
 id = "amc23"
@@ -108,8 +200,10 @@ env = "amc23"
 source = "repo:bench/environments/amc23"
 dataset = "math-ai/amc23@80815d37005feb82cd7f8fbc6901d5d3eff43057 (test, 40)"
 rollouts = 16
-enabled = true
-order = 40
+enabled = false
+in_avg = false
+hide_column = true
+order = 140
 
 [[benchmark]]
 id = "arxivmath"
@@ -119,10 +213,10 @@ env = "arxivmath"
 source = "repo:bench/environments/arxivmath"
 dataset = "MathArena/arxivmath@f0a9cf83259855c31b37168eca646ec6f0e2598c (train, 103: arXiv Dec 2025 - Mar 2026)"
 rollouts = 16
-enabled = true
-order = 45
-# flipped 2026-11-19: count ArXivMath fully in Avg (Jacob). GSM8K stays disabled and is not shown on the v2 table.
-in_avg = true
+enabled = false
+in_avg = false
+hide_column = true
+order = 145
 
 [[benchmark]]
 id = "gsm8k"
@@ -134,7 +228,8 @@ dataset = "openai/gsm8k main/test (1,319)"
 rollouts = 1
 enabled = false
 in_avg = false
-order = 50
+hide_column = true
+order = 150
 
 [[benchmark]]
 id = "gsm8k_platinum"
@@ -144,7 +239,7 @@ env = "local-gsm8k-platinum"
 source = "repo:bench/environments/local-gsm8k-platinum"
 dataset = "madrylab/gsm8k-platinum@e762492455a1cf7967de89f05b6bef72fc713b66 (main/test, 1,209)"
 rollouts = 1
-enabled = true
-# display-only until the operator confirms every shown row has a result; then flip to true so averages stay comparable
+enabled = false
 in_avg = false
-order = 50
+hide_column = true
+order = 151

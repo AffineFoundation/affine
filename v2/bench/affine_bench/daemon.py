@@ -11,8 +11,8 @@ host. The process reads the published table before its first step and rents noth
 benchmarked once however often it is listed, and a host with an empty disk does not run a king again. A crashed run is
 resumed in place (vf-eval --resume keeps finished rollouts).
 
-Queue: every row that has a missing result, newest first; the launch model (genesis) is the oldest row. Nothing else.
-Informational only: this service reads kings and writes a table. It has no path to the head, the queue or chain weights.
+Queue: official references first, then genesis, then kings newest first. Only rows with a missing result are queued.
+The single existing loop starts one row at a time. Informational only: no path to the head, the queue or chain weights.
 
 Pod (affine_bench/pod.py): rented on demand when the queue is non-empty and no pod exists, released after IDLE_RELEASE_S with an
 empty queue; a pod Lium reclaims is detected (node-gone) and replaced the same way. Nothing on the pod is deleted by
@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from sn120_v2 import layout
 from . import config as C, registry as R
 from .node import Node
-from .fetch import fetch as fetch_king
+from .fetch import fetch as fetch_king, fetch_reference
 from . import pod as P, publish, source
 
 ST = C.STATE; RES = ST + "/results"; PRIV = ST + "/private"
@@ -36,14 +36,14 @@ NODE = Node()
 
 
 def now(): return time.time()
-def cr(t): return time.strftime("%Y-%m-%d %H:%M CR", time.gmtime(t - 6 * 3600)) if t else None
+def cr(t): return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(t)) if t else None
 def rj(p, d=None):
     try: return json.load(open(p))
     except Exception: return d
 def wj(p, o, mode=0o644):
     t = p + ".tmp"; json.dump(o, open(t, "w"), indent=1); os.chmod(t, mode); os.replace(t, p)
 def log(**k):
-    k["at_cr"] = cr(now()); print(json.dumps(k), flush=True)
+    k["at_utc"] = cr(now()); print(json.dumps(k), flush=True)
 
 
 S = rj(SF, {}) or {}
@@ -54,8 +54,12 @@ def save(): wj(SF, S)
 
 # ------------------------------------------------------------------------------------------------ models
 def model_rows():
-    """The genesis row and one row per folded king (source.py is the only reader of v2 state). model_id is stable and file-safe."""
-    return source.models()
+    """Official public references, genesis and every folded king. ``model_id`` is stable and file-safe."""
+    rows = R.references() + source.models()
+    unique = {}
+    for row in rows:
+        unique.setdefault(row["model_id"], row)
+    return list(unique.values())
 
 
 def result_path(mid, bid): return f"{RES}/{mid}/{bid}.json"
@@ -80,7 +84,9 @@ def queue(rows=None):
     rows = model_rows() if rows is None else rows; bs = R.benchmarks(enabled_only=True, runnable_only=True); done = published()
     ok = lambda m: m["model_id"] not in S["unavailable"] and S["fail"].get(m["model_id"], 0) < MAX_FAIL and missing(m, bs, done)
     seen, out = set(), []
-    for m in sorted(rows, key=lambda m: -(m.get("crowned_at") or 0)):
+    priority = {"reference": 0, "genesis": 1, "king": 2}
+    ordered = sorted(rows, key=lambda m: (priority.get(m.get("kind"), 3), -(m.get("crowned_at") or 0)))
+    for m in ordered:
         if m["model_id"] not in seen and ok(m):
             seen.add(m["model_id"]); out.append(dict(m, why="new-" + m["kind"]))
     return out
@@ -88,7 +94,7 @@ def queue(rows=None):
 
 # ------------------------------------------------------------------------------------------------ node ops
 def model_dir(m):
-    return f"{C.NODE_KINGS}/{m['base_hash']}"
+    return f"{C.NODE_KINGS}/{m['model_id'] if m.get('kind') == 'reference' else m['base_hash']}"
 
 
 def have_weights(m):
@@ -98,7 +104,8 @@ def have_weights(m):
 def ensure_weights(m):
     if have_weights(m):
         return True
-    r = fetch_king(m["base_hash"], NODE); log(event="fetch", model=m["model_id"], status=r.get("status"), out=r.get("out", "")[-160:])
+    r = fetch_reference(m, NODE) if m.get("kind") == "reference" else fetch_king(m["base_hash"], NODE)
+    log(event="fetch", model=m["model_id"], status=r.get("status"), out=r.get("out", "")[-160:])
     return have_weights(m)
 
 
@@ -108,7 +115,7 @@ def run_key(m):
 
 def launch(m, bids):
     rk = run_key(m)
-    st = R.resolve_settings(m["model_id"], m.get("kind"))
+    st = R.resolve_settings(m["model_id"], m.get("kind"), m.get("profile"))
     args = ["affine-bench", "node-run", "--model-id", rk, "--model-dir", model_dir(m), "--reasoning-parser", m.get("reasoning_parser", "qwen3"),
             "--benchmarks", ",".join(bids), "--max-model-len", str(st["max_model_len"])]
     ho = st.get("hf_overrides") or ""  # empty while the per-model profile clamps the window to the native context
@@ -301,14 +308,14 @@ POD_CHECK_AFTER_S = 600; POD_CHECK_EVERY_S = 600
 
 def node_down(run):
     """Unreachable node: decide nothing about the run (an overloaded node is not a dead runner), but after 10 min ask Lium
-    whether the pod still exists. A reclaimed pod never comes back (2026-11-02: noble-comet-40 was reclaimed at 06:00 CR and
+    whether the pod still exists. A reclaimed pod never comes back (2026-11-02: noble-comet-40 was reclaimed at 12:00 UTC and
     the old daemon polled it for 3.5 h), so drop it: the run is requeued without a failure and the next step rents a new pod."""
     d = S.setdefault("node_down", dict(since=now(), checked=0, state=None))
     if now() - d["since"] < POD_CHECK_AFTER_S or now() - d["checked"] < POD_CHECK_EVERY_S:
         log(event="node-unreachable", model=run["run_key"]); return
     d["checked"] = now(); st = P.state(C_POD.get("id")); d["state"] = st
     if st == "gone":
-        log(event="node-gone", model=run["run_key"], pod=C_POD.get("huid"), lium_id=C_POD.get("id"), down_since_cr=cr(d["since"]))
+        log(event="node-gone", model=run["run_key"], pod=C_POD.get("huid"), lium_id=C_POD.get("id"), down_since_utc=cr(d["since"]))
         P.save(dict(gone=now(), last=dict(C_POD))); C_POD.clear(); S["running"] = None; S.pop("node_down", None)
     else:
         log(event="node-unreachable", model=run["run_key"], lium=st, down_min=round((now() - d["since"]) / 60))
@@ -430,7 +437,7 @@ def main(once=False):
 def cli(cmd, argv):
     if cmd == "status":
         q = queue(); r = S.get("running")
-        print(json.dumps(dict(running=r and dict(model=r["run_key"], bids=r["bids"], started_cr=cr(r["started"]), progress=r.get("progress")),
+        print(json.dumps(dict(running=r and dict(model=r["run_key"], bids=r["bids"], started_utc=cr(r["started"]), progress=r.get("progress")),
                               queue_len=len(q), next=[(m["model_id"], m.get("why")) for m in q[:12]], fails=S["fail"], unavailable=S["unavailable"],
                               pod=dict(C_POD) or None, last=S["history"][-5:]), indent=1)); return
     if cmd not in ("daemon", "once", "publish", "retry", "release"):

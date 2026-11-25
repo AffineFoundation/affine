@@ -289,43 +289,70 @@ def test_benchmark_table_sorts_kings_by_crowned_at_and_marks_partial_runs():
     assert [row["status"] for row in view["rows"]] == ["scored"] * 5 + ["failed", "scored"]
 
 
-def test_gsm8k_display_column_is_hidden_and_arxivmath_counts_fully_in_avg():
-    """GSM8K stays in the results but is not a column. ArXivMath is a full-weight member of Avg.
+OPTION_A = ("hmmt_feb_2025", "hmmt_nov_2025", "hmmt_feb_2026", "brumo_2025", "cmimc_2025", "beyondaime")
 
-    A row gets an average only when it has every counted benchmark; a missing ArXivMath score leaves Avg empty.
-    """
-    bench = {
-        "updated_at": 5,
-        "benchmarks": [dict(id="b1", label="B1", suite="math", order=1, enabled=True),
-                       dict(id="arxivmath", label="ArXivMath", suite="math", order=2, enabled=True, in_avg=False),
-                       dict(id="gsm8k", label="GSM8K", suite="math", order=3, enabled=False, in_avg=False)],
-        "models": [king("new", 200), dict(model_id="ref", label="Ref", kind="reference", status="scored")],
-        "results": [result("new", "b1", 0.8), result("new", "arxivmath", 0.2), result("new", "gsm8k", 0.99),
-                    result("ref", "b1", 0.8)],
-    }
-    view = bench_view(bench)
-    assert [column["id"] for column in view["columns"]] == ["b1", "arxivmath"]
-    assert view["columns"][1]["in_avg"] is True
-    new, ref = view["rows"][0], view["rows"][1]
-    assert new["avg"] == 0.5 and "gsm8k" in new["cells"]  # scores stay; the column is gone
-    assert ref["avg"] is None and "arxivmath" not in ref["cells"]  # missing a counted benchmark
+
+def option_a_bench(*, pooled: bool = False, arxivmath: bool = False, gsm8k: bool = False) -> dict:
+    """The Option A counted columns plus a complete model row and an incomplete one."""
+    scores = dict(zip(OPTION_A, (0.1, 0.2, 0.3, 0.4, 0.5, 0.6)))
+    benchmarks = [dict(id=name, label=name, suite="math", order=10 * (i + 1), enabled=True, in_avg=True, rollouts=8)
+                  for i, name in enumerate(OPTION_A)]
+    results = [result("new", name, score) for name, score in scores.items()]
+    results += [result("partial", name, score) for name, score in scores.items() if name != "beyondaime"]
+    if pooled:
+        benchmarks.append(dict(id="option_a_pool", label="Pooled six", suite="math", order=70, enabled=True, in_avg=False))
+        results.append(result("new", "option_a_pool", 0.99))
+    if arxivmath:
+        benchmarks.append(dict(id="arxivmath", label="ArXivMath", suite="math", order=80, enabled=False, in_avg=False, hide_column=True))
+        results.append(result("new", "arxivmath", 0.99))
+    if gsm8k:
+        benchmarks.append(dict(id="gsm8k", label="GSM8K", suite="math", order=90, enabled=False, in_avg=False, hide_column=True))
+        results.append(result("new", "gsm8k", 0.99))
+    return {"updated_at": 5, "benchmarks": benchmarks,
+            "models": [king("new", 200), king("partial", 100)], "results": results}
+
+
+def test_hidden_retired_columns_stay_in_cells_and_avg_is_only_the_six_option_a_columns():
+    """ArXivMath and GSM8K are neither columns nor forced into Avg. The six contests have equal weight."""
+    view = bench_view(option_a_bench(pooled=True, arxivmath=True, gsm8k=True))
+    assert [column["id"] for column in view["columns"]] == [*OPTION_A, "option_a_pool"]
+    assert all(column["in_avg"] for column in view["columns"][:6]) and not view["columns"][-1]["in_avg"]
+    new, partial = view["rows"]
+    assert abs(new["avg"] - 0.35) < 1e-9  # the pooled-all-six display-only score does not count
+    assert {"arxivmath", "gsm8k", "option_a_pool"} <= set(new["cells"])
+    assert partial["avg"] is None  # missing any one of the six leaves no comparable average
 
 
 def test_full_run_companion_column_is_hidden_and_avg_is_unchanged():
     """A full-run companion column is not shown. Its score stays in the cells and is not in Avg."""
-    bench = {
-        "updated_at": 5,
-        "benchmarks": [dict(id="b1", label="B1", suite="math", order=1, enabled=True),
-                       dict(id="arxivmath", label="ArXivMath", suite="math", order=2, enabled=True, in_avg=False),
-                       dict(id="arxivmath:full", label="ArXivMath, full run", suite="math", order=3, enabled=False, in_avg=False)],
-        "models": [king("new", 200)],
-        "results": [result("new", "b1", 0.8), result("new", "arxivmath", 0.2), result("new", "arxivmath:full", 0.9)],
-    }
+    bench = option_a_bench(arxivmath=True)
+    bench["benchmarks"].append(dict(id="arxivmath:full", label="ArXivMath, full run", suite="math", order=85,
+                                    enabled=False, in_avg=False, hide_column=True))
+    bench["results"].append(result("new", "arxivmath:full", 0.9))
     view = bench_view(bench)
-    assert [column["id"] for column in view["columns"]] == ["b1", "arxivmath"]
-    assert view["columns"][1]["in_avg"] is True
+    assert [column["id"] for column in view["columns"]] == list(OPTION_A)
     new = view["rows"][0]
-    assert new["avg"] == 0.5 and "arxivmath:full" in new["cells"]
+    assert abs(new["avg"] - 0.35) < 1e-9 and "arxivmath:full" in new["cells"]
+
+
+def test_home_pins_one_qwen_reference_only_after_its_official_v2_row_exists():
+    """Before the v2 run, frozen v1 Qwen history is shown. Afterwards it does not make a duplicate home row."""
+    kept = bench_view(option_a_bench() | {
+        "models": [dict(model_id="v1-qwen", label="Qwen3.5-9B", kind="reference", status="scored")],
+        "results": [result("v1-qwen", name, score) for name, score in zip(OPTION_A, (0.9, 0.8, 0.7, 0.6, 0.5, 0.4))]})
+    old = bench_view(option_a_bench(), (), kept)
+    assert sum(row["label"].lower() == "qwen3.5-9b" for row in old["rows"]) == 1
+    assert next(row for row in old["rows"] if row["label"].lower() == "qwen3.5-9b")["v1"] is True
+
+    current = option_a_bench()
+    current["models"].append(dict(model_id="ref-qwen3.5-9b", label="Qwen3.5-9B", kind="reference", status="scored"))
+    current["results"] += [result("ref-qwen3.5-9b", name, score) for name, score in zip(OPTION_A, (0.6, 0.5, 0.4, 0.3, 0.2, 0.1))]
+    home = bench_view(current, (), kept)
+    pinned = [row for row in home["rows"] if row["label"].lower() == "qwen3.5-9b"]
+    assert len(pinned) == 1
+    assert not pinned[0].get("v1") and abs(pinned[0]["avg"] - 0.35) < 1e-9
+    # Rebuilding the frozen archive itself is unaffected; its old scores still feed the v1 page.
+    assert kept["rows"][-1]["cells"]["hmmt_feb_2025"]["score"] == 0.9
 
 
 def test_every_king_and_the_genesis_head_has_one_row_that_says_the_state_of_its_benchmark_run():

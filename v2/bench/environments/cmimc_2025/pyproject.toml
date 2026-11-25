@@ -1,0 +1,16 @@
+[project]
+name = "cmimc-2025"
+version = "0.1.0"
+description = "CMIMC 2025 (MathArena / CMIMC, CC BY-NC-SA 4.0) -- Affine bench env"
+requires-python = ">=3.11"
+dependencies = ["verifiers>=0.4.0", "math-verify>=0.8.0", "datasets", "affine-math-grader"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["cmimc_2025"]
+
+[tool.uv.sources]
+affine-math-grader = { path = "../affine_math_grader", editable = true }
