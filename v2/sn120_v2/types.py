@@ -113,6 +113,13 @@ class FrozenBatch(Record):
     n_prompts: int
     n_rollouts: int
     train: dict[str, Any] = field(default_factory=dict)  # the miner's values; apply with Recipe.for_miner(train)
+    # v4 only: five {"train": {...}} slots, padded with empty recipes so the
+    # ticket length does not reveal the submitted stage count. The private
+    # frozen object is re-admitted at train time; its recipe overrides are
+    # checked against the matching slots before any stage can execute.
+    LEFT_OUT_AT_DEFAULT = ("stages",)
+    OMIT_EMPTY_FACTORY_DEFAULTS = ("stages",)
+    stages: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         _need(is_sha256(self.batch_sha256), "FrozenBatch.batch_sha256 must be a 64-hex sha256")

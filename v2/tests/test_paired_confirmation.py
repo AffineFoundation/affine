@@ -63,7 +63,7 @@ def test_confirm_production_params_exact_identity_and_effective_diffs():
     assert (new.kl_max_tokens, new.kl_rollouts, new.kl_time_limit_s) == (8192, 128, 1200)
     assert new.batch_cap == 6 and new.n_gpus == 8
     assert new.recipe.code_digest == "ab2922c88558afd37e95938773a7e148e88c1a6ec543f96c1ce05483fd1b7941"
-    assert code_digest() == "ca9f730889e6ab235eb8b0085142413d05525a2da76c60e961110dd679bafb8e"
+    assert code_digest() == "1c8f7c278ab25dbd9c74126b279b26cc6278e8a5c9e22158a47001ec4d076d07"
     assert new.recipe.image_digests == live.recipe.image_digests == kl8k.recipe.image_digests == (
         "9a4b16ff282b21baf44350e54c852ed59586b9efb6fe09e5cd2f1e288f4c108a",
     )

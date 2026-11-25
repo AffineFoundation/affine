@@ -83,12 +83,12 @@ def moved(value):
 def all_moved(params: Params) -> Params:
     """Every number of the params and of the recipe at another value, the bounds of a miner too."""
     def shift(record, **special):
-        names = [f.name for f in dataclasses.fields(record) if f.name not in ("recipe", "miner_bounds", "_legacy_fields", *special)]
+        names = [f.name for f in dataclasses.fields(record) if f.name not in ("recipe", "miner_bounds", "_legacy_fields", "max_stages", *special)]
         return dataclasses.replace(record, **{name: moved(getattr(record, name)) for name in names}, **special)
 
     bounds = tuple(shift(bound) for bound in params.recipe.miner_bounds)
     recipe = shift(params.recipe, miner_bounds=bounds, global_norm_cap=1.75)
-    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False, null_samples_per_task=2, fold_every_k=1, crown_gate="king", null_prune_from_round="r000001")
+    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False, null_samples_per_task=2, fold_every_k=1, crown_gate="king", null_prune_from_round="r000001", max_stages=4, train_tokens_per_s_floor=40_000)
 
 
 def sentences(text: str) -> str:
@@ -100,6 +100,7 @@ def sentences(text: str) -> str:
 OTHER = {
     "looks": (0.2, 0.6, 1.0), "irt_middle_band": (0.3, 0.7), "irt_draw_rule": "fisher", "global_norm_cap": 1.75, "target_modules": ("q_proj",),
     "image_digests": (sim.SIM_IMAGE, "other-image"), "dtype": "float32", "kv_cache_dtype": "fp8", "env_pin": "pin-1", "method": "other-method", "code_digest": "c" * 64,
+    "max_stages": 4, "train_tokens_per_s_floor": 40_000,
     "rotation_rule": "info", "train_seed_scope": "batch", "null_samples_per_task": 2, "crown_gate": "king", "null_prune_from_round": "r000001",
 }  # fmt: skip
 
@@ -107,6 +108,12 @@ OTHER = {
 def one_changed(record, name: str):
     """The record with one field at another value that the rules of the record allow."""
     value = getattr(record, name)
+    if name == "train_tokens_per_s_floor":
+        for other in (value + 1, record.max_train_token_steps // max(1, record.train_time_budget_s - 600) + 1):
+            try:
+                return other, dataclasses.replace(record, **{name: other})
+            except ConfigError:
+                continue
     if name in OTHER:
         tries = [OTHER[name]]
     elif isinstance(value, bool):
@@ -204,6 +211,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         # A fact of the chain, of a key format or of HTTP. No constant of this code gives it.
         "The chain shows it after about 3 minutes",
         "the 32-byte Ed25519 seed of your hotkey as 64 hex characters",
+        "an SFT trace with `sft_weight=0` contributes neither",
         "HTTP 404 on your link file",
         "`service.next_open_at` is UTC ISO-8601 with seconds and Z",
         "The site can answer HTTP 403 to a read", "HTTP 403 does not say that a file is missing", "a missing file gives HTTP 404",
@@ -213,7 +221,13 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "(6) publish", "(7) start again",
         "0 = the groups of your file",
         "1 = one update from all rows of your batch",
-        "does not hold `minibatches` while the value is 1, or `adam_eps` while it is the default 1e-8.",
+        "does not hold `minibatches` while the value is 1, `adam_eps` while it is the default 1e-8,",
+        "or `sft_weight` while it is the default 1.",
+        "an ordered list of 1 to 5 stages",
+        "not a list of 1 to max_stages objects",
+        "official reward is exactly 1",
+        "official grader must verify reward exactly 1",
+        "official reward is not exactly 1",
         "Minibatches, for a value N above 1.",
         "(k from 0) goes to minibatch k modulo N",
         "train in the order 0 to N - 1.",
@@ -234,7 +248,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "when min_step_norm > 0, the miner's global_norm_cap is below it",
         "its advantage is not 0 and it has at least 1 output token",
         "counts its tokens + 1 (the end-of-turn token)",
-        "A rollout with advantage 0 counts 0.",
+        "A GRPO rollout with advantage 0 counts 0.",
         "sqrt(n / (n - 1) * sum((w_t * (d_t - delta))^2))",
         "on that UID: 1 / (the number of such kings)",
         "from -1/sqrt(inputs) to +1/sqrt(inputs)",

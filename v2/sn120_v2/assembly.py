@@ -132,7 +132,8 @@ class ChainFeed(Feed):
 
 
 def _read_groups(raw: bytes, hotkey: str, params: Params):
-    return check_batch(raw, hotkey, params).groups
+    batch = check_batch(raw, hotkey, params)
+    return batch.frozen_stages() if batch.format == "affine-batch-v4" else batch.groups
 
 
 def box_pins(image_digest: str, params: Params) -> None:

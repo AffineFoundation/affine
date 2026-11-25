@@ -52,6 +52,7 @@ from ..canonical import canonical_json
 from ..errors import BatchRejected, InfraError
 from ..params import Recipe
 from .batch import END_OF_TURN, derail_keep, fit_tokens, render_prompt_ids
+from .metrics import resource_metrics
 
 LOGIT_CHUNK = 2048  # tokens per pass through the output layer: a memory knob, with no effect on the result
 OPTIMIZER = "adam, fresh per LoRA, betas 0.9/0.999, eps from recipe (default 1e-8), weight decay 0"
@@ -328,7 +329,7 @@ def minibatches_of(rows: Sequence[dict], minibatches: int, order: random.Random)
     return [sorted(mixed[i::minibatches], key=lambda row: -len(row["tokens"])) for i in range(min(minibatches, len(mixed)))]
 
 
-def encode(tokenizer, rows: Sequence[dict], recipe: Recipe) -> tuple[list[dict], int]:
+def encode(tokenizer, rows: Sequence[dict], recipe: Recipe, release_text: bool = False) -> tuple[list[dict], int]:
     """Token ids of every row that trains, and the count of dropped rows. The prompt is exactly the scoring prompt."""
     eos = tokenizer.convert_tokens_to_ids(END_OF_TURN)
     if not isinstance(eos, int) or eos < 0 or eos == tokenizer.unk_token_id:
@@ -344,14 +345,19 @@ def encode(tokenizer, rows: Sequence[dict], recipe: Recipe) -> tuple[list[dict],
         if not tokens:  # no output token is left inside the training caps
             dropped += 1
             continue
-        out.append({"prompt_ids": prompt_ids, "tokens": tokens, "capped": capped, "truncated": cut, "advantage": row["advantage"]})
+        out.append({"prompt_ids": prompt_ids, "tokens": tokens, "capped": capped, "truncated": cut, "advantage": row["advantage"], **({"kind": row["kind"]} if "kind" in row else {})})
+    if release_text:
+        for row in rows:
+            row.pop("prompt", None)
+            row.pop("output", None)
     return out, dropped
 
 
-def run(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
+def run(job: dict, out_dir: Path, devices: Sequence[str] | None = None, release_text: bool = False) -> dict:
     recipe, started = Recipe.from_dict(job["recipe"]), time.monotonic()
     torch.manual_seed(job["seed"])
-    rows, dropped = encode(transformers.AutoTokenizer.from_pretrained(job["base_dir"], local_files_only=True), job["rows"], recipe)
+    rows, dropped = (encode(transformers.AutoTokenizer.from_pretrained(job["base_dir"], local_files_only=True), job["rows"], recipe, release_text=True)
+                     if release_text else encode(transformers.AutoTokenizer.from_pretrained(job["base_dir"], local_files_only=True), job["rows"], recipe))
     active = sorted((row for row in rows if row["advantage"] != 0), key=lambda row: -len(row["tokens"]))
     if not active:
         raise BatchRejected("no rollout is left with an advantage other than zero: the batch gives no gradient")
@@ -397,11 +403,12 @@ def run(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
     return result
 
 
-def run_minibatches(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
+def run_minibatches(job: dict, out_dir: Path, devices: Sequence[str] | None = None, release_text: bool = False) -> dict:
     """``run`` for a recipe with more than one minibatch. What differs from ``run`` has a comment."""
     recipe, started = Recipe.from_dict(job["recipe"]), time.monotonic()
     torch.manual_seed(job["seed"])
-    rows, dropped = encode(transformers.AutoTokenizer.from_pretrained(job["base_dir"], local_files_only=True), job["rows"], recipe)
+    rows, dropped = (encode(transformers.AutoTokenizer.from_pretrained(job["base_dir"], local_files_only=True), job["rows"], recipe, release_text=True)
+                     if release_text else encode(transformers.AutoTokenizer.from_pretrained(job["base_dir"], local_files_only=True), job["rows"], recipe))
     active = sorted((row for row in rows if row["advantage"] != 0), key=lambda row: -len(row["tokens"]))
     if not active:
         raise BatchRejected("no rollout is left with an advantage other than zero: the batch gives no gradient")
@@ -457,11 +464,18 @@ def run_minibatches(job: dict, out_dir: Path, devices: Sequence[str] | None = No
     return result
 
 
-def train(job: dict, out_dir: Path, devices: Sequence[str] | None = None) -> dict:
-    """One LoRA from one job. A recipe with one minibatch runs ``run``: the job as it was before there were minibatches."""
+def train(job: dict, out_dir: Path, devices: Sequence[str] | None = None, release_text: bool = False) -> dict:
+    """One LoRA. Legacy jobs run their original path; only a staged job runs v4."""
+    if "stages" in job:
+        from .staged import run_stages
+        return run_stages(job, out_dir, devices)
+    if not release_text:
+        if Recipe.from_dict(job["recipe"]).minibatches == 1:
+            return run(job, out_dir, devices)
+        return run_minibatches(job, out_dir, devices)
     if Recipe.from_dict(job["recipe"]).minibatches == 1:
-        return run(job, out_dir, devices)
-    return run_minibatches(job, out_dir, devices)
+        return run(job, out_dir, devices, release_text=True)
+    return run_minibatches(job, out_dir, devices, release_text=True)
 
 
 def save(replica: Replica, recipe: Recipe, job: dict, out_dir: Path, facts: dict) -> dict:
@@ -495,6 +509,9 @@ def save(replica: Replica, recipe: Recipe, job: dict, out_dir: Path, facts: dict
         used.pop("adam_eps")  # a default-eps report keeps the old layout; a chosen epsilon is always recorded
     # step_norm_before_cap is the norm that training gave; step_norm is the norm of the stored LoRA.
     report = {"optimizer": OPTIMIZER if recipe.adam_eps != 1e-8 else "adam, fresh per LoRA, betas 0.9/0.999, eps 1e-8, weight decay 0", "seed": job["seed"], "step_norm": norm, "step_norm_before_cap": uncapped, "recipe_values": used, **facts}
+    if "stages" in facts:
+        # Only v4 replaces the flat optimizer metadata with its actual stages.
+        report["recipe_values"] = {"top_level_shape": {key: getattr(recipe, key) for key in ("rank", "alpha", "max_grad_norm", "global_norm_cap")}, "stages": [row["recipe"] for row in facts["stages"]]}
     out_dir.mkdir(parents=True, exist_ok=True)
     save_file(tensors, str(out_dir / "adapter_model.safetensors"))
     (out_dir / "adapter_config.json").write_bytes(canonical_json(config))
@@ -505,11 +522,16 @@ def save(replica: Replica, recipe: Recipe, job: dict, out_dir: Path, facts: dict
 
 
 def main(job_dir: Path) -> None:
-    job = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
     try:
-        report = train(job, job_dir / "lora")
+        job = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
+        # Once parsed, the private source text need not remain in the job dir.
+        (job_dir / "job.json").unlink()
+        report = train(job, job_dir / "lora", release_text=True)
+        report.update(resource_metrics())
     except BatchRejected as exc:
-        report = {"status": "rejected", "reason": str(exc)}
+        report = {"status": "rejected", "reason": str(exc), **resource_metrics()}
+    finally:
+        (job_dir / "job.json").unlink(missing_ok=True)
     (job_dir / "report.json").write_text(json.dumps(report), encoding="utf-8")
 
 

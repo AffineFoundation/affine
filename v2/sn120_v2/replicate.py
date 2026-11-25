@@ -194,7 +194,8 @@ class BaseOnly(Resident):
 
 
 def _read_groups(raw: bytes, hotkey: str, params: Params):
-    return check_batch(raw, hotkey, params).groups
+    batch = check_batch(raw, hotkey, params)
+    return batch.frozen_stages() if batch.format == "affine-batch-v4" else batch.groups
 
 
 @dataclass
@@ -516,7 +517,7 @@ def run_round(
     }
     key, now = layout.frozen_batch(ROUND_ID, hotkey), int(clock())
     built.store.put(key, raw)
-    frozen = FrozenBatch(hotkey, batch.sha256, key, batch.format, batch.n_prompts, batch.n_rollouts, dict(batch.train))
+    frozen = FrozenBatch(hotkey, batch.sha256, key, batch.format, batch.n_prompts, batch.n_rollouts, dict(batch.train), batch.stage_recipes(params.recipe))
     ticket = RoundTicket(ROUND_ID, LEASE_ID, BOX_ID, head, local, draw, (Entry(0, Registration(0, hotkey, 0), frozen),), now, now + local.lease_timeout_s)
     runner = (
         SoloRunner(built.trainer, built.evaluator, lambda: int(clock()), built.image)
