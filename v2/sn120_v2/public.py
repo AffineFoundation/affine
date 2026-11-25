@@ -9,9 +9,11 @@ winner's LoRA and training batch are public.
 from __future__ import annotations
 
 import ipaddress
+import json
 import math
 import os
 import re
+import time
 from collections import Counter
 from typing import Any, Mapping, Sequence
 
@@ -26,6 +28,10 @@ SCHEMA = "sn120-v2-public-1"
 WINNER_STATS_SCHEMA = "sn120-v2-winner-stats-1"
 QUEUE_PREVIEW = 50
 HISTORY_PREVIEW = 20
+SERVICE_STATES = frozenset({"running", "applying", "idle", "stalled"})
+SERVICE_REASONS = frozenset({"waiting for seats", "publish retrying", "deploying fix", "between rounds"})
+NEXT_OPEN_COARSE_S = 300
+NEXT_OPEN_WINDOW_S = 300
 VALID, NOT_VALID, NOT_JUDGED = "valid", "not_valid", "not_judged"  # ``file_verdict`` in ``queue.files``, and the name of its count
 
 # ``public_text``: the rule for a text that an exception made, before it goes into a public file.
@@ -109,6 +115,33 @@ def phase(state: State) -> str:
     if state.round is None:
         return "IDLE"
     return "RUNNING" if state.round.decision is None else "APPLY"
+
+
+def service_view(
+    state: State, now: int, *, stop_asked: bool = False, close_publish_pending: bool = False, waiting_for_seats: bool | None = None,
+) -> dict[str, Any]:
+    """Coarse service facts only. The caller supplies flags, not errors, file checks or scheduler timings.
+
+    ``close_publish_pending`` is set by ``close_in_public`` when a recorded close still has public
+    work undone. ``waiting_for_seats`` is the actual file-valid admission result; an unknown
+    count conservatively means waiting, never a new file read or scheduler prediction.
+    """
+    phase_now = phase(state)
+    if phase_now in ("RUNNING", "APPLY"):
+        return {"state": {"RUNNING": "running", "APPLY": "applying"}[phase_now], "reason": None, "next_open_at": None}
+    if stop_asked:
+        reason = "deploying fix"
+    elif close_publish_pending:
+        reason = "publish retrying"
+    else:
+        reason = "between rounds" if waiting_for_seats is False else "waiting for seats"
+    service_state = "stalled" if close_publish_pending else "idle"
+    next_open = None
+    if reason in ("deploying fix", "publish retrying", "between rounds"):
+        # A coarse five-minute window, never a scheduler or retry deadline.
+        estimate = ((now + NEXT_OPEN_WINDOW_S + NEXT_OPEN_COARSE_S - 1) // NEXT_OPEN_COARSE_S) * NEXT_OPEN_COARSE_S
+        next_open = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(estimate))
+    return {"state": service_state, "reason": reason, "next_open_at": next_open}
 
 
 def confirmation_view(confirmation: Any) -> dict[str, Any]:
@@ -268,7 +301,8 @@ def pending_registrations(state: State, chain: ChainSnapshot | None, params: Par
 
 def snapshot(
     state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None, files_checked_at: int | None = None,
-    chain: ChainSnapshot | None = None,
+    chain: ChainSnapshot | None = None, *, stop_asked: bool = False, close_publish_pending: bool = False,
+    waiting_for_seats: bool | None = None,
 ) -> dict[str, Any]:
     """Everything a miner, the website or the benchmark service may see.
 
@@ -288,6 +322,8 @@ def snapshot(
         "netuid": params.netuid,
         "env": params.env,
         "phase": phase(state),
+        "service": service_view(state, now, stop_asked=stop_asked, close_publish_pending=close_publish_pending,
+                                waiting_for_seats=waiting_for_seats),
         "head": state.manifest.to_dict() if state.manifest else None,
         "heads": [{"version_id": h.version_id, "round_id": h.round_id, "applied_at": h.applied_at, "folded": h.folded} for h in state.heads[-HISTORY_PREVIEW:]],
         "params": params.to_dict(),
@@ -376,7 +412,8 @@ def _winner_stats(records: Sequence[RoundRecord], kings_seq: Sequence[King], hea
             "batch_format": frozen.format if frozen is not None else None,
             "train": to_jsonable(frozen.train) if frozen is not None else None,
             "batch_url": f"{base}/{layout.winner_batch(record.round_id)}" if base else layout.winner_batch(record.round_id),
-            "confirmed": confirmation.confirmed if confirmation is not None else (False if pending_king else True if king is not None else None),
+            "confirmed": (confirmation.confirmed if confirmation is not None else None if pending_king else
+                          True if record.round_id in paid_rounds or record.round_id in kings else None),
             "paid": record.round_id in paid_rounds if king is not None or confirmation is not None else None,
             "payout_status": "paid" if record.round_id in paid_rounds else "unpaid" if king is not None or confirmation is not None else "unknown",
         }
@@ -387,8 +424,10 @@ def _winner_stats(records: Sequence[RoundRecord], kings_seq: Sequence[King], hea
 def validate_winner_stats(snapshot: Mapping[str, Any], document: Mapping[str, Any], public_url: str = "") -> Mapping[str, Any]:
     """Check every stored winner fact against public history before a site mirrors or displays it.
 
-    Batch counts and knobs are available only in the controller's crowned-only transport. Every
-    other field must equal the direct public-history projection, including its exact batch URL.
+    Batch counts and knobs are available only in the controller's crowned-only transport or its standalone public file.
+    ``mining.json`` deliberately omits that transport: batch facts remain allowed, but are type/recipe checked;
+    identity and every determined public-history fact still match. A lossy head-only projection may name a parent,
+    so a supplied head must instead be a real version in the snapshot's public head history.
     """
     if not isinstance(document, Mapping) or set(document) != {"schema", "generated_at", "winners"} or document["schema"] != WINNER_STATS_SCHEMA:
         raise ValueError("winner stats has the wrong schema or fields")
@@ -413,30 +452,49 @@ def validate_winner_stats(snapshot: Mapping[str, Any], document: Mapping[str, An
         if winner is not None and all(supplied.get(name) == winner.get(name) for name in ("uid", "hotkey", "batch_sha256")):
             transport[supplied["round_id"]] = supplied
     recipe = Params.from_dict(snapshot["params"]).recipe
+    public_heads = {head.get("version_id") for head in snapshot.get("heads", [])}
+    pending_round = None
+    if Params.from_dict(snapshot["params"]).confirm_next_round:
+        # The next round may already be open, and a null later round need not carry a confirmation. Do not
+        # guess from its presence: an unresolved, unpaid projected crown is the pending one. Legacy objects
+        # wrote confirmed=False here; the corrected writer emits null.
+        pending = next((row for row in expected["winners"] if row["confirmed"] is None and not row["paid"]), None)
+        pending_round = pending["round_id"] if pending is not None else None
     for row, public_row in zip(document["winners"], expected["winners"], strict=True):
         if not isinstance(row, Mapping) or set(row) != allowed:
             raise ValueError("winner stats must have exactly the public fields of a crowned winner")
-        for name in allowed - {"batch_prompts", "batch_rollouts", "batch_format", "train", "batch_url"}:
+        for name in allowed - {"batch_prompts", "batch_rollouts", "batch_format", "train", "batch_url", "head", "confirmed"}:
             if row[name] != public_row[name]:
                 raise ValueError(f"winner stats {name} does not match public history")
+        if transport and row["head"] != public_row["head"]:
+            raise ValueError("winner stats head does not match public history")
+        if row["head"] not in public_heads and row["head"] != public_row["head"]:
+            raise ValueError("winner stats head is not a version in the public head history")
+        supplied = transport.get(row["round_id"])
+        if supplied is not None and row["confirmed"] != supplied["confirmed"]:
+            raise ValueError("winner stats confirmed does not match the crowned winner's confirmation")
+        elif row["round_id"] == pending_round:
+            if row["confirmed"] not in (None, False):  # old objects may hold False; the corrected writer uses null
+                raise ValueError("winner stats cannot call a pending crown confirmed")
+        elif public_row["confirmed"] is not None and row["confirmed"] != public_row["confirmed"]:
+            raise ValueError("winner stats confirmed does not match public history")
         key = layout.winner_batch(row["round_id"])
         if row["batch_url"] != (f"{base}/{key}" if base else key):
             raise ValueError("winner stats has a batch URL other than the crowned winner's configured public object")
-        supplied = transport.get(row["round_id"])
         for name in ("batch_prompts", "batch_rollouts", "batch_format"):
             value = row[name]
             if supplied is None:
-                if value is not None:
-                    raise ValueError("winner stats cannot invent batch facts absent from public history")
+                if value is not None and type(value) is not (int if name != "batch_format" else str):
+                    raise ValueError("winner stats batch facts have the wrong type")
             elif value != supplied.get(name) or type(value) is not (int if name != "batch_format" else str):
                 raise ValueError("winner stats batch facts do not match the crowned winner's frozen batch")
         train = row["train"]
         if supplied is None:
-            if train is not None:
-                raise ValueError("winner stats cannot invent training knobs absent from public history")
-        else:
-            if not isinstance(train, Mapping) or to_jsonable(train) != to_jsonable(supplied.get("train")):
-                raise ValueError("winner stats train does not match the crowned winner's frozen batch")
+            if train is not None and not isinstance(train, Mapping):
+                raise ValueError("winner stats train must be an object or null")
+        elif not isinstance(train, Mapping) or to_jsonable(train) != to_jsonable(supplied.get("train")):
+            raise ValueError("winner stats train does not match the crowned winner's frozen batch")
+        if train is not None:
             try:
                 recipe.for_miner(train)
             except (TypeError, ValueError, AttributeError) as error:
@@ -493,7 +551,7 @@ def winner_stats_from_snapshot(snapshot: Mapping[str, Any], public_url: str = ""
         return {"schema": WINNER_STATS_SCHEMA, "generated_at": snapshot["generated_at"], "winners": rows}
 
     rows = []
-    history = list(snapshot.get("history", []))
+    history = json.loads(json.dumps(snapshot.get("history", [])))  # never attach a later confirmation to the caller's record
     for position, record in enumerate(history):
         if record.get("confirmation") is not None:
             continue
@@ -524,7 +582,7 @@ def winner_stats_from_snapshot(snapshot: Mapping[str, Any], public_url: str = ""
             "batch_sha256": winner["batch_sha256"], "batch_prompts": None, "batch_rollouts": None,
             "batch_format": None, "train": None,
             "batch_url": f"{base}/{layout.winner_batch(round_id)}" if base else layout.winner_batch(round_id),
-            "confirmed": confirmation["confirmed"] if confirmation else True if king else None,
+            "confirmed": confirmation["confirmed"] if confirmation else True if round_id in paid else None,
             "paid": round_id in paid, "payout_status": "paid" if round_id in paid else "unpaid",
         })
     return {"schema": WINNER_STATS_SCHEMA, "generated_at": snapshot["generated_at"], "winners": rows}

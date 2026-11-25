@@ -154,6 +154,7 @@ RULE_CHANGELOG = (
     "- 2026-11-24 / `z_bar` + paired next-round confirmation / no z bar → crown and paid confirmation both require strict `z > 1`.",
     "- 2026-11-24 / squat trim / queue-rate-stretched wait → flat 6h cap (`squat_min_wait_s=10800`, `squat_age_factor=2`), retaining the zero-turn guard.",
     "- 2026-11-24 / confirming-round king + old-parent samples / inherited `1` → matched `2` per task (`null_samples_per_task=2`).",
+    "- 2026-11-25 / `service` / phase alone → phase plus coarse public service state, reason and next-open estimate.",
 )
 
 RECIPE_NOTES = {
@@ -797,6 +798,17 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         f"- phase: {show(doc.get('phase'))} (IDLE: no round is open; RUNNING: training and scoring; APPLY: decided, the",
         "  new head is being published). The last closed rounds are in mining.json under `history`.",
+        "- `service` is a sibling of `phase` in mining.json. `service.state` is `running` for RUNNING, `applying` for APPLY,",
+        "  `idle` while no round is open without a close-publish error, or `stalled` when such an error remains.",
+        "  A stop request takes priority for the reason but does not hide a stalled state. Running and applying have",
+        "  `reason` and `next_open_at` null. Idle/stalled `reason` is one of `deploying fix`, `publish retrying`,",
+        "  `waiting for seats`, `between rounds`; in that order when more than one applies. The first is the coarse",
+        "  form of an operator stop-after-round request. A close-publish retry is `publish retrying`; insufficient",
+        "  valid files/seats is `waiting for seats`; a recently closed round with enough seats is `between rounds`.",
+        "- `service.next_open_at` is UTC ISO-8601 with seconds and Z, rounded up to a five-minute boundary. It is a",
+        "  coarse estimate for between rounds, publish retrying and deploying fix, and null for running, applying,",
+        "  waiting for seats or when no coarse estimate is possible. No exact sleep, retry budget, request-file path,",
+        "  retry count or scheduler timing is public.",
         *(f"- {key}: {show(round_now[key])}" for key in in_order(round_now, ROUND_FIELDS) if not isinstance(round_now[key], (dict, list))),
         *(["", *table(ENTRY_COLUMNS, ([row.get(column) for column in ENTRY_COLUMNS] for row in entries)), ""] if entries else []),
         f"- A round takes at most {params.batch_cap} batches and needs at least {params.n_min_start}. It does not wait",

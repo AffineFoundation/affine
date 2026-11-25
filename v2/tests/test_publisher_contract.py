@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import datetime
 import json
 from pathlib import Path
 
@@ -51,8 +52,9 @@ def test_the_controller_publishes_through_the_real_store(tmp_path):
     assert made.controller.last_error == ""  # each head manifest was public before the contract named the head
     doc, text = json.loads(made.store.get(layout.MINING_JSON)), made.store.get(layout.LLMS_TXT).decode()
     controller = made.controller
-    snap = public.snapshot(controller.state, made.params, doc["generated_at"], controller._verdicts, controller._verdicts_at)
-    assert {key: doc[key] for key in snap} == to_jsonable(snap)  # the website reads the snapshot's own keys
+    snap = public.snapshot(controller.state, made.params, doc["generated_at"], controller._verdicts, controller._verdicts_at,
+                           stop_asked=controller._stop_asked, close_publish_pending=controller._close_publish_pending,
+                           waiting_for_seats=controller._waiting_for_seats)  # the website reads the snapshot's own keys
     assert doc["snapshot_digest"] in text and doc["head"]["head"]["version_id"] in text and doc["irt_snapshot_id"] in text
     assert [king["uid"] for king in doc["kings"]] == [11] and "| 11 | hk11 |" in text
     assert doc["queue"]["length"] == 1 and "| 0 | 12 | hk12 | 1012 | no |" in text
@@ -83,6 +85,12 @@ def test_winner_stats_contain_only_applied_crowns_with_public_batch_facts(tmp_pa
     assert stats["winners"][1]["train"] == {"lora_lr": 0.0001, "steps": 2}
     assert second.round_id not in json.dumps(stats) and "hk12" not in json.dumps(stats)
     assert all(word not in json.dumps(stats) for word in ("private/", "pending/", "put_url", '"groups"', '"rollouts": ['))
+    external = json.loads(store[layout.MINING_JSON])
+    assert "winner_stats" not in external
+    public.validate_winner_stats(external, stats, "https://files.example")
+    before = json.dumps(external, sort_keys=True)
+    public.winner_stats_from_snapshot(external, "https://files.example")
+    assert json.dumps(external, sort_keys=True) == before
 
 
 def test_winner_transport_is_matched_and_reduced_to_safe_fields(tmp_path):
@@ -137,9 +145,32 @@ def test_winner_file_validation_rejects_forged_or_extra_public_content(tmp_path)
     external = {key: value for key, value in snap.items() if key != "winner_stats"}
     fallback = public.winner_stats_from_snapshot(external, "https://files.example")
     public.validate_winner_stats(external, fallback, "https://files.example")
-    for name, value in (("batch_prompts", 1), ("batch_rollouts", 1), ("batch_format", "sim-batch"), ("train", {"steps": 2})):
+    rich = stats | {"winners": [good]}
+    public.validate_winner_stats(external, rich, "https://files.example")
+    for name, value in (("batch_prompts", "one"), ("batch_rollouts", True), ("batch_format", 1), ("train", [])):
         with pytest.raises(ValueError):
-            public.validate_winner_stats(external, fallback | {"winners": [fallback["winners"][0] | {name: value}]}, "https://files.example")
+            public.validate_winner_stats(external, stats | {"winners": [good | {name: value}]}, "https://files.example")
+
+
+def test_standalone_stats_accept_real_public_heads_and_type_checked_crowned_batch_facts(tmp_path):
+    made = world(tmp_path)
+    made.register(11, 0.4, train={"steps": 2})
+    made.round()
+    made.register(12, 0.4)
+    made.round()
+    doc, _, store = published(made.publisher.snapshots[-1])
+    stats = json.loads(store[layout.WINNER_STATS])
+    row = next(row for row in stats["winners"] if row["uid"] == 11)
+    actual = row["head"]
+    other = next(head["version_id"] for head in doc["heads"] if head["round_id"] != row["round_id"])
+    row["head"] = other
+    public.validate_winner_stats(doc, stats, "https://files.example")
+    for name, value in (("batch_prompts", "one"), ("batch_rollouts", True), ("batch_format", 1), ("train", [])):
+        bad = stats | {"winners": [dict(item, **{name: value}) if item["round_id"] == row["round_id"] else item for item in stats["winners"]]}
+        with pytest.raises(ValueError):
+            public.validate_winner_stats(doc, bad, "https://files.example")
+    with pytest.raises(ValueError):
+        public.validate_winner_stats(doc, stats | {"winners": [dict(item, head="not-a-public-head") for item in stats["winners"]]}, "https://files.example")
 
 
 def test_pending_crown_is_not_reported_as_confirmed_or_paid(tmp_path):
@@ -150,8 +181,16 @@ def test_pending_crown_is_not_reported_as_confirmed_or_paid(tmp_path):
     stats = json.loads(published(made.publisher.snapshots[-1])[2][layout.WINNER_STATS])
     row = stats["winners"][0]
     assert row["head"] == made.controller.state.pending_king.new_version_id
+    external = {key: value for key, value in made.publisher.snapshots[-1].items() if key != "winner_stats"}
+    public.validate_winner_stats(external, stats, "https://files.example")
     assert row["applied_at"] == made.controller.state.pending_king.applied_at
-    assert (row["confirmed"], row["paid"], row["payout_status"]) == (False, False, "unpaid")
+    assert (row["confirmed"], row["paid"], row["payout_status"]) == (None, False, "unpaid")
+    legacy = json.loads(json.dumps(stats))
+    legacy["winners"][0]["confirmed"] = False  # the already-written live object, before the next-publish writer fix
+    public.validate_winner_stats(external, legacy, "https://files.example")
+    legacy["winners"][0]["confirmed"] = True
+    with pytest.raises(ValueError):
+        public.validate_winner_stats(external, legacy, "https://files.example")
 
 
 def test_a_failed_resolved_confirmation_is_unpaid_in_winner_stats_and_fallback(tmp_path):
@@ -183,6 +222,76 @@ def test_both_files_come_from_one_snapshot_and_change_together(tmp_path):
     doc2, text2, _ = published(idle, store)
     assert doc2["snapshot_digest"] != doc["snapshot_digest"] and doc2["snapshot_digest"] in text2
     assert "- phase: IDLE" in text2 and doc["snapshot_digest"] not in text2
+
+
+def test_service_state_reasons_coarse_utc_and_public_vocabulary(tmp_path):
+    made = world(tmp_path, play=True)
+    running, idle = made.publisher.snapshots[-2:]
+    doc, text, _ = published(running)
+    assert doc["phase"] == "RUNNING"
+    assert doc["service"] == {"state": "running", "reason": None, "next_open_at": None}
+    assert idle["phase"] == "IDLE"
+    assert idle["service"] == {"state": "idle", "reason": "between rounds", "next_open_at": idle["service"]["next_open_at"]}
+    closed = made.controller.state.rounds[-1]
+    made.controller.state.round = dataclasses.replace(closed, closed_at=0)
+    assert public.service_view(made.controller.state, made.now) == {"state": "applying", "reason": None, "next_open_at": None}
+    made.controller.state.round = None
+
+    cases = [
+        ({}, ("idle", "waiting for seats", None)),
+        ({"waiting_for_seats": False}, ("idle", "between rounds", "2023-11-14T22:20:00Z")),
+        ({"close_publish_pending": True}, ("stalled", "publish retrying", "2023-11-14T22:20:00Z")),
+        ({"stop_asked": True}, ("idle", "deploying fix", "2023-11-14T22:20:00Z")),
+        ({"stop_asked": True, "close_publish_pending": True, "waiting_for_seats": False}, ("stalled", "deploying fix", "2023-11-14T22:20:00Z")),
+        ({"close_publish_pending": True, "waiting_for_seats": False}, ("stalled", "publish retrying", "2023-11-14T22:20:00Z")),
+    ]
+    for flags, expected in cases:
+        shown = public.snapshot(made.controller.state, made.params, 1_700_000_001, **flags)["service"]
+        assert set(shown) == {"state", "reason", "next_open_at"}
+        assert (shown["state"], shown["reason"], shown["next_open_at"]) == expected
+        if shown["next_open_at"] is not None:
+            parsed = datetime.datetime.strptime(shown["next_open_at"], "%Y-%m-%dT%H:%M:%SZ")
+            assert int(parsed.replace(tzinfo=datetime.UTC).timestamp()) % 300 == 0
+        assert shown["state"] in public.SERVICE_STATES
+        assert shown["reason"] in public.SERVICE_REASONS | {None}
+        assert not set(shown) & {"idle_sleep", "max_idle", "retry", "tries", "stop_file", "last_error", "n_valid"}
+    assert public.service_view(made.controller.state, 1_700_000_000, waiting_for_seats=False)["next_open_at"] == "2023-11-14T22:20:00Z"
+    assert "service.state" in text and "deploying fix" in text and "publish retrying" in text
+    assert "2026-11-25 / `service`" in text
+
+
+def test_service_seats_and_close_retry_use_actual_controller_facts(tmp_path):
+    made = world(tmp_path, n_min_start=2, batch_cap=4)
+    made.register(1, 0.0)  # one valid file is insufficient at n_min_start=2, even though batch_cap is four
+    assert not made.controller.open_round(made.clock(), "entropy")
+    assert made.controller.publish(made.clock())
+    assert made.publisher.snapshots[-1]["service"]["reason"] == "waiting for seats"
+    assert made.publisher.snapshots[-1]["service"]["next_open_at"] is None
+    made.register(2, 0.0)
+    assert made.controller.run_round(made.runner, made.clock, "entropy")
+    assert made.publisher.snapshots[-1]["service"]["reason"] == "between rounds"
+
+    controller = made.reopen()  # an already-published close needs no write; this fresh controller has not published it
+    real, attempted = controller.publisher.publish, []
+
+    def down(snapshot):
+        attempted.append(snapshot)
+        raise InfraError("store down")
+
+    controller.publisher.publish = down
+    problem = controller.close_in_public(made.clock())
+    assert problem and controller._close_publish_pending
+    assert attempted[-1]["service"]["state"] == "stalled"
+    assert attempted[-1]["service"]["reason"] == "publish retrying"
+    assert "store down" not in json.dumps(attempted[-1]["service"])
+    controller.publisher.publish = real
+    assert controller.close_in_public(made.clock()) == ""
+    assert made.publisher.snapshots[-1]["service"]["state"] == "stalled"  # the successful retry exposes its last status
+    assert not controller._close_publish_pending
+    assert controller.publish(made.clock())
+    assert made.publisher.snapshots[-1]["service"]["state"] == "idle"
+    assert controller.close_in_public(made.clock()) == ""
+    assert not controller._close_publish_pending
 
 
 def test_every_miner_bound_is_published_from_the_records(tmp_path):

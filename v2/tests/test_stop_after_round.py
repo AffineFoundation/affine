@@ -277,7 +277,8 @@ def test_a_request_at_any_point_of_a_round_stops_run_after_the_close_of_that_rou
     assert kinds(world)[-1] == ROUND_CLOSED, "the round of the request was not cut: its last record is its close, and no record follows"
     closed_in_public(world, 1)
     assert request_file(world).exists(), "the loop removes it, not run"
-    assert [shown["round"] is None for shown in world.publisher.snapshots[-2:]] == [False, True], "the public files of the close were written one time, not two"
+    assert world.publisher.snapshots[-1]["round"] is None and world.publisher.snapshots[-1]["service"] == {
+        "state": "idle", "reason": "deploying fix", "next_open_at": world.publisher.snapshots[-1]["service"]["next_open_at"]}
     if order == OVERLAP:
         world.folder.proven(False)  # no second sha256 is in work, and none failed
 
@@ -430,6 +431,67 @@ def test_a_store_that_stays_down_ends_run_with_no_new_round_and_without_the_word
     text = capsys.readouterr().err
     assert OBEYED not in text and text.count("Not all that a close writes is in the store yet: publish failed: the store is down.") == 2
     assert kinds(world).count(ROUND_OPENED) == 2 and world.state.round is None and request_file(world).exists()
+
+
+@pytest.mark.parametrize("order", ORDERS)
+def test_stop_close_publish_retries_are_bounded_even_without_max_idle(tmp_path, monkeypatch, capsys, order):
+    world = a_world(tmp_path / "world", order)
+    in_the_round(world, lambda: ask(world))
+    real = world.publisher.publish
+
+    def down(snapshot):
+        if request_file(world).exists() and snapshot["round"] is None:
+            raise InfraError("the store is down; token=never-show-this-stop-secret")
+        real(snapshot)
+
+    world.publisher.publish = down
+    capsys.readouterr()
+    assert run(world, monkeypatch, max_idle=None) == 0
+    line = last_line(capsys)
+    assert line.startswith(OBEYED)
+    assert "The close is recorded." in line
+    assert f"A close-publish error remained after {cli.STOP_CLOSE_PUBLISH_TRIES} tries" in line
+    assert "The next start of run should publish the recorded close" in line
+    assert "Last wait: publish failed: the store is down; token=[removed-secret]" in line
+    assert "never-show-this-stop-secret" not in line
+    assert world.state.round is None and kinds(world).count(ROUND_OPENED) == 2
+    assert request_file(world).exists(), "the existing run loop removes it after exit 0 and the obeyed prefix"
+    world.publisher.publish = real
+    take_back(world)
+
+
+def test_stop_close_publish_success_on_the_last_allowed_try_is_an_ordinary_obeyed_stop(tmp_path, monkeypatch, capsys):
+    world = a_world(tmp_path / "world", OVERLAP)
+    in_the_round(world, lambda: ask(world))
+    real, tries = world.publisher.publish, []
+
+    def last_try(snapshot):
+        if request_file(world).exists() and snapshot["round"] is None:
+            tries.append(True)
+            if len(tries) < cli.STOP_CLOSE_PUBLISH_TRIES:
+                raise InfraError("the store is down")
+        real(snapshot)
+
+    world.publisher.publish = last_try
+    capsys.readouterr()
+    assert run(world, monkeypatch, max_idle=None) == 0
+    said_obeyed(world, last_line(capsys), world.state.rounds[-1].round_id)
+    assert len(tries) == cli.STOP_CLOSE_PUBLISH_TRIES
+    closed_in_public(world, 1)
+
+
+def test_ordinary_idle_polling_has_no_stop_publish_cap(tmp_path, monkeypatch, capsys):
+    world = a_world(tmp_path / "world")
+    for seat in list(world.state.queue.values()):
+        world.store.delete(layout.miner_object(seat.reg.hotkey))
+    capsys.readouterr()
+    assert run(world, monkeypatch, max_idle=cli.STOP_CLOSE_PUBLISH_TRIES + 2) == 0
+    text = capsys.readouterr().err
+    assert OBEYED not in text and world.state.round is None
+    assert text.count("seats wait, phase IDLE") == cli.STOP_CLOSE_PUBLISH_TRIES + 2
+
+
+# ---- the head is not proven
 
 
 def test_a_head_that_does_not_read_back_is_not_a_stop_as_asked_and_the_next_run_rebuilds_it_and_stops(tmp_path, monkeypatch, capsys):

@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import time
+import importlib.util
 import urllib.request
 import threading
 import uuid
@@ -22,7 +23,7 @@ from moto.server import ThreadedMotoServer
 
 from sn120_v2 import layout, links, sim
 from sn120_v2.errors import ConfigError, InfraError
-from sn120_v2.publisher import render
+from sn120_v2.publisher import StorePublisher, render
 from sn120_v2.public import winner_stats_from_snapshot
 from sn120_v2.r2 import R2Store
 from sn120_v2.r2_names import PLAIN_NAMES, store_env
@@ -77,10 +78,7 @@ def store(env, tmp_path):
     for key in world.store.list(""):
         store.put(key, world.store.get(key))
     snapshot = json.loads(json.dumps(world.publisher.snapshots[-1]))
-    mining, llms = render(snapshot, URL)
-    store.put(layout.MINING_JSON, mining)
-    store.put(layout.LLMS_TXT, llms)
-    store.put(layout.WINNER_STATS, json.dumps(winner_stats_from_snapshot(snapshot, URL)).encode())
+    StorePublisher(store, URL + "/").publish(snapshot)  # rich standalone object, transport-free mining.json
     for key, data in FOREIGN.items():
         store.put(key, data)
     return store
@@ -155,6 +153,21 @@ def test_one_run_copies_the_keys_of_the_layout_writes_the_links_and_builds_the_s
     assert {name for name in after if after[name] != before[name]} == {LINKS}
     new = json.loads((site / LINKS).read_text())
     assert new["generated_at"] > links["generated_at"] and new["expires_at"] == new["generated_at"] + 600
+
+
+def test_the_run_invokes_winner_stats_immediately_after_the_contract(env, tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(PULL.parent))
+    spec = importlib.util.spec_from_file_location("sn120_site_pull_test", PULL)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    called = []
+    monkeypatch.setattr(module.Pull, "step", lambda self, name, work: called.append((name, work)))
+    monkeypatch.setattr(module.build, "write", lambda *args: None)
+    assert module.run(store=None, site=tmp_path, public_url=URL, ttl_s=1, keep_rounds=2, max_bytes=1,
+                      v1_history=None, now=1) == 0
+    assert called[1][0] == "llms.txt and mining.json" and called[2][0] == "winner stats"
+    assert called[2][1].__func__ is module.Pull.winner_stats
+    assert layout.WINNER_STATS in module.FIXED
 
 
 def test_only_keys_that_the_layout_names_are_read(env, store, tmp_path):
