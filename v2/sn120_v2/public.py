@@ -293,7 +293,7 @@ def round_report(record: RoundRecord, leases: Sequence[tuple[RoundTicket, BoxRes
         report["confirmation"] = confirmation_view(record.confirmation)
     parent_results = [result for ticket, result in leases if ticket.parent is not None]
     if parent_results or record.parent is not None:
-        # Parent archives are optional; the fresh sealed sample-0 outcomes and decision are mandatory public evidence,
+        # Parent archives are optional; the fresh sealed outcomes and decision are mandatory public evidence,
         # including a no-result or duplicate-only close.
         report["parent_outcomes"] = next((list(result.parent_outcomes) for result in parent_results if result.parent_outcomes), None)
         error = next((result.parent_error for result in parent_results if result.parent_error), "")

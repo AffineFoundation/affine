@@ -376,7 +376,7 @@ class ParentEval(Record):
 
 @dataclass(frozen=True)
 class Confirmation(Record):
-    """Public, fresh sample-0 comparison of the installed new head and its old parent."""
+    """Public, fresh matched-sample comparison of the installed new head and its old parent."""
 
     parent_version_id: str
     pending_round_id: str
@@ -510,7 +510,7 @@ class BoxResult(Record):
     null_kl_tok: float | None = None
     null_kl_k: int | None = None
     null_kl_tokens: int | None = None
-    parent_outcomes: tuple[str, ...] = ()  # exactly one fresh sample-0 string when the pinned parent ran
+    parent_outcomes: tuple[str, ...] = ()  # null_samples fresh strings; historical one-sample results remain readable
     parent_error: str = ""  # parent-only infrastructure failure; ordinary entry judging remains valid
 
     def __post_init__(self) -> None:
