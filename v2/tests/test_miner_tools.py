@@ -19,10 +19,10 @@ from sn120_v2 import layout, public, publisher, sampling, sim
 from sn120_v2.admission import Invalid, StoreAdmission
 from sn120_v2.canonical import sha256_hex
 from sn120_v2.envs.math_pool import MathPool, Task, load_pool
-from sn120_v2.errors import BatchRejected, ContractError, InfraError
+from sn120_v2.errors import BatchRejected, ConfigError, ContractError, InfraError
 from sn120_v2.irt import IRTSampler, draw_from_snapshot
 from sn120_v2.params import MinerBound, Params, Recipe
-from sn120_v2.types import NULL_MODEL, Draw, EvalChunk
+from sn120_v2.types import NOT_RUN, NULL_MODEL, Draw, EvalChunk
 from sn120_v2.worker import LocalRunner
 
 _SPEC = importlib.util.spec_from_file_location("affine_miner_tool", Path(__file__).resolve().parents[1] / "miner" / "affine_miner.py")
@@ -68,6 +68,72 @@ class Box(dict):
 
     def close(self) -> None:
         self.events.append("close")
+
+
+class CandidateBox(Box):
+    """The standard evaluator's seams, without the heavyweight GPU packages."""
+
+    def __init__(self, build, null="PFFFFFFF", lora="PPPPPPFF", image="", fail=False) -> None:
+        super().__init__(build, null=null, lora=lora, image=image, fail=fail)
+        self.config = types.SimpleNamespace(image_digest=self.image, work_dir=None)
+        self._servers = [types.SimpleNamespace(alive=lambda: True)]
+        self._urls = ["local"]
+        self.rollouts = []
+        self._grade_requests = []
+
+    def _prepare(self, request):
+        return [NULL_MODEL, *(lora.lora_hash for lora in request.loras)], 1, 1
+
+    def clients_for(self, params):
+        return 1
+
+    def evaluate(self, request):
+        chunk = self._evaluate(request)
+        self.requests.append(request)
+        return chunk
+
+    def _evaluate(self, request):
+        from sn120_v2.gpu.evaluator import samples_for_model
+
+        models, _, _ = self._prepare(request)
+        jobs = [(model, sample, index) for model in models for sample in range(samples_for_model(request.params, model)) for index in range(len(request.task_ids))]
+        replies = [self._rollout(request, self._urls[0], job, []) for job in jobs]
+        codes = self._grade(request.task_ids, jobs, replies, request)
+        outcomes = {model: tuple("".join(codes[model, sample, index] for index in range(len(request.task_ids))) for sample in range(samples_for_model(request.params, model))) for model in models}
+        return EvalChunk(request.look, request.task_ids, outcomes, self.image)
+
+    def _rollout(self, request, url, job, written):
+        model, sample, index = job
+        text = self.lora if model != NULL_MODEL else self.null
+        position = int(request.task_ids[index][1:]) % len(text)
+        self.rollouts.append(job)
+        return text[position], False
+
+    def stream(self, request, results, eliminated, done):
+        """One ordered callback per task, like the standard streaming evaluator."""
+        from sn120_v2.gpu.evaluator import samples_for_model
+
+        self._prepare(request)
+        models = [NULL_MODEL, *(lora.lora_hash for lora in request.loras)]
+        for index in range(len(request.task_ids)):
+            if done():
+                return index
+            for model in models:
+                if eliminated(model):
+                    continue
+                for sample in range(samples_for_model(request.params, model)):
+                    job = (model, sample, index)
+                    reply = self._rollout(request, self._urls[0], job, [])
+                    code = self._grade(request.task_ids, [job], [reply], request)[job]
+                    results(model, sample, index, code)
+        return len(request.task_ids)
+
+    def _grade(self, tasks, jobs, replies, request=None):
+        self._grade_requests.append((tuple(jobs), request.task_ids))
+        return {job: text[0] for job, (text, capped) in zip(jobs, replies)}
+
+    def _cut(self, *args):
+        raise InfraError("unexpected deadline in cache test")
 
 
 class WordTokens:
@@ -218,6 +284,220 @@ def test_cli_reproduce_rebuilds_the_draw_from_the_public_irt_snapshot(build, tmp
     assert code == 0 and json.loads(out)["status"] == "winner" and json.loads(out)["train_applied"]["rank"] == 8 and json.loads(out)["train_report"]["seed"] == box.requests[0].seed
     expected = draw_from_snapshot(snapshot, "seed-9", build.params().n_tasks)  # n_tasks comes from the contract
     assert (box.requests[1].task_ids, box.requests[1].round_seed) == (expected.task_ids, "seed-9")
+
+
+def test_null_cache_fills_then_reuses_the_same_null_for_separate_candidates(build, tmp_path):
+    params = build.params(n_tasks=8, eval_chunk_tasks=4, looks=(0.5, 1.0), null_samples_per_task=1)
+    cache = tmp_path / "null-cache"
+
+    def cached_run(box):
+        runner = LocalRunner(box, box, lambda: 7, box.image)
+        runner = tool.cached_null_runner(runner, str(cache), build.head(), params, draw())
+        return tool.reproduce(batch_bytes(), HOTKEY, params, build.head(), draw(), box, runner)
+
+    first_box = CandidateBox(build, null="PFFFFFFF", lora="PPPPPPFF")
+    first = cached_run(first_box)
+    saved = json.loads((cache / tool.NULL_CACHE_MANIFEST).read_text())
+    assert saved["null_outcomes"] == ["PFFFFFFF"]
+    assert saved["draw"]["task_ids"] == list(draw().task_ids)
+    assert saved["draw"]["weights"] == list(draw().weights)
+    assert saved["head"] == build.head().to_dict()
+    assert saved["params"]["null_samples_per_task"] == 1
+    assert [job[0] for job in first_box.rollouts].count(NULL_MODEL) == 8
+
+    second_box = CandidateBox(build, null="FFFFFFFF", lora="PPPPPPPP")
+    second = cached_run(second_box)
+    third_box = CandidateBox(build, null="FFFFFFFF", lora="PPPPPPFF")
+    third = cached_run(third_box)
+    assert second["status"] == "winner" and third["score"] == first["score"]
+    for box in (second_box, third_box):
+        assert len(box.rollouts) == 8 and len({model for model, _, _ in box.rollouts}) == 1
+        assert all(model != NULL_MODEL for model, _, _ in box.rollouts)
+        assert all(len(jobs) == 4 for jobs, _ in box._grade_requests)
+    assert [task for _, tasks in second_box._grade_requests for task in tasks] == list(draw().task_ids)
+
+
+def test_null_cache_keeps_full_null_when_the_fill_candidate_drops_early(build, tmp_path):
+    params = build.params(n_tasks=16, eval_chunk_tasks=8, looks=(0.5, 1.0), null_samples_per_task=1)
+    cache = tmp_path / "early-drop"
+    first_box = Box(build, "PPPPPPPP" * 2, "FFFFFFFP" * 2)
+    runner = tool.cached_null_runner(LocalRunner(first_box, first_box, lambda: 7, first_box.image), str(cache), build.head(), params, draw(16))
+    first = tool.reproduce(batch_bytes(), HOTKEY, params, build.head(), draw(16), first_box, runner)
+    assert first["eliminated_at_look"] == 0
+    assert json.loads((cache / tool.NULL_CACHE_MANIFEST).read_text())["null_outcomes"] == ["PPPPPPPP" * 2]
+
+    second_box = CandidateBox(build, "FFFFFFFF" * 2, "PPPPPPPP" * 2)
+    runner = tool.cached_null_runner(LocalRunner(second_box, second_box, lambda: 7, second_box.image), str(cache), build.head(), params, draw(16))
+    second = tool.reproduce(batch_bytes(), HOTKEY, params, build.head(), draw(16), second_box, runner)
+    assert second["score"]["n_tasks"] == 16 and second["eliminated_at_look"] is None
+    assert all(model != NULL_MODEL for model, _, _ in second_box.rollouts)
+    assert [task for _, tasks in second_box._grade_requests for task in tasks] == list(draw(16).task_ids)
+
+
+def test_solo_null_cache_fills_then_reuses_without_null_claims(build, tmp_path):
+    """The real solo runner and scheduler, with a CPU worker in place of vLLM."""
+    from sn120_v2.gpu.solo import SoloRunner, SoloSettings
+    from sn120_v2.headchain import FIXED_ORDER
+    from sn120_v2.judging import check_result
+
+    params = build.params(n_tasks=16, n_gpus=2, looks=(0.5, 1.0), eval_chunk_tasks=4,
+                          null_samples_per_task=2, eval_merged=True)
+    cache = tmp_path / "solo-cache"
+
+    def cached_run(null, lora):
+        box = CandidateBox(build, null=null, lora=lora)
+
+        class Evaluator:
+            http = None
+
+            def solo_worker(self, ticket, trained, deadline, gpu):
+                class Worker:
+                    def run(self, *, steal, result, judge, alive, deadline):
+                        while claim := steal(gpu, NULL_MODEL):
+                            model, start, stop = claim
+                            for index in range(start, stop):
+                                text = box.null if model == NULL_MODEL else box.lora
+                                for sample in range(ticket.params.null_samples if model == NULL_MODEL else 1):
+                                    box.rollouts.append((model, sample, index))
+                                    result(model, sample, index, text[index])
+
+                return Worker()
+
+            def build_merged(self, round_id, head, artifact, params, gpu):
+                return types.SimpleNamespace(path=tmp_path, base_hash=head.base_hash, kernel=FIXED_ORDER)
+
+            def close(self):
+                pass
+
+        runner = SoloRunner(box, Evaluator(), lambda: 1000, box.image,
+                            settings=SoloSettings(prewarm=False, steal_block_tasks=4), poll_s=0.01)
+        runner = tool.cached_null_runner(runner, str(cache), build.head(), params, draw(16))
+        result = runner.run(build.ticket(n_entries=1, n_tasks=16, params=params))
+        check_result(build.ticket(n_entries=1, n_tasks=16, params=params), result)
+        return result, box
+
+    first, first_box = cached_run("P" * 16, "F" * 7 + "P" * 9)
+    assert first.entries[0].eliminated_at_look == 0
+    assert sum(model == NULL_MODEL for model, _, _ in first_box.rollouts) == 32
+    assert json.loads((cache / tool.NULL_CACHE_MANIFEST).read_text())["null_outcomes"] == ["P" * 16] * 2
+
+    second, second_box = cached_run("F" * 16, "P" * 16)
+    assert second.entries[0].outcomes == ("P" * 16,)
+    assert second.entries[0].eliminated_at_look is None
+    assert not any(model == NULL_MODEL for model, _, _ in second_box.rollouts)
+    assert all(text == "P" * 16 for text in second.null_outcomes)
+
+    third, third_box = cached_run("P" * 16, "F" * 7 + "P" * 9)
+    assert third.entries[0].eliminated_at_look == 0
+    assert third.entries[0].outcomes == ("F" * 7 + "P" + NOT_RUN * 8,)
+    assert all(text == "P" * 8 + NOT_RUN * 8 for text in third.null_outcomes)
+    assert not any(model == NULL_MODEL for model, _, _ in third_box.rollouts)
+
+
+def test_an_incomplete_or_unscored_fill_never_publishes_a_cache(build, tmp_path):
+    cache = tool.NullCache(str(tmp_path / "incomplete"), build.head(), build.params(null_samples_per_task=1), draw())
+    with pytest.raises(InfraError, match="outcome string"):
+        cache.save(("PFFF",))
+    with pytest.raises(InfraError, match="whole draw"):
+        cache.save(("PFFFFFF-",))
+    with pytest.raises(InfraError, match="wrong number"):
+        cache.save(("PFFFFFFF", "PFFFFFFF"))
+    assert not cache.directory.exists()
+
+
+def test_null_cache_publish_is_atomic_and_never_replaces_a_fill(build, tmp_path):
+    params, directory = build.params(null_samples_per_task=1), tmp_path / "atomic"
+    first = tool.NullCache(str(directory), build.head(), params, draw())
+    second = tool.NullCache(str(directory), build.head(), params, draw())
+    first.save(("PFFFFFFF",))
+    saved = (directory / tool.NULL_CACHE_MANIFEST).read_bytes()
+    with pytest.raises(ConfigError, match="filled by another run"):
+        second.save(("FFFFFFFF",))
+    assert (directory / tool.NULL_CACHE_MANIFEST).read_bytes() == saved
+    assert list(directory.iterdir()) == [directory / tool.NULL_CACHE_MANIFEST]
+    assert tool.NullCache(str(directory), build.head(), params, draw()).outcomes == ("PFFFFFFF",)
+
+
+def test_null_cache_refuses_mismatched_draw_head_or_knobs_and_bad_files(build, tmp_path):
+    params, cache = build.params(null_samples_per_task=1), tmp_path / "cache"
+    original = tool.NullCache(str(cache), build.head(), params, draw())
+    original.save(("PFFFFFFF",))
+    before = (cache / tool.NULL_CACHE_MANIFEST).read_bytes()
+    assert tool.NullCache(str(cache), build.head(), params, draw()).outcomes == ("PFFFFFFF",)
+    changed_draw = dataclasses.replace(draw(), task_ids=("t001", "t000", *draw().task_ids[2:]))
+    other_head = type(build.head()).make(
+        parent_version_id=None, base_hash=build.head().base_hash,
+        base_fp32_master_digest=build.head().base_fp32_master_digest,
+        loras=(), round_id="genesis", applied_at=1001,
+    )
+    for different in (
+        lambda: tool.NullCache(str(cache), build.head(), params, changed_draw),
+        lambda: tool.NullCache(str(cache), build.head(), params, dataclasses.replace(draw(), weights=(2.0,) + draw().weights[1:])),
+        lambda: tool.NullCache(str(cache), other_head, params, draw()),
+        lambda: tool.NullCache(str(cache), build.head(), dataclasses.replace(params, temperature=0.5), draw()),
+        lambda: tool.NullCache(str(cache), build.head(), dataclasses.replace(params, null_samples_per_task=2), draw()),
+    ):
+        with pytest.raises(ConfigError, match="another draw, head, or scoring configuration"):
+            different()
+        assert (cache / tool.NULL_CACHE_MANIFEST).read_bytes() == before
+    nonempty = tmp_path / "nonempty"
+    nonempty.mkdir()
+    (nonempty / "unrelated").write_text("do not overwrite")
+    with pytest.raises(ConfigError, match="nonempty.*manifest"):
+        tool.NullCache(str(nonempty), build.head(), params, draw())
+    (cache / tool.NULL_CACHE_MANIFEST).write_text("not json")
+    with pytest.raises(ConfigError, match="cannot read"):
+        tool.NullCache(str(cache), build.head(), params, draw())
+    saved = json.loads(before)
+    for outcomes in (["PFFF"], ["PFFFFFF-"], ["PFFFFFFX"]):
+        (cache / tool.NULL_CACHE_MANIFEST).write_text(json.dumps(saved | {"null_outcomes": outcomes}))
+        with pytest.raises(ConfigError, match="invalid null outcomes"):
+            tool.NullCache(str(cache), build.head(), params, draw())
+    (cache / tool.NULL_CACHE_MANIFEST).write_text(json.dumps(saved | {"cache_id": "wrong"}))
+    with pytest.raises(ConfigError, match="cache_id"):
+        tool.NullCache(str(cache), build.head(), params, draw())
+    missing = dict(saved)
+    del missing["null_outcomes"]
+    (cache / tool.NULL_CACHE_MANIFEST).write_text(json.dumps(missing))
+    with pytest.raises(ConfigError, match="missing its null outcomes"):
+        tool.NullCache(str(cache), build.head(), params, draw())
+
+    plain = tmp_path / "plain"
+    plain.write_text("occupied")
+    with pytest.raises(ConfigError, match="not a directory"):
+        tool.NullCache(str(plain), build.head(), params, draw())
+
+
+def test_cli_reproduce_accepts_a_cache_and_the_other_commands_refuse_it(build, tmp_path, capsys, monkeypatch):
+    box = CandidateBox(build)
+    monkeypatch.setitem(sys.modules, "fake_backend", types.SimpleNamespace(make=lambda workdir: (box, box, box, box.image)))
+    batch, irt_file, cache = tmp_path / "batch.json", tmp_path / "irt.json", tmp_path / "cache"
+    batch.write_bytes(batch_bytes())
+    snapshot = IRTSampler([f"t{i:03d}" for i in range(40)], build.params()).public_snapshot()
+    irt_file.write_text(json.dumps(snapshot))
+    monkeypatch.setattr(tool.time, "time", lambda: 1000)
+    argv = ["reproduce", "--mining-json", mining_json(build, tmp_path), "--hotkey", HOTKEY, "--irt-snapshot", str(irt_file)]
+    code, out = cli(capsys, *argv, "--round-seed", "seed-9", "--backend", "fake_backend:make", "--null-cache", str(cache), str(batch))
+    first_null_jobs = sum(model == NULL_MODEL for model, _, _ in box.rollouts)
+    assert code == 0 and (cache / tool.NULL_CACHE_MANIFEST).is_file()
+    assert first_null_jobs > 0
+    code, out = cli(capsys, *argv, "--round-seed", "seed-9", "--backend", "fake_backend:make", "--null-cache", str(cache), str(batch))
+    assert code == 0
+    assert sum(model == NULL_MODEL for model, _, _ in box.rollouts) == first_null_jobs
+    first_outcomes = json.loads((cache / tool.NULL_CACHE_MANIFEST).read_text())["null_outcomes"]
+    assert json.loads((cache / tool.NULL_CACHE_MANIFEST).read_text())["draw"] == draw_from_snapshot(snapshot, "seed-9", build.params().n_tasks).to_dict()
+    for name in ("check", "upload"):
+        with pytest.raises(SystemExit):
+            tool.main([name, "--mining-json", "unused", "--hotkey", HOTKEY, "--null-cache", str(cache), str(batch)])
+        capsys.readouterr()
+    assert cli(capsys, *argv, "--round-seed", "seed-9", "--backend", "fake_backend:make", str(batch))[0] == 0
+    assert not (tmp_path / "manifest.json").exists()
+
+
+def test_null_cache_flag_is_the_unchanged_runner_and_no_cache_io(build, tmp_path):
+    runner = LocalRunner(Box(build), Box(build), lambda: 7, build.image)
+    assert tool.cached_null_runner(runner, None, build.head(), build.params(), draw()) is runner
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_the_reward_rule_runs_with_the_official_grader(build):

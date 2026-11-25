@@ -205,6 +205,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "The chain shows it after about 3 minutes",
         "the 32-byte Ed25519 seed of your hotkey as 64 hex characters",
         "HTTP 404 on your link file",
+        "`service.next_open_at` is UTC ISO-8601 with seconds and Z",
         "The site can answer HTTP 403 to a read", "HTTP 403 does not say that a file is missing", "a missing file gives HTTP 404",
         "UTF-8 JSON",
         # A formula, a count that is part of a rule, or a step of a list: the digit is a word of the rule.
@@ -259,6 +260,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "or 0 when `field_se` is 0.",
         f"The old z {publisher.RETIRED_KING_Z_BAR}",
         publisher.SAMPLING_GUIDANCE,
+        publisher.LOCAL_DELTA_SE,
     ]  # fmt: skip
 
 

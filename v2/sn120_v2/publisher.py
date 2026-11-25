@@ -111,6 +111,9 @@ RETIRED_KING_Z_BAR = 1.5
 # A measured planning example, not a guarantee of a miner's sample.
 SAMPLING_GUIDANCE = ("With 2 rollouts per prompt, one official-head sample of 960 prompts produced 97 mixed-reward groups, a yield of about 10%; "
                      "plan on about 5–8 times as many prompts as the mixed-reward groups you need, and the file needs 80 mixed groups.")
+# Measured on 2026-11-25 from the 103 scored entries in the 20 closed rounds
+# of public mining.json history (every row had n_tasks=2000).
+LOCAL_DELTA_SE = "A 100-task local delta has a standard error of about 5.3 percentage points, estimated from the public 2000-task SE scaled by √(n/100)."
 MERGED_EXPLANATION = (
     "Each candidate is tested as the merged model round_bf16(fp32 king master + your LoRA update), "
     "built with the same arithmetic as the install fold; the model that is tested is bit-for-bit the model that is installed. "
@@ -155,6 +158,7 @@ RULE_CHANGELOG = (
     "- 2026-11-24 / squat trim / queue-rate-stretched wait → flat 6h cap (`squat_min_wait_s=10800`, `squat_age_factor=2`), retaining the zero-turn guard.",
     "- 2026-11-24 / confirming-round king + old-parent samples / inherited `1` → matched `2` per task (`null_samples_per_task=2`).",
     "- 2026-11-25 / `service` / phase alone → phase plus coarse public service state, reason and next-open estimate.",
+    "- 2026-11-25 / local-delta measurement guidance / undocumented → a 100-task local delta has an SE of about 5.3 percentage points.",
 )
 
 RECIPE_NOTES = {
@@ -1742,6 +1746,7 @@ def _replicate_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  the vLLM servers and for the grader. So it is not known which GPU is large enough, how long a run takes, or",
         "  how close null M on your machine is to null M on the box. With `--round-file` and the round file of a closed",
         "  round (section 9), the report compares the two, task by task.",
+        f"- {LOCAL_DELTA_SE}",
         "- The miner tool can call the same code: `python v2/miner/affine_miner.py reproduce --mining-json",
         "  mining.json --hotkey <ss58> --irt-snapshot irt.json --round-seed <seed> --work <directory> --backend",
         f"  {REPLICATE_MODULE}:{REPLICATE_BACKEND} batch.json`. This is the code of the box with the params as they are: the same",
