@@ -20,8 +20,8 @@ from ..canonical import manifest_digest, sha256_hex
 from ..errors import BatchRejected, InfraError, VerifyError
 from ..params import Params, Recipe
 from ..seams import ObjectStore
-from ..types import LoRAArtifact, TrainReport, TrainRequest
-from .batch import Groups, training_rows
+from ..types import FrozenBatch, LoRAArtifact, TrainReport, TrainRequest
+from .batch import Groups, staged_rows, training_rows
 from .fold_input import FoldInput, unchanged
 from .plan import BoxConfig, check_pins, log_phase
 from .procs import Child, Process, Spawn, gpu_env, stop_all
@@ -67,23 +67,34 @@ class LoraTrainer:
             raise InfraError("this trainer runs grpo-lora with dropout 0 and KL off only")
         self.resident.prune({head.base_hash, head.base_fp32_master_digest})
         base_dir = self.fold_input(resident_head(self.resident, head), head)
-        rows = self._rows(request, recipe.group_size)
+        batch = entry.batch
+        staged = batch.format == "affine-batch-v4"
+        stage_specs: Sequence[dict] = ()
         job_dir = self.jobs / f"{request.round_id}-{entry.queue_pos:03d}"
         shutil.rmtree(job_dir, ignore_errors=True)
         (job_dir / "lora").mkdir(parents=True)
         try:
             job = {"base_dir": str(base_dir), "base_hash": head.base_hash, "dtype": params.dtype}
-            job.update(recipe=recipe.to_dict(), seed=request.seed, rows=rows)
+            job.update(recipe=recipe.to_dict(), seed=request.seed)
+            if staged:
+                stage_specs = self._read_batch(request)
+                self._v4_stages(batch, stage_specs, params)
+                job["stages"] = [
+                    {"recipe": (stage_recipe := recipe.for_miner(stage.get("train", {}))).to_dict(), "rows": staged_rows(stage, stage_recipe)}
+                    for stage in stage_specs
+                ]
+            else:
+                job["rows"] = self._rows(request, recipe.group_size)
             (job_dir / "job.json").write_text(json.dumps(job), encoding="utf-8")
             started = time.monotonic()
             report = self._check(self._run(job_dir, request), recipe)
             files, sizes = upload_tree(self.store, job_dir / "lora", request.out_prefix)
             if sorted(files) != sorted(LORA_FILES):
                 raise InfraError(f"the training job wrote {sorted(files)}, not the LoRA files")
-            # tokens: output tokens that trained, counted one time. forward_tokens: prompt and output tokens of every pass, so it grows with steps.
+            # tokens: output tokens that trained in the last full pass. forward_tokens counts every pass, including v4 old-policy rescoring.
             # Speed per GPU = forward_tokens / step_s / n_gpus.
-            # updates: the Adam updates of a job with more than one minibatch (steps x minibatches). The job of one minibatch does not report it.
-            facts = {key: report.get(key) for key in ("load_s", "step_s", "n_gpus", "rows", "forward_tokens", "tokens", "step_norm", "step_norm_before_cap", "truncated_rows", "dropped_rows", "updates")}
+            # updates: the Adam updates of every job that reports more than one optimizer update.
+            facts = {key: report.get(key) for key in ("load_s", "step_s", "n_gpus", "rows", "forward_tokens", "tokens", "step_norm", "step_norm_before_cap", "truncated_rows", "dropped_rows", "updates", "train_steps", "cuda_max_memory_allocated", "cuda_max_memory_reserved", "process_max_rss_bytes")}
             log_phase(self.config.work_dir, "train", round_id=request.round_id, queue_pos=entry.queue_pos, steps=recipe.steps, wall_s=time.monotonic() - started, **facts)
             return LoRAArtifact(
                 lora_hash=manifest_digest(files),
@@ -98,7 +109,7 @@ class LoraTrainer:
                 target_modules=recipe.target_modules,
                 report=TrainReport(
                     seed=request.seed,
-                    steps=recipe.steps,
+                    steps=report.get("train_steps", recipe.steps),
                     loss=report["loss"],
                     step_norm=report["step_norm"],
                     norm_before_cap=report.get("step_norm_before_cap", report["step_norm"]),
@@ -118,7 +129,7 @@ class LoraTrainer:
             procs, self._procs = self._procs, []
         stop_all(procs)
 
-    def _rows(self, request: TrainRequest, group_size: int) -> list[dict]:
+    def _read_batch(self, request: TrainRequest):
         batch = request.entry.batch
         try:
             raw = self.store.get(batch.uri)
@@ -127,10 +138,25 @@ class LoraTrainer:
         if sha256_hex(raw) != batch.batch_sha256:
             raise VerifyError("the frozen batch does not hash to batch_sha256")
         try:
-            groups = self.read_groups(raw, batch.hotkey, request.params)
+            return self.read_groups(raw, batch.hotkey, request.params)
         except ValueError as exc:
             raise BatchRejected(f"the frozen batch is not valid: {exc}") from exc
-        return training_rows(groups, group_size)
+
+    def _rows(self, request: TrainRequest, group_size: int) -> list[dict]:
+        return training_rows(self._read_batch(request), group_size)
+
+    @staticmethod
+    def _v4_stages(batch: FrozenBatch, stages: Sequence[dict], params: Params) -> None:
+        """Match the re-admitted object to the fixed-size recipe-only ticket.
+
+        Padding never enters the execution plan. Resolved recipes preserve
+        top-level values such as an SFT weight inherited by every stage.
+        """
+        top = params.recipe.for_miner(batch.train)
+        resolved = tuple({"train": top.for_miner(stage.get("train", {})).to_dict()} for stage in stages)
+        padded = resolved + tuple({} for _ in range(5 - len(resolved)))
+        if len(stages) > 5 or batch.stages != padded:
+            raise BatchRejected("the v4 ticket and verified frozen batch have different stage recipes")
 
     def _run(self, job_dir: Path, request: TrainRequest) -> dict:
         argv = [sys.executable, "-m", "sn120_v2.gpu.train_job", str(job_dir)]

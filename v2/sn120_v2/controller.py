@@ -568,10 +568,21 @@ class Controller:
             if sha256_hex(raw) != pending.batch_sha256:
                 raise VerifyError("the pending crown's winner batch does not match its batch sha256")
             body = json.loads(raw)
-            if body.get("version") not in FORMATS or not isinstance(body.get("groups"), list):
-                raise ValueError("not an affine-batch-v1/v2/v3 groups file")
-            prompts = [group["prompt"] for group in body["groups"]
-                       if isinstance(group, dict) and isinstance(group.get("prompt"), str)]
+            if body.get("version") not in FORMATS:
+                raise ValueError("not an affine batch file")
+            if body.get("version") == "affine-batch-v4":
+                stages = body.get("stages")
+                if not isinstance(stages, list):
+                    raise ValueError("a v4 file has no stages")
+                prompts = [row[name] for stage in stages if isinstance(stage, dict)
+                           for key, name in (("groups", "prompt"), ("sft", "prompt"))
+                           for row in stage.get(key, [])
+                           if isinstance(row, dict) and isinstance(row.get(name), str)]
+            else:
+                if not isinstance(body.get("groups"), list):
+                    raise ValueError("not an affine-batch-v1/v2/v3 groups file")
+                prompts = [group["prompt"] for group in body["groups"]
+                           if isinstance(group, dict) and isinstance(group.get("prompt"), str)]
         except Exception as exc:  # exclusion is best-effort; parent scoring still fails closed independently
             print(f"round open: pending training-prompt exclusion unavailable ({type(exc).__name__})", file=sys.stderr, flush=True)
             return frozenset()

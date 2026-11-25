@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import dataclasses
 import json
 import os
 import resource
@@ -27,7 +28,7 @@ from sn120_v2.gpu.evaluator import HttpError, ServeSettings, VllmEvaluator, chat
 from sn120_v2.gpu import resident as resident_module
 from sn120_v2.gpu.resident import Resident, hash_tree, resident_head, upload_tree
 from sn120_v2.gpu.trainer import LORA_FILES, LoraTrainer
-from sn120_v2.params import Recipe
+from sn120_v2.params import DEFAULT_MINER_BOUNDS, Recipe, SFT_MINER_BOUND
 from sn120_v2.sampling import rollout_seed
 from sn120_v2.store import LocalStore
 from sn120_v2.types import NULL_MODEL, Entry, EvalRequest, FrozenBatch, HeadVersion, LoRARef, TrainRequest
@@ -91,7 +92,50 @@ class FakeJob:
 
 
 def trainer(box, job: FakeJob) -> LoraTrainer:
-    return LoraTrainer(box.store, box.config, lambda raw, hotkey, params: json.loads(raw)["groups"], spawn=job)
+    return LoraTrainer(box.store, box.config, read_batch, spawn=job)
+
+
+def read_batch(raw, hotkey, params):
+    body = json.loads(raw)
+    if body.get("version") == "affine-batch-v4":
+        return [{"train": stage.get("train", {}),
+                 "groups": [(group["prompt"], tuple((row["output"], row["reward"]) for row in group["rollouts"])) for group in stage.get("groups", [])],
+                 "sft": [(row["prompt"], row["output"]) for row in stage.get("sft", [])]}
+                for stage in body["stages"]]
+    return body["groups"]
+
+
+def test_v4_job_uses_admitted_stages_and_stage_local_recipes(box):
+    request = train_request(box)
+    reg = request.entry.reg
+    stages = (
+        {"train": {"steps": 2}, "groups": [("p1", (("good", 1.0), ("bad", 0.0)))], "sft": []},
+        {"train": {"lora_lr": 0.00002, "sft_weight": 0.25}, "groups": [], "sft": [("p2", "answer")]},
+    )
+    enabled = dataclasses.replace(request.params, recipe=dataclasses.replace(request.params.recipe, miner_bounds=DEFAULT_MINER_BOUNDS + (SFT_MINER_BOUND,)))
+    frozen = dataclasses.replace(request.entry.batch, format="affine-batch-v4", n_prompts=2, n_rollouts=3,
+                                 stages=tuple({"train": enabled.recipe.for_miner(request.entry.batch.train).for_miner(stage["train"]).to_dict()} for stage in stages) + ({}, {}, {}))
+    body = {"version": "affine-batch-v4", "hotkey": reg.hotkey, "stages": [
+        {"train": stage["train"], "groups": [{"prompt": prompt, "rollouts": [{"output": output, "reward": reward} for output, reward in rollouts]} for prompt, rollouts in stage["groups"]],
+         "sft": [{"prompt": prompt, "output": output} for prompt, output in stage["sft"]]}
+        for stage in stages
+    ]}
+    raw = json.dumps(body).encode()
+    frozen = dataclasses.replace(frozen, batch_sha256=sha256_hex(raw))
+    box.store.put(frozen.uri, raw)
+    request = dataclasses.replace(request, entry=dataclasses.replace(request.entry, batch=frozen), params=enabled)
+    job = FakeJob({"status": "ok", "loss": -0.2, "step_norm": 0.5, "tokens": 9, "gpu_class": "fake", "train_steps": 3})
+    made = trainer(box, job)
+    made.resident.prune = lambda keep: None
+    made._rows = lambda *args: (_ for _ in ()).throw(AssertionError("v4 must use the admitted stage plan, not legacy rows"))
+    made.train(request)
+    built = job.calls[0][2]
+    assert "rows" not in built and len(built["stages"]) == 2
+    first, second = built["stages"]
+    assert first["recipe"]["steps"] == 2
+    assert [(row["kind"], row["advantage"]) for row in first["rows"]] == [("grpo", 0.5), ("grpo", -0.5)]
+    assert second["recipe"]["lora_lr"] == 0.00002 and second["recipe"]["sft_weight"] == 0.25
+    assert second["rows"] == [{"prompt": "p2", "output": "answer", "reward": 1.0, "advantage": 0.0, "kind": "sft"}]
 
 
 # ---- pins and config ----

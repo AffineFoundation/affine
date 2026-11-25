@@ -1,0 +1,42 @@
+{
+  "version": "affine-batch-v4",
+  "hotkey": "5ReplaceWithYourHotkey",
+  "train": {
+    "steps": 2
+  },
+  "stages": [
+    {
+      "train": {
+        "lora_lr": 0.00002,
+        "minibatches": 2
+      },
+      "groups": [
+        {
+          "prompt": "Official pool prompt text",
+          "rollouts": [
+            {
+              "output": "Reasoning text ... \\boxed{1}",
+              "reward": 1.0
+            },
+            {
+              "output": "Different reasoning text ... \\boxed{0}",
+              "reward": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "train": {
+        "steps": 1,
+        "sft_weight": 0.5
+      },
+      "sft": [
+        {
+          "prompt": "Another official pool prompt",
+          "output": "Reasoning text ... \\boxed{1}"
+        }
+      ]
+    }
+  ]
+}

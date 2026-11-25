@@ -79,6 +79,18 @@ def training_rows(groups: Groups, group_size: int = 0) -> list[dict]:
     return rows
 
 
+def staged_rows(stage: dict, recipe) -> list[dict]:
+    """GRPO and SFT rows in file order, tagged for the v4 staged trainer."""
+    rows = training_rows(stage.get("groups", ()), recipe.group_size) if stage.get("groups") else []
+    for row in rows:
+        row["kind"] = "grpo"
+    rows.extend({"prompt": prompt, "output": output, "reward": 1.0, "advantage": 0.0, "kind": "sft"}
+                for prompt, output in stage.get("sft", ()))
+    if not rows:
+        raise BatchRejected("a v4 stage holds no training row")
+    return rows
+
+
 def fit_tokens(n_prompt: int, output: Sequence[int], eos_id: int, max_output: int, max_context: int) -> tuple[list[int], bool, bool]:
     """The output tokens to train on, whether they end without an end token, and whether tokens were removed.
 
