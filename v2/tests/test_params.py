@@ -104,6 +104,24 @@ def test_changed_params_shows_left_out_at_default_fields_in_both_directions():
         assert changed_params(default, changed)[name] == {"before": old, "after": value}
 
 
+def test_public_params_load_the_current_gate_and_paired_parent_fields():
+    public = Params().to_dict() | {
+        "confirm_next_round": True,
+        "min_kl_seq": 10.0,
+        "kl_rollouts": 128,
+        "kl_max_tokens": 8192,
+        "samples_per_task": 2,
+        "null_samples_per_task": 4,
+        "future_validator_field": {"ignored": True},
+    }
+    params = Params.from_public_dict(public)
+    assert params.confirm_next_round is True
+    assert (params.min_kl_seq, params.kl_rollouts, params.kl_max_tokens) == (10.0, 128, 8192)
+    assert (params.samples_per_task, params.null_samples_per_task, params.null_samples) == (2, 4, 4)
+    with pytest.raises(ContractError, match="unknown field"):
+        Params.from_dict(public)
+
+
 def test_params_hash_and_recipe_id_pin_every_field_and_survive_a_json_round_trip():
     base = Params()
     assert base.params_hash == Params().params_hash and base.recipe_id == Recipe().recipe_id
