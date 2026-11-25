@@ -161,8 +161,8 @@ RULE_CHANGELOG = (
     "- 2026-11-24 / confirming-round king + old-parent samples / inherited `1` → matched `2` per task (`null_samples_per_task=2`).",
     "- 2026-11-25 / `service` / phase alone → phase plus coarse public service state, reason and next-open estimate.",
     "- 2026-11-25 / local-delta measurement guidance / undocumented → a 100-task local delta has an SE of about 5.3 percentage points.",
-    "- 2026-11-25 / `z_bar` / `z_bar=1` → `z_bar=0.5`: crown needs strict `z > 0.5`, pending the paired next-round confirmation (fresh paired `z > 0.5`) before any payout.",
     "- 2026-11-25 / `affine-batch-v4` / flat GRPO batches only → 1–`max_stages` ordered GRPO/SFT stages, official SFT verification and summed per-stage training cost.",
+    "- 2026-11-25 / `z_bar` / `z_bar=1` → `z_bar=0.5`: crown needs strict `z > 0.5`, pending the paired next-round confirmation (fresh paired `z > 0.5`) before any payout.",
 )
 
 RECIPE_NOTES = {
