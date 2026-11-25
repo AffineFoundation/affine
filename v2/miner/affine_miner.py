@@ -33,7 +33,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from sn120_v2 import judging, layout
 from sn120_v2.admission import Batch, Grader, HFTokens, Invalid, Tokens, check_batch, env_grader
-from sn120_v2.canonical import digest, to_jsonable
+from sn120_v2.canonical import digest, sha256_hex, to_jsonable
 from sn120_v2.envs.math_pool import ENV_ID, load_pool
 from sn120_v2.errors import ConfigError, ContractError, InfraError, V2Error
 from sn120_v2.irt import draw_from_snapshot
@@ -132,6 +132,66 @@ def prompt_guidance(batch: Batch, params: Params) -> list[str]:
         "Validator training uses exactly the stored `prompt` field; a separate sampler system message is not kept. "
         "This is guidance only: the file stays valid."
     ]
+
+
+def live_pool_guidance(batch: Batch, params: Params, *, public_url: str, active: str | None = None) -> list[str]:
+    """CLI-only comparison with the current public active set; never an admission decision."""
+    if params.env != ENV_ID:
+        return []
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))  # sn120-standalone-source-path
+        import live_pool  # sn120-standalone-source-path
+        from sn120_v2.envs.math_pool import MathPool, Task
+        from sn120_v2.envs.reserve import Catalog
+        if active:
+            raw = Path(active).read_bytes()
+            rows = [json.loads(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
+            if len(rows) == 1 and isinstance(rows[0], list):
+                active_ids = set(live_pool.active_ids(raw))
+                sha = sha256_hex(raw)
+                extra = MathPool((), sha)
+            elif rows and all(isinstance(row, dict) and {"task_id", "problem", "answer"} <= set(row) for row in rows):
+                tasks = tuple(Task(row["task_id"], ENV_ID, row["problem"], row["answer"]) for row in rows)
+                active_ids = {task.task_id for task in tasks}
+                sha = f"not supplied (local JSONL file sha256 {sha256_hex(raw)})"
+                extra = MathPool(tasks, sha256_hex(raw))
+            else:
+                raise ValueError("--active must be live_pool JSONL or a raw SHA-addressed active-ID list")
+            pool = Catalog(load_pool(), extra)
+            snapshot = active
+        else:
+            source = public_url
+            if source.startswith(("http://", "https://")):
+                public_url = source.rsplit("/", 1)[0] if source.endswith("/mining.json") else source
+            elif source.startswith("file://"):
+                public_url = source
+            else:
+                try:
+                    contract = json.loads(Path(source).read_bytes()).get("contract") or {}
+                    public_url = contract.get("public_url") or live_pool.PUBLIC_URL
+                except (OSError, ValueError, TypeError):
+                    public_url = live_pool.PUBLIC_URL
+            pointer, raw, mining = live_pool._pointer(public_url)
+            active_ids = set(live_pool.active_ids(raw))
+            sha = pointer["active_sha"]
+            cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "affine" / "live-pool"
+            # Map against the whole verified public catalog. The denominator excludes unmapped custom prompts.
+            pool = live_pool._catalog(public_url, pointer, mining, cache)
+            snapshot = public_url
+        mapped = [(task, task.task_id in active_ids) for prompt, _ in batch.groups
+                  if (task := pool.task_for_prompt(prompt)) is not None]
+        inside = sum(is_active for _, is_active in mapped)
+        outside = len(mapped) - inside
+        if outside * 2 > len(mapped):
+            noun = "prompt is" if outside == 1 else "prompts are"
+            return [f"WARNING: {outside} mapped {noun} outside the current official-active pool "
+                    f"({inside} in, {outside} out of {len(mapped)} mapped; active SHA {sha}; snapshot {snapshot}). "
+                    "Sample a fresh live pool each round with `python v2/miner/live_pool.py --out tasks.jsonl`. "
+                    "This is guidance only: the file stays valid."]
+    except (OSError, ValueError, TypeError, KeyError, V2Error) as exc:
+        return [f"WARNING: could not check live pool ({type(exc).__name__}: {exc}). "
+                "This is guidance only: the file stays valid."]
+    return []
 
 
 def check(raw: bytes, hotkey: str, params: Params, tokens: Tokens | None = None, grader: Grader | None = None) -> dict[str, Any]:
@@ -625,6 +685,8 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("bounds", "check", "upload", "reproduce"):
         command = commands.add_parser(name)
         if name == "check":
+            command.add_argument("--no-live-pool", action="store_true", help="skip the warning-only live official-active pool check")
+            command.add_argument("--active", help="local live_pool JSONL or a raw SHA-addressed active-ID list; otherwise fetch the live pool")
             command.epilog = "WARNING: this does NOT train or measure kl_seq or kl_tok; a passing file check is NOT a passing KL gate. Enabled floors come from params.min_kl_seq and params.min_kl_tok. Measure them with `python -m sn120_v2.replicate run`. max_train_token_steps = steps × sum(prompt + output + eos over kept training rows); minibatches do NOT multiply it. Live worked example: cap 22,130,000 / steps=16 = 1,383,125 tokens; official check --tokenizer rejects a mixed batch above that budget."
         command.add_argument("--mining-json", required=True, help="mining.json: a file or an http(s) URL")
         if name == "bounds":
@@ -649,12 +711,18 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.grade and not args.tokenizer:  # with no token count no row counts as capped: not the validator's verdict
             raise ConfigError("--grade needs --tokenizer")
+        if args.command == "check" and args.no_live_pool and args.active:
+            raise ConfigError("--active cannot be used with --no-live-pool")
         if args.command == "upload" and not os.environ.get(PUT_URL_ENV):
             raise ConfigError(f"set {PUT_URL_ENV} to the upload URL of your sealed link")
         raw, tokens = Path(args.batch).read_bytes(), load_tokens(args.tokenizer, head.base_hash)
         grader = official_grader(params) if args.grade else None
         if args.command in ("check", "upload"):
             report = check(raw, args.hotkey, params, tokens, grader)
+            if args.command == "check" and not args.no_live_pool:
+                # After the ordinary validator-compatible check. This is never part of upload or admission.
+                batch = check_batch(raw, args.hotkey, params, tokens=tokens, grader=grader)
+                report["warnings"].extend(live_pool_guidance(batch, params, public_url=args.mining_json, active=args.active))
             if args.command == "upload":  # an invalid file is never sent
                 upload(raw, os.environ[PUT_URL_ENV])
                 report["uploaded"] = True

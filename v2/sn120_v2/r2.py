@@ -405,9 +405,9 @@ def written_roots() -> tuple[list[str], str]:
     A public string of ``layout`` is a key or a prefix as it stands. A public function gives its fixed prefix.
     So a key that is added to ``layout.py`` is checked with no change here.
     """
-    found = set()
+    found = set(getattr(layout, "PUBLIC_ALIASES", {}))
     for name, value in vars(layout).items():
-        if name.startswith("_"):
+        if name.startswith("_") or name in ("PUBLIC_ALIASES", "WINNER_STATS_ALIAS"):
             continue
         if isinstance(value, str):
             found.add(value.strip("/"))

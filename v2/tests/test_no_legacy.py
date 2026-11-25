@@ -53,18 +53,25 @@ def violations(source: str, path: Path, approved: frozenset[str]) -> list[str]:
         # Reviewed standalone deploy helpers and their tests deliberately load
         # isolated, exact old/new sources. The overlay never ships in v2's runtime.
         return []
-    if path in (V2_ROOT / "tests/generate_generator_fixtures.py", V2_ROOT / "tools/train64k/bench.py"):
+    if path in (
+        V2_ROOT / "tests/generate_generator_fixtures.py", V2_ROOT / "tools/train64k/bench.py",
+        V2_ROOT / "miner/live_pool.py", V2_ROOT / "miner/affine_miner.py", V2_ROOT / "tests/test_miner_tools.py",
+    ):
         # These standalone development tools select an explicit v2 source tree.
         # Keep checking every import; only their marked source-path line is exempt.
-        source = "\n".join(line for line in source.splitlines() if "sn120-standalone-source-path" not in line)
+        standalone_lines = {n for n, line in enumerate(source.splitlines(), 1) if "sn120-standalone-source-path" in line}
+    else:
+        standalone_lines = set()
     tree = ast.parse(source, filename=str(path))
     problems = []
     for line, root in imported_roots(tree):
+        if line in standalone_lines:
+            continue
         if root != "sn120_v2" and root not in sys.stdlib_module_names and root not in approved:
             kind = "legacy module" if root in LEGACY_ROOTS else "module that is not approved"
             problems.append(f"{path}:{line}: imports {kind} '{root}'")
     for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and node.attr == "path" and isinstance(node.value, ast.Name) and node.value.id == "sys":
+        if isinstance(node, ast.Attribute) and node.attr == "path" and isinstance(node.value, ast.Name) and node.value.id == "sys" and node.lineno not in standalone_lines:
             problems.append(f"{path}:{node.lineno}: uses sys.path")
     return problems
 

@@ -18,7 +18,7 @@ import pytest
 from sn120_v2 import layout, public, publisher, sampling, sim
 from sn120_v2.admission import Invalid, StoreAdmission
 from sn120_v2.canonical import sha256_hex
-from sn120_v2.envs.math_pool import MathPool, Task, load_pool
+from sn120_v2.envs.math_pool import MathPool, Task, ENV_ID, load_pool
 from sn120_v2.errors import BatchRejected, ConfigError, ContractError, InfraError
 from sn120_v2.irt import IRTSampler, draw_from_snapshot
 from sn120_v2.params import MinerBound, Params, Recipe
@@ -229,14 +229,14 @@ def test_cli_bounds_and_check_read_everything_from_mining_json(build, tmp_path, 
     assert all(f"  {bound.key}: default " in out for bound in bounds)
     batch = tmp_path / "batch.json"
     batch.write_bytes(batch_bytes({"steps": 7}))
-    code, out = cli(capsys, "check", "--mining-json", contract, "--hotkey", HOTKEY, str(batch))
+    code, out = cli(capsys, "check", "--no-live-pool", "--mining-json", contract, "--hotkey", HOTKEY, str(batch))
     report = json.loads(out)
     assert code == 0 and report["valid"] and report["train_applied"]["steps"] == 7
     assert report["rules_not_run"] == ["tokens", "grader"]  # the tool says what it could not check
-    code, out = cli(capsys, "check", "--mining-json", contract, "--hotkey", "someone-else", str(batch))
+    code, out = cli(capsys, "check", "--no-live-pool", "--mining-json", contract, "--hotkey", "someone-else", str(batch))
     assert code == 1 and json.loads(out)["rule"] == "hotkey"
     batch.write_bytes(batch_bytes({"steps": 8}))
-    code, out = cli(capsys, "check", "--mining-json", contract, "--hotkey", HOTKEY, str(batch))
+    code, out = cli(capsys, "check", "--no-live-pool", "--mining-json", contract, "--hotkey", HOTKEY, str(batch))
     assert code == 1 and json.loads(out)["rule"] == "train"
     with pytest.raises(SystemExit):  # no contract, no answer: the tool has no built-in limits
         tool.main(["check", "--hotkey", HOTKEY, str(batch)])
@@ -270,6 +270,89 @@ def test_check_skips_prompt_warning_when_the_bundled_pool_is_unavailable(build, 
     report = tool.check(raw, HOTKEY, build.params())
     assert report["valid"] is True
     assert len(report["warnings"]) == 1 and "does NOT train" in report["warnings"][0]
+
+
+def test_cli_live_pool_warning_is_strictly_over_half_and_never_changes_validity(build, tmp_path, capsys, monkeypatch):
+    task = Task("gen:1", "affine_math", "public one", "1")
+    active = tmp_path / "tasks.jsonl"
+    active.write_text(json.dumps({"task_id": task.task_id, "problem": task.problem, "answer": task.answer}) + "\n")
+    body = {"version": "affine-batch-v2", "hotkey": HOTKEY, "groups": [
+        {"prompt": task.batch_prompt(), "rollouts": [{"output": OUTPUT, "reward": 1.0}, {"output": OUTPUT, "reward": 0.0}]},
+        *({"prompt": tool.load_pool().task(tool.load_pool().task_ids[i]).batch_prompt(),
+           "rollouts": [{"output": OUTPUT, "reward": 1.0}, {"output": OUTPUT, "reward": 0.0}]} for i in range(2)),
+    ]}
+    path = tmp_path / "batch.json"
+    path.write_text(json.dumps(body))
+    contract = mining_json(build, tmp_path)
+    code, out = cli(capsys, "check", "--mining-json", contract, "--hotkey", HOTKEY, "--active", str(active), str(path))
+    report = json.loads(out)
+    assert code == 0 and report["valid"] is True
+    assert any("2 mapped prompts are outside" in warning and "(1 in, 2 out of 3 mapped" in warning for warning in report["warnings"])
+    code, out = cli(capsys, "check", "--no-live-pool", "--mining-json", contract, "--hotkey", HOTKEY, str(path))
+    assert code == 0 and not any("outside the current official-active pool" in warning for warning in json.loads(out)["warnings"])
+
+
+def test_live_pool_warning_threshold_and_local_active_file(build, tmp_path):
+    from sn120_v2.admission import check_batch
+    tasks = [Task("gen:0", "affine_math", "public 0", "0"),
+             *(tool.load_pool().task(tool.load_pool().task_ids[i]) for i in range(2))]
+
+    def raw(*prompts):
+        return json.dumps({"version": "affine-batch-v2", "hotkey": HOTKEY, "groups": [
+            {"prompt": prompt, "rollouts": [{"output": OUTPUT, "reward": 1.0}, {"output": OUTPUT, "reward": 0.0}]} for prompt in prompts
+        ]}).encode()
+
+    active = tmp_path / "tasks.jsonl"
+    active.write_text("".join(json.dumps({"task_id": task.task_id, "problem": task.problem, "answer": task.answer}) + "\n" for task in tasks[:1]))
+    for prompts, warning in (
+        ((tasks[0].batch_prompt(), tasks[1].batch_prompt(), tasks[2].batch_prompt()), True),
+        ((tasks[0].batch_prompt(), tasks[0].problem, tasks[1].batch_prompt(), tasks[2].batch_prompt()), False),
+        ((tasks[0].batch_prompt(), "unmapped custom prompt", "another custom prompt"), False),
+    ):
+        report = tool.check(raw(*prompts), HOTKEY, build.params())
+        batch = check_batch(raw(*prompts), HOTKEY, build.params())
+        extra = tool.live_pool_guidance(batch, build.params(), public_url="https://unused", active=str(active))
+        assert bool(extra) == warning and report["valid"] is True
+        if warning:
+            assert "(1 in, 2 out" in extra[0] and "active SHA" in extra[0] and "guidance only" in extra[0]
+
+
+def test_live_pool_remote_check_maps_base_and_public_reserve_prompts(build, tmp_path, monkeypatch):
+    from test_live_pool import public_files, mocked_public, tool as live_pool  # sn120-standalone-source-path
+    from sn120_v2.admission import check_batch
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "miner"))
+    monkeypatch.setitem(sys.modules, "live_pool", live_pool)
+    files = public_files(tmp_path)
+    requests = mocked_public(monkeypatch, files)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    base_task = tool.load_pool().task(tool.load_pool().task_ids[1])
+    pointer, active_raw, mining = live_pool._pointer("https://files.example")
+    catalog = live_pool._catalog("https://files.example", pointer, mining, tmp_path / "verify-cache")
+    outside = catalog.task("gen:9")  # high-retired, hence mapped by the full catalog but absent from the active list
+    assert outside.batch_prompt() not in tool.load_pool()._by_problem
+    body = {"version": "affine-batch-v2", "hotkey": HOTKEY, "groups": [
+        {"prompt": task.batch_prompt(), "rollouts": [{"output": OUTPUT, "reward": 1.0}, {"output": OUTPUT, "reward": 0.0}]}
+        for task in (outside, base_task)
+    ]}
+    batch = check_batch(json.dumps(body).encode(), HOTKEY, build.params())
+    warnings = tool.live_pool_guidance(batch, build.params(), public_url="https://files.example/mining.json")
+    assert catalog.task_for_prompt(outside.batch_prompt()).task_id == "gen:9"
+    assert catalog.task_for_prompt(base_task.batch_prompt()).task_id == base_task.task_id
+    assert "gen:9" not in live_pool.active_ids(active_raw)
+    assert warnings, "the live check returned no diagnostics"
+    assert any("(0 in, 2 out of 2 mapped" in warning and "outside the current official-active pool" in warning
+               for warning in warnings), warnings
+    assert not any("could not check live pool" in warning for warning in warnings), warnings
+    assert sum(key.startswith("public/pool/reserve/shards/") for key, _ in requests) >= 1
+
+
+def test_live_pool_fetch_failure_adds_only_a_warning(build, monkeypatch):
+    from sn120_v2.admission import check_batch
+    batch = check_batch(batch_bytes(), HOTKEY, build.params())
+    warnings = tool.live_pool_guidance(batch, build.params(), public_url="file:///definitely/missing")
+    assert len(warnings) == 1 and "could not check live pool" in warnings[0] and "file stays valid" in warnings[0]
+    assert tool.check(batch_bytes(), HOTKEY, build.params())["valid"] is True
 
 
 def test_cli_reproduce_rebuilds_the_draw_from_the_public_irt_snapshot(build, tmp_path, capsys, monkeypatch):

@@ -27,7 +27,8 @@ One run does this, in this order:
 1. Copies ``public/mining.json`` and ``public/llms.txt`` to the path of their
    key, and also to ``mining.json`` and ``llms.txt`` at the root of the site.
    The two files are taken only as a pair of the same snapshot. The crowned-only
-   ``public/winner-stats.json`` is then checked against that snapshot and copied.
+   ``public/winner-stats.json`` is then checked against that snapshot and copied
+   byte-for-byte to both its canonical key and root ``winner-stats.json``.
 2. Copies the head pointer (``layout.CURRENT``), and writes ``LINKS``: signed
    read links for the weight files of the current head, with the expiry time
    and the sha256 and size of each file. Weight files are never copied.
@@ -74,14 +75,14 @@ from sn120_v2 import layout
 from sn120_v2.errors import ContractError, V2Error
 from sn120_v2.headchain import chain_links, check_chain, heads_of
 from sn120_v2.r2 import MAX_PRESIGN_S, R2Store
-from sn120_v2.public import validate_winner_stats, winner_stats_from_snapshot
+from sn120_v2.public import validate_winner_enrichment, validate_winner_stats, winner_stats_from_snapshot
 from sn120_v2.publisher import refuse_private
 from sn120_v2.r2_names import store_env
 from sn120_v2.types import HeadManifest
 
 LINKS = "public/read_links.json"  # not an object of the store: this command makes it
 INDEX = "public/pull_index.json"  # the files under public/ that this command wrote
-ROOT_COPIES = {"llms.txt": layout.LLMS_TXT, "mining.json": layout.MINING_JSON}
+ROOT_COPIES = {"llms.txt": layout.LLMS_TXT, "mining.json": layout.MINING_JSON, **layout.PUBLIC_ALIASES}
 LINKS_SCHEMA = "sn120-v2-read-links-1"
 INDEX_SCHEMA = "sn120-v2-pull-index-1"
 HEADS, ROUNDS, IRT = (make("x").partition("x")[0] for make in (layout.head_manifest, layout.round_file, layout.irt_snapshot))
@@ -329,8 +330,30 @@ class Pull:
         else:
             checked = json.loads(data)
             validate_winner_stats(mining, checked, self.public_url)
+            self._check_enrichment(mining, checked)
             refuse_private(checked, "winner-stats")
         self.put(layout.WINNER_STATS, data)
+        build.write(self.site / layout.WINNER_STATS_ALIAS, data)
+
+    def _check_enrichment(self, mining: dict, stats: dict, *, required: bool = False) -> None:
+        """Check optional fields after mirroring the reserve; defer the first pass on a fresh site."""
+        from sn120_v2.envs.reserve import load_reserve
+        from sn120_v2.public import ENRICHMENT_FIELDS
+
+        if not any(set(row) & ENRICHMENT_FIELDS for row in stats["winners"]):
+            return
+        root = self.site / layout.RESERVE_MANIFEST.rsplit("/", 1)[0]
+        try:
+            _, catalog = load_reserve(root, with_catalog=True, allow_retired=True)
+        except V2Error:
+            if required:
+                raise
+            # A first pull mirrors the pool below. Do not keep good stats waiting for that later step.
+            self.notes.append("winner enrichment check deferred until the public reserve catalog is mirrored")
+            return
+        for row in stats["winners"]:
+            if set(row) & ENRICHMENT_FIELDS:
+                validate_winner_enrichment(mining, row, self.store, catalog)
 
     def head(self, ttl_s: int) -> None:
         """The head pointer, and the signed read links for the weight files of that head."""
@@ -649,6 +672,12 @@ def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, m
     pull.step("rounds", pull.rounds)
     pull.step("task tables", pull.tables)
     pull.step("pool", pull.pool)
+
+    def enriched_fields() -> None:
+        pull._check_enrichment(json.loads((site / layout.MINING_JSON).read_bytes()),
+                               json.loads((site / layout.WINNER_STATS).read_bytes()), required=True)
+
+    pull.step("winner stats enriched fields", enriched_fields)
     pull.step("benchmarks", pull.benchmarks)
     pull.step("rollouts", pull.rollouts)
     if (site / ROLLOUT_INDEX).is_file():

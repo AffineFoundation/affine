@@ -519,7 +519,8 @@ def test_preflight_takes_every_key_from_the_layout_module(monkeypatch):
     assert {layout.CURRENT, layout.LLMS_TXT, layout.MINING_JSON, layout.BENCHMARKS, layout.JOURNAL, layout.PENDING, "private/rounds", "public/rounds", "public/rollouts/gate"} <= set(roots)
     from sn120_v2.r2 import _fixed_prefix
     assert _fixed_prefix(layout.public_rollout_gate_entry) == "public/rollouts/gate"
-    assert all(root.split("/")[0] in ("public", "private", "pending") for root in roots)
+    assert all(root.split("/")[0] in ("public", "private", "pending") or root in layout.PUBLIC_ALIASES for root in roots)
+    assert layout.WINNER_STATS_ALIAS in roots and layout.PUBLIC_ALIASES == {layout.WINNER_STATS_ALIAS: layout.WINNER_STATS}
     for name, value in vars(layout).items():  # every key that a layout function makes is under one listed root
         if callable(value) and getattr(value, "__module__", "") == layout.__name__ and not name.startswith("_"):
             args = ["a"] * (value.__code__.co_argcount - (name in ("pending_lora_prefix", "journal_record")))

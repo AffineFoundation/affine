@@ -65,7 +65,7 @@ from .params import (
     Params,
     Recipe,
 )
-from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, HISTORY_PREVIEW, NOT_JUDGED, NOT_VALID, QUEUE_PREVIEW, TEXT_LIMIT, VALID, WINNER_STATS_SCHEMA, validate_winner_stats, winner_stats_from_snapshot
+from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, HISTORY_PREVIEW, NOT_JUDGED, NOT_VALID, QUEUE_PREVIEW, TEXT_LIMIT, VALID, WINNER_STATS_SCHEMA, enrich_winner_stats, validate_winner_stats, winner_stats_from_snapshot
 from .queue import SECONDS_PER_DAY
 from .sampling import SEED_BITS
 from .seams import ObjectStore
@@ -161,6 +161,9 @@ RULE_CHANGELOG = (
     "- 2026-11-25 / local-delta measurement guidance / undocumented → a 100-task local delta has an SE of about 5.3 percentage points.",
     "- 2026-11-25 / per-round seating / the one-entry-per-round rule is hotkey-only; there is no coldkey seat limit.",
     "- 2026-11-25 / `z_bar` / `z_bar=1` → `z_bar=0.5`: crown needs strict `z > 0.5`, pending the paired next-round confirmation (fresh paired `z > 0.5`) before any payout.",
+    "- 2026-11-25 / miner pool guidance / local `math_pool_v2_1.jsonl` presented as the pool → sample from the live official-active pool (`public/pool/summary.json` → `public/pool/active/<sha>.json`); reference generator defaults to it; `check` warns when most prompts are outside it.",
+    "- 2026-11-25 / winner stats / canonical-only → byte-identical root `winner-stats.json` alias and optional per-crown fields derived only from crowned winners' public batches.",
+    "- 2026-11-25 / miner walkthrough / scattered stale guidance → live-pool, reserve, checking, upload, confirmation and payout walkthrough in llms.txt and the miner quickstarts.",
 )
 
 RECIPE_NOTES = {
@@ -1120,6 +1123,9 @@ def _rollout_lines(params: Params) -> list[str]:
         f"- Stop: let the model end by itself, or stop it at {params.max_output_tokens} tokens (`params.max_output_tokens`). Only an output of",
         "  exactly that many tokens is an official cap-hit; a longer output is invalid. A shorter local serving cap (for example 8192)",
         "  is not an official cap-hit: below the official cap, a correct boxed answer can grade 1.0.",
+        "- Live pool: sample from the official-active set shown in the start-here section, not the stale bundled active-list approximation.",
+        "  `python v2/miner/live_pool.py --out tasks.jsonl` resolves verified base and reserve bodies and official stored prompts.",
+        "  The reference `miner/kit/generate.py` defaults to that live pool; local mode requires explicit `--pool local`.",
         "- Reward of a pool task: the official grade, 1.0 for a pass and 0.0 for every other result. Take it from the",
         "  grader itself, `sn120_v2.envs.math_grader.grade(task, output, capped).reward`, with `capped` true only for an",
         "  output that reached `params.max_output_tokens`. `task` is a `Task` or a mapping with string `task_id`, `slice`,",
@@ -1181,6 +1187,61 @@ def _upload_lines(contract_block: Mapping[str, Any]) -> list[str]:
     ]
 
 
+def _onboarding_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
+    """The first-screen miner workflow. Every value that can change is read from this document."""
+    base = (doc["contract"].get("public_url") or "https://affine.io").rstrip("/")
+    mining = f"{base}/{layout.MINING_JSON.rsplit('/', 1)[-1]}"
+    check = f"`python v2/miner/affine_miner.py check --mining-json {mining} --hotkey <ss58> batch.json`"
+    crown = (f"strict `z > z_bar` (currently live: `z_bar=0.5`, so `z > 0.5`; this snapshot: `z > {show(params.z_bar)}`; "
+             "always reread the live value rather than treating 0.5 as permanent)" if params.crown_gate == "argmax_symmetric"
+             else "the crown gate in the live params")
+    confirmation = (f"The crown is applied now but paid only after next round's fresh paired confirmation with `z > {show(params.z_bar)}`."
+                    if params.confirm_next_round else "The current params apply and pay a crown without a separate next-round confirmation.")
+    return [
+        "## Start here: live-pool mining in nine steps",
+        "",
+        "**Scoring draws from the live official-active pool, which rotates every round.** The bundled",
+        f"`sn120_v2/envs/{POOL_FILE.name}` is **STALE / test-only as an active list, not the king-draw source**.",
+        "It supplies only base task bodies. Do not sample from a saved pool or an earlier active SHA for a new round.",
+        "",
+        f"1. **Register a hotkey.** Register an Ed25519 hotkey on Finney netuid {params.netuid} and activate its sealed link as section 5 says.",
+        f"2. **Build from the live pool.** Fetch cache-busted `{mining}` with a named `User-Agent`. Use `round.pool.active` and",
+        f"   `round.pool.active_sha`; use `{base}/{layout.POOL_SUMMARY}` only when the round has no pool. Fetch",
+        f"   `{base}/public/pool/active/<active_sha>.json` and require sha256(exact bytes) = active_sha. Then run",
+        "   `python v2/miner/live_pool.py --out tasks.jsonl`. It performs those checks and emits `task_id`, `problem`, `answer`",
+        "   and official `prompt = task.batch_prompt()` rows. The reference `miner/kit/generate.py` defaults to this live pool;",
+        "   local generation requires explicit `--pool local`, optionally with `--local-pool PATH`.",
+        f"3. **Check locally.** Run {check}. After the ordinary file check, the CLI adds a warning if more than half of mapped",
+        "   batch prompts are outside the active set. `--active FILE` uses a saved active object or helper JSONL; `--no-live-pool`",
+        "   skips this diagnostic. A fetch failure or pool finding never changes `valid`, rejects a batch or changes validator admission.",
+        "4. **PUT to your sealed link.** Open it with the section-5 command, keep the resulting URL secret, and upload the file bytes",
+        "   with `Content-Type: application/octet-stream`. The official `upload` command performs the same check and PUT.",
+        "5. **Read file verdicts by phase.** Waiting-file checks occur at round open and while IDLE, not during a RUNNING round.",
+        "   A mid-round verdict belongs to the previous snapshot: `queue.files_checked_at` and each row's `checked_at` identify it.",
+        "6. **One entry per hotkey per round; no coldkey seat limit.** A charged hotkey needs a new hotkey/registration for another turn.",
+        f"7. **Crown gate.** The eligible highest-delta candidate needs the published tie tolerance and {crown}.",
+        f"8. **Confirm before payment.** {confirmation} Only a confirmed crown is paid under the live confirmation rule.",
+        "9. **Weights and public results.** Only confirmed, still-registered kings split weight equally; confirmation adds no backpay.",
+        "   The sole writer follows the cadence in live params and preserves the last valid weights across chain/state failures.",
+        f"   Canonical stats: `{base}/{layout.WINNER_STATS}`; byte-identical root alias: `{base}/{layout.WINNER_STATS_ALIAS}`.",
+        "",
+        "### Live task bodies and rotation",
+        "",
+        f"- **Base `dapo:` / `math:` IDs:** bodies come from the checked-in `sn120_v2/envs/{POOL_FILE.name}` catalog, but only the live",
+        "  active object selects which IDs score. It is not the current active set.",
+        f"- **`gen:` / reserve IDs:** `gen:` tasks are Generator-produced public reserve tasks. Read `{base}/{layout.RESERVE_MANIFEST}`",
+        f"  and each `{base}/public/pool/reserve/shards/<name>.<sha>.jsonl` named by its manifest row. Reserve rows include `id`,",
+        "  `problem`, `answer` and optional `prior_p`. Verify manifest and shard SHAs; the helper refreshes pointers every time and",
+        "  caches only immutable, SHA-addressed shards. Every HTTP request needs a `User-Agent` and cache-busting/no-cache headers.",
+        "- **Rotation-v2:** sufficiently measured tasks use IRT-predicted head pass rate `p`. Otherwise an available reserve `prior_p`",
+        "  is used, then `rotation_prior_p`. An active task with an IRT row but too few rounds uses the configured fallback, not that",
+        "  reserve prior. Non-dead candidates score `p(1-p)`; dead tasks with enough head rollouts and zero passes score zero.",
+        "  Thus `score > 0.16` is exactly `0.2 < p < 0.8`, and the maximum `0.25` occurs at `p=0.5`; scores from `0.15` through",
+        "  `0.16` can lie just outside that middle interval. `irt_middle_band` applies only to `irt_draw_rule=\"band\"`, not rotation-v2.",
+        "",
+    ]
+
+
 def _pool_lines(params: Params) -> list[str]:
     if params.env != ENV_ID:
         return []
@@ -1214,8 +1275,9 @@ def _pool_lines(params: Params) -> list[str]:
             "  --round rNNNNNN` recomputes a decision from its public inputs.",
         ]
     return [
-        f"- Task pool: {count} tasks in `sn120_v2/envs/{POOL_FILE.name}` in the code (sha256 `{POOL_SHA256}`). Scoring sends this",
-        f'  instruction as the system message and the problem as the user message: "{MANDATE}"',
+        f"- Base task-body catalog: {count} tasks in `sn120_v2/envs/{POOL_FILE.name}` (sha256 `{POOL_SHA256}`). This bundled catalog is",
+        "  **STALE / test-only as an active list**: scoring draws from the live official-active pool in the start-here section, not from this file.",
+        f'  For a live base task, scoring sends this instruction as the system message and the problem as the user message: "{MANDATE}"',
         f"- {removed} tasks of the earlier pool (sha256 `{POOL_V2_0_SHA256[:8]}…`) were removed because their key is wrong, the problem",
         "  is ambiguous or broken. The list is",
         f"  `sn120_v2/envs/{dropped_file.name}` in the code: {REPO}/blob/v2/v2/sn120_v2/envs/{dropped_file.name}.",
@@ -1654,7 +1716,13 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  has `round_id`, `uid`, `hotkey`, `applied_at`, `z`, `delta`, `se`, `head`, `lora`, `batch_sha256`,",
         "  `batch_prompts`, `batch_rollouts`, `batch_format`, winner-only `train`, `batch_url`, and confirmation/paid",
         "  flags already in state. `batch_url` is the public `public/rounds/<round_id>/batch.json` object.",
-        "  Losing, waiting and unapplied rows never enter this file.",
+        "  When readable and SHA-verified, optional best-effort fields are `group_count`, `boxed_frac` (exactly one final",
+        "  balanced nonempty `\\boxed{}`), `output_chars_p50` (median Python character count, not tokens),",
+        "  `prompt_sources` (per-prompt source-prefix counts including `unmapped`) and `prompt_band` (mapped prompt",
+        "  counts `low`, `middle`, `high` by that crown round's IRT middle band; absent for non-band IRT).",
+        "  Missing, unreadable or mismatched public data omits these fields and never blocks publication.",
+        f"  `{layout.WINNER_STATS_ALIAS}` at the site root is byte-identical to `{layout.WINNER_STATS}`.",
+        "  Losing, waiting, queued, invalid and unapplied batches are never read for these fields or represented here.",
         "- In a round file each entry has a `reason`. The round has a `note`, and a `reason` when it has a result. The",
         f"  `note` is empty unless the round had no result or has the outcome `{ABANDONED}` (section 4). These texts give a",
         "  cause in words, for a person to read: the class of an error and its message. Before the validator",
@@ -1846,6 +1914,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "its miner becomes a king. Only kings earn." if not params.confirm_next_round else
         "payout waits for the next round's fresh paired sample-mean confirmation. Only confirmed kings earn.",
         "",
+        *_onboarding_lines(doc, params),
         "## 1. Network and head",
         "",
         f"- Network: Bittensor Finney, netuid {params.netuid}. Environment: `{params.env}` (pin `{show(params.env_pin)}`).",
@@ -2023,10 +2092,13 @@ class StorePublisher:
     the upload link files (``python -m sn120_v2.links issue --links-url``). Each is "" until it exists.
     """
 
-    def __init__(self, store: ObjectStore, public_url: str = "", links_url: str = "") -> None:
+    def __init__(self, store: ObjectStore, public_url: str = "", links_url: str = "", prompt_pool: Any = None,
+                 enrichment_log: Any = None) -> None:
         self.store = store
         self.public_url = public_url.rstrip("/")
         self.links_url = links_url.rstrip("/")
+        self.prompt_pool = prompt_pool if prompt_pool is not None else load_pool()
+        self.enrichment_log = enrichment_log
         if self.links_url:
             upload_entry(self.links_url)  # a bad address stops the start, not each publish
 
@@ -2036,6 +2108,7 @@ class StorePublisher:
         A store that is behind or fails raises ``InfraError``: the controller keeps running and publishes again.
         """
         stats = validate_winner_stats(snapshot, winner_stats_from_snapshot(snapshot, self.public_url), self.public_url)
+        stats = enrich_winner_stats(snapshot, stats, self.store, self.prompt_pool, self.enrichment_log)
         # This transport carries crowned-only facts into the separate public file. It is not part of mining.json;
         # the publisher still receives only a mapping, never State or private journal/batch locations.
         mining, llms = render({key: value for key, value in snapshot.items() if key != "winner_stats"},
@@ -2052,7 +2125,8 @@ class StorePublisher:
                 verify_public_pool_snapshot(self.store, snapshot)
             except V2Error as exc:
                 raise InfraError(f"public pool verification failed: {exc}") from exc
-            for key, data in ((layout.WINNER_STATS, stats_bytes), (layout.MINING_JSON, mining), (layout.LLMS_TXT, llms)):
+            for key, data in ((layout.WINNER_STATS, stats_bytes), *((alias, stats_bytes) for alias in layout.PUBLIC_ALIASES),
+                              (layout.MINING_JSON, mining), (layout.LLMS_TXT, llms)):
                 self.store.put(key, data)
                 if self.store.sha256(key) != sha256_hex(data):
                     raise InfraError(f"{key} does not read back as written")

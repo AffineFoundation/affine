@@ -81,7 +81,8 @@ def test_winner_stats_contain_only_applied_crowns_with_public_batch_facts(tmp_pa
         assert row["batch_url"] == f"https://files.example/{layout.winner_batch(row['round_id'])}"
         assert row["batch_prompts"] == 1 and row["batch_rollouts"] == 1 and row["batch_format"] == "sim-batch"
         assert (row["confirmed"], row["paid"], row["payout_status"]) == (True, True, "paid")
-        assert set(row) <= public.WINNER_FIELDS | {"batch_url"}
+        assert set(row) <= public.WINNER_FIELDS | {"batch_url"} | public.ENRICHMENT_FIELDS
+    assert store[layout.WINNER_STATS_ALIAS] == store[layout.WINNER_STATS]
     assert stats["winners"][1]["train"] == {"lora_lr": 0.0001, "steps": 2}
     assert second.round_id not in json.dumps(stats) and "hk12" not in json.dumps(stats)
     assert all(word not in json.dumps(stats) for word in ("private/", "pending/", "put_url", '"groups"', '"rollouts": ['))
@@ -91,6 +92,135 @@ def test_winner_stats_contain_only_applied_crowns_with_public_batch_facts(tmp_pa
     before = json.dumps(external, sort_keys=True)
     public.winner_stats_from_snapshot(external, "https://files.example")
     assert json.dumps(external, sort_keys=True) == before
+
+
+def crowned_public_batch_fixture(tmp_path):
+    """A real admitted batch, real IRT bytes, and the controller's crowned-only public transport."""
+    from sn120_v2.envs.math_pool import MathPool, Task
+    from sn120_v2.irt import IRTSampler
+    from sn120_v2.params import Params
+
+    made = world(tmp_path)
+    made.register(11, 0.4)
+    made.register(12, 0.0)  # loser: its private batch must never be read
+    made.round()
+    snapshot = json.loads(json.dumps(made.publisher.snapshots[-1]))
+    tasks = (Task("gen:a", "affine_math", "public reserve A", "1"),
+             Task("math:b", "affine_math", "public base B", "2"),
+             Task("other:c", "affine_math", "public other C", "3"))
+    pool = MathPool(tasks, "fixture-catalog")
+    groups = [
+        {"prompt": tasks[0].batch_prompt(), "rollouts": [{"output": "work \\boxed{1}", "reward": 1.0},
+                                                          {"output": "no box", "reward": 0.0}]},
+        {"prompt": tasks[1].problem, "rollouts": [{"output": "abcdef", "reward": 1.0}]},
+        {"prompt": "custom unmapped prompt", "rollouts": [{"output": "abcdefghij", "reward": 0.0}]},
+        {"prompt": tasks[2].batch_prompt(), "rollouts": [{"output": "\\boxed{3} trailing", "reward": 1.0}]},
+    ]
+    raw = json.dumps({"version": "affine-batch-v2", "hotkey": "hk11", "groups": groups}).encode()
+    winner = snapshot["winner_stats"]["winners"][0]
+    winner["batch_sha256"] = sha256_hex(raw)
+    snapshot["history"][0]["entries"][0]["batch_sha256"] = winner["batch_sha256"]
+    irt = IRTSampler([task.task_id for task in tasks], Params(irt_draw_rule="band")).public_snapshot()
+    snapshot["history"][0]["irt_snapshot_id"] = irt["snapshot_id"]
+    store = MemStore({layout.winner_batch(winner["round_id"]): raw,
+                      layout.irt_snapshot(irt["snapshot_id"]): json.dumps(irt).encode()})
+    return snapshot, winner, store, pool
+
+
+def test_crowned_public_batch_enrichment_and_privacy(tmp_path, caplog):
+    snapshot, winner, store, pool = crowned_public_batch_fixture(tmp_path)
+    reads = []
+
+    class PublicOnly(MemStore):
+        def get(self, key):
+            reads.append(key)
+            assert not key.startswith(("private/", "pending/"))
+            if "/batch.json" in key:
+                assert key == layout.winner_batch(winner["round_id"])
+            return super().get(key)
+
+    store = PublicOnly(store)
+    stats = {"schema": public.WINNER_STATS_SCHEMA, "generated_at": snapshot["generated_at"], "winners": [winner]}
+    enriched = public.enrich_winner_stats(snapshot, stats, store, pool)["winners"][0]
+    assert enriched["group_count"] == 4 and enriched["boxed_frac"] == 0.2 and enriched["output_chars_p50"] == 10
+    assert enriched["prompt_sources"] == {"gen": 1, "dapo": 0, "math": 1, "nmv2": 0, "other": 1, "unmapped": 1}
+    assert sum(enriched["prompt_band"].values()) == 3  # only mapped prompts, from the crown round's real IRT
+    assert reads == [layout.winner_batch(winner["round_id"]), layout.irt_snapshot(snapshot["history"][0]["irt_snapshot_id"])]
+    public.validate_winner_enrichment(snapshot, enriched, store, pool)
+    forged = dict(enriched, group_count=999)
+    with pytest.raises(ValueError, match="group_count"):
+        public.validate_winner_enrichment(snapshot, forged, store, pool)
+    irt_key = layout.irt_snapshot(snapshot["history"][0]["irt_snapshot_id"])
+    irt = json.loads(store[irt_key])
+    store[irt_key] = b"not an IRT snapshot"
+    basic = public.enrich_winner_stats(snapshot, stats, store, pool)["winners"][0]
+    assert "prompt_band" not in basic and basic["group_count"] == 4 and "prompt_band omitted" in caplog.text
+    store[irt_key] = json.dumps(irt | {"snapshot_id": "forged"}).encode()
+    basic = public.enrich_winner_stats(snapshot, stats, store, pool)["winners"][0]
+    assert "prompt_band" not in basic and basic["group_count"] == 4  # VerifyError also preserves the basic fields
+
+
+def test_real_controller_enriches_only_its_crowned_public_batch(tmp_path):
+    from sn120_v2.envs.math_pool import MathPool
+
+    made = world(tmp_path)
+    reads = []
+    winner_batch = layout.winner_batch("r000001")
+
+    # A real public crowned batch has already exercised enrichment above.
+    # Here the real controller publishes one winner beside one loser. Their
+    # simulator batches are deliberately non-affine; only the crowned public
+    # object may be read, and its malformed shape must not stop publication.
+    class GuardedStore:
+        def __init__(self, inner):
+            self.inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self.inner, name)
+
+        def get(self, key):
+            reads.append(key)
+            assert not key.startswith(("private/", "pending/"))
+            if "/batch.json" in key:
+                assert key == winner_batch
+            return self.inner.get(key)
+
+    guarded = GuardedStore(made.store)
+    made.controller.publisher = publisher.StorePublisher(guarded, "https://files.example/", prompt_pool=MathPool((), "fixture"))
+    made.register(11, 0.4)
+    made.register(12, 0.0)
+    made.round()
+    assert made.controller.last_error == ""
+    stats = json.loads(made.store.get(layout.WINNER_STATS))
+    assert len(stats["winners"]) == 1 and stats["winners"][0]["hotkey"] == "hk11"
+    assert not set(stats["winners"][0]) & public.ENRICHMENT_FIELDS
+    assert made.store.get(layout.WINNER_STATS_ALIAS) == made.store.get(layout.WINNER_STATS)
+    assert reads.count(winner_batch) == 1
+    assert all(not key.startswith(("private/", "pending/")) and (key == winner_batch or "/batch.json" not in key) for key in reads)
+
+
+def test_unreadable_crowned_batch_never_blocks_publication(tmp_path, caplog):
+    snapshot, winner, source, pool = crowned_public_batch_fixture(tmp_path)
+    _, _, store = published(snapshot)  # head manifest and all ordinary public artifacts
+    store[layout.winner_batch(winner["round_id"])] = source[layout.winner_batch(winner["round_id"])]
+    reads = []
+
+    class Guarded(MemStore):
+        def get(self, key):
+            reads.append(key)
+            assert not key.startswith(("private/", "pending/"))
+            if key == layout.winner_batch(winner["round_id"]):
+                raise RuntimeError("public winner object temporarily unreadable")
+            return super().get(key)
+
+    guarded = Guarded(store)
+    publisher.StorePublisher(guarded, "https://files.example/", prompt_pool=pool).publish(snapshot)
+    stats = json.loads(guarded[layout.WINNER_STATS])
+    assert not set(stats["winners"][0]) & public.ENRICHMENT_FIELDS
+    assert guarded[layout.WINNER_STATS_ALIAS] == guarded[layout.WINNER_STATS]
+    assert layout.MINING_JSON in guarded and layout.LLMS_TXT in guarded
+    assert all(not key.startswith(("private/", "pending/")) for key in reads)
+    assert "enrichment omitted" in caplog.text
 
 
 def test_winner_transport_is_matched_and_reduced_to_safe_fields(tmp_path):
@@ -343,7 +473,7 @@ def test_stored_prompt_contract_and_recommendation_are_published(tmp_path):
 def test_the_pool_drop_list_and_non_pool_meaning_are_published(tmp_path):
     _, text, _ = published(world(tmp_path).publisher.snapshots[-1])
     flat = " ".join(text.split())
-    assert "Task pool: 20,120 tasks" in flat
+    assert "Base task-body catalog: 20,120 tasks" in flat
     assert "1,454 tasks of the earlier pool" in flat and POOL_V2_0_SHA256[:8] in flat
     assert "https://github.com/AffineFoundation/affine/blob/v2/v2/sn120_v2/envs/math_pool_v2_1.dropped.json" in flat
     assert "removed tasks is no longer a pool task" in flat and "min_pool_prompt_frac" in flat
