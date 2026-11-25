@@ -2,6 +2,30 @@
 
 This file is for the operator of AffineValidator. It covers one change of the site builder: the benchmark table with one row for each king, the charts, and the source of the reference models. The cutover itself is in `v2/CUTOVER.md`; this file changes no step of it.
 
+## Winner-stats surgical update on AffineValidator (2026-11-25)
+
+The producer already writes `public/winner-stats.json`, and current production already has `Pull.winner_stats` in the pull's run sequence. A live read-only probe on 2026-11-25 found the current failure instead: validation rejects the standalone file's `confirmed`, `head`, and crowned-only batch facts because `mining.json` intentionally omits the controller's in-memory winner transport. The timer needs the corrected writer/validator pair; it is not a request to add a duplicate winner blob to `mining.json`.
+
+AffineValidator often has a dirty checkout and cannot take a full producer checkout. Save a dated copy of the live file, then surgically update **only `v2/site/pull.py`** from the reviewed source. Check that the file contains:
+
+- the `validate_winner_stats`, `winner_stats_from_snapshot` and `refuse_private` imports;
+- `layout.WINNER_STATS` in `FIXED`;
+- `Pull.public_url`, set from the existing `--public-url` argument;
+- the complete corrected `Pull.winner_stats()` method, including the legacy missing-object fallback; and
+- `pull.step("winner stats", pull.winner_stats)` immediately after the contract step in `run()`.
+
+Deploy the corresponding corrected `sn120_v2.public` writer/validator through the coordinator's normal reviewed producer/update path; changing `pull.py` alone cannot change code it imports. Do not rewrite live public keys mid-round. The fix applies to the next producer publish and lets the pull validate the existing crowned-only standalone object.
+
+For example, use the unit's actual `$REPO` path and a UTC-dated backup:
+
+```
+cp -a "$REPO/v2/site/pull.py" "$HOME/sn120-v1-archive/pull.py.before-winner-stats-$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+Apply only those reviewed hunks, compare the resulting file with the backup, and let the next timer invocation use it. Do **not** stash, reset, force-checkout, or replace the whole dirty AffineValidator checkout. Do not use the generic checkout or rollback steps below for this surgical update. A full checkout requires a saved diff, preserved untracked work, and coordinator approval. Do not change the producer, the timer's store arguments, or site appearance.
+
+The method validates the store object against `mining.json` and refuses private content. If the object is absent, it derives crowned/applied-only public history without inventing batch counts or training knobs. A failed step leaves the last good site file in place. These are documentation-only operator steps; this checkout does not deploy them or connect to AffineValidator.
+
 ## What the change does
 
 - **Benchmarks** (new place: under the live round). One row for the genesis head and one for each king. A king is the head that one applied round made. A row with no score says why: `queued`, `running`, `failed`, or `no run yet` (the benchmark file does not name the head).

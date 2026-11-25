@@ -165,9 +165,11 @@ class Stack:
 
 
 def public_snapshot(head: HeadPublish, state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None,
-                    checked_at: int | None = None, chain: ChainSnapshot | None = None) -> dict[str, Any]:
+                    checked_at: int | None = None, chain: ChainSnapshot | None = None, *, stop_asked: bool = False,
+                    close_publish_pending: bool = False, waiting_for_seats: bool | None = None) -> dict[str, Any]:
     """The public snapshot. ``chain`` is an existing validated read; no chain I/O or journal lock happens here."""
-    shown = snapshot(state, params, now, verdicts, checked_at, chain)
+    shown = snapshot(state, params, now, verdicts, checked_at, chain, stop_asked=stop_asked,
+                     close_publish_pending=close_publish_pending, waiting_for_seats=waiting_for_seats)
     # In-memory input for StorePublisher, removed before mining.json is rendered. It carries only the crowned
     # winner's already-public facts, never a private lease or batch location. No State reaches the publisher.
     shown["winner_stats"] = winner_stats(state, now)
@@ -238,6 +240,9 @@ class Controller:
         self._verdicts: dict[str, Verdict] = {}  # admission's last check of the waiting files, for the public snapshot
         self._verdicts_at: int | None = None
         self._registrations: ChainSnapshot | None = None  # latest already-read chain view, for pending rows only
+        self._stop_asked = False
+        self._close_publish_pending = False
+        self._waiting_for_seats: bool | None = None  # from the actual admission result; never inferred from batch_cap
         self._file_notes: dict[str, str] = {}  # what the log last said of each seat's file, by hotkey; this process only
         self._published: object = None  # what the last snapshot showed of the queue and its files
         self._published_at: int | None = None  # how many records the journal had at the last snapshot that reached the store
@@ -643,6 +648,7 @@ class Controller:
             self._log(SEATS_DEMOTED, {"keys": [list(key) for key in moved]}, now)
         round_id = f"r{state.round_seq + 1:06d}"
         picked = select_round(state.queue, verdicts, lambda reg: self._freeze(reg, round_id), params.batch_cap)
+        self._waiting_for_seats = len(picked.entries) < params.n_min_start
         if len(picked.entries) < params.n_min_start:
             return []
         parent = self._parent_slot()
@@ -1132,6 +1138,10 @@ class Controller:
 
     # ------------------------------------------------------------ publish
 
+    def stop_requested(self, asked: bool) -> None:
+        """The one coarse stop fact the public service view may show; no file, environment or mechanism crosses here."""
+        self._stop_asked = asked
+
     def _sync_pointer(self) -> None:
         """Make the store's head manifest and ``current`` pointer follow the journal."""
         manifest = self.state.manifest
@@ -1142,16 +1152,20 @@ class Controller:
             self.last_error = f"head pointer not published yet: {exc}"
 
     def _shown(self) -> object:
-        """What a snapshot shows of the queue and its files. A change here is a reason to publish between rounds."""
+        """What a snapshot shows of the queue, files and coarse service. A change here is a reason to publish between rounds."""
         seats = [(seat.reg.key, seat.front, seat.demoted, seat.held) for seat in waiting(self.state.queue)]
-        return seats, {hotkey: (verdict.valid, verdict.batch_sha256, verdict.checked_at) for hotkey, verdict in self._verdicts.items()}, self._registrations
+        return (seats, {hotkey: (verdict.valid, verdict.batch_sha256, verdict.checked_at) for hotkey, verdict in self._verdicts.items()},
+                self._registrations, self._stop_asked, self._close_publish_pending, self._waiting_for_seats)
 
     def _publish(self, now: int) -> None:
         if self.publisher is None:
             return
         shown, records = self._shown(), len(self.journal.records)
         try:
-            self.publisher.publish(public_snapshot(self.head, self.state, self.params, now, self._verdicts, self._verdicts_at, self._registrations))
+            self.publisher.publish(public_snapshot(
+                self.head, self.state, self.params, now, self._verdicts, self._verdicts_at, self._registrations,
+                stop_asked=self._stop_asked, close_publish_pending=self._close_publish_pending, waiting_for_seats=self._waiting_for_seats,
+            ))
             self._published, self._published_at = shown, records
         except Exception as exc:
             self.last_error = f"publish failed: {exc}"
@@ -1171,7 +1185,10 @@ class Controller:
                 self.check_files(now)
             except InfraError as exc:
                 self.last_error = f"file check failed: {exc}"
-        if self.publisher is None or (only_changes and self._shown() == self._published):
+        if self.publisher is None:
+            return False
+        self._close_publish_pending = False
+        if only_changes and self._shown() == self._published:
             return False
         self._publish(now)
         return True
@@ -1190,18 +1207,28 @@ class Controller:
         """
         if self.state.round is not None:
             raise V2Error(f"round {self.state.round.round_id} is open; its close is not complete")
-        before, self.last_error = self.last_error, ""
+        before, self.last_error, self._close_publish_pending = self.last_error, "", False
+        journal_dirty = self._published_at != len(self.journal.records)
+        dirty = journal_dirty or self._shown() != self._published
         try:
             self._sync_pointer()
             if self.overlap is not None:
+                had_work = self.overlap.has_work
                 self._kept_done(self.overlap.flush(now))
+            else:
+                had_work = False
             if self.state.rounds:
                 delete_pending(self.store, layout.pending_round_prefix(self.state.rounds[-1].round_id))
-            if self._published_at != len(self.journal.records) or self._shown() != self._published:
-                self._publish(now)  # the public files do not show the journal as it is now
+            # A close never published in this process reports its own attempt as retrying. A normal service-only
+            # refresh (including stop_requested) is not an error and must not turn a successful close into stalled.
+            self._close_publish_pending = dirty and not had_work and (journal_dirty or bool(self.last_error))
+            if self._close_publish_pending or (dirty and not had_work):
+                self._publish(now)  # show an existing close error, or bring the public files up to the journal
         except InfraError as exc:
             self.last_error = f"the store did not answer: {exc}"
+            self._close_publish_pending = True
         problem, self.last_error = self.last_error, self.last_error or before
+        self._close_publish_pending = bool(problem)
         return problem
 
     def local_head_proven(self) -> None:

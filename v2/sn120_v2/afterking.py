@@ -95,6 +95,11 @@ class Overlap:
 
     # ---- the steps that the next open does not need
 
+    @property
+    def has_work(self) -> bool:
+        """Whether flush will perform a kept or released step; used to avoid a duplicate close publication."""
+        return bool(self._kept or self._worker)
+
     def keep(self, step: str, work: Callable[[int], None], kind: str = "") -> None:
         """Keep a step for after the next open. With a ``kind``, it takes the place of a kept step of that kind.
 

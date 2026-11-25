@@ -18,7 +18,7 @@ import pytest
 from sn120_v2 import layout, public, publisher, sampling, sim
 from sn120_v2.admission import Invalid, StoreAdmission
 from sn120_v2.canonical import sha256_hex
-from sn120_v2.envs.math_pool import load_pool
+from sn120_v2.envs.math_pool import MathPool, Task, load_pool
 from sn120_v2.errors import BatchRejected, ContractError, InfraError
 from sn120_v2.irt import IRTSampler, draw_from_snapshot
 from sn120_v2.params import MinerBound, Params, Recipe
@@ -174,6 +174,36 @@ def test_cli_bounds_and_check_read_everything_from_mining_json(build, tmp_path, 
     assert code == 1 and json.loads(out)["rule"] == "train"
     with pytest.raises(SystemExit):  # no contract, no answer: the tool has no built-in limits
         tool.main(["check", "--hotkey", HOTKEY, str(batch)])
+
+
+def test_check_warns_but_does_not_reject_an_unofficial_pool_prompt(build, monkeypatch):
+    problem = "A synthetic problem: what is 17 + 25?"
+    task = Task("synthetic:0", "synthetic", problem, "42")
+    monkeypatch.setattr(tool, "load_pool", lambda: MathPool((task,), "synthetic-pool"))
+
+    def raw(prompt: str) -> bytes:
+        return json.dumps({"version": "affine-batch-v2", "hotkey": HOTKEY, "groups": [
+            {"prompt": prompt, "rollouts": [{"output": OUTPUT, "reward": 1.0}, {"output": OUTPUT + " again", "reward": 0.0}]}
+        ]}).encode()
+
+    bare = tool.check(raw(task.problem), HOTKEY, build.params())
+    assert bare["valid"] is True
+    assert any("1 stored prompt differs" in warning and "task.batch_prompt()" in warning for warning in bare["warnings"])
+    assert any("does NOT train and does NOT measure kl_seq" in warning for warning in bare["warnings"])
+    official = tool.check(raw(task.batch_prompt()), HOTKEY, build.params())
+    assert official["valid"] is True
+    assert not any("task.batch_prompt()" in warning for warning in official["warnings"])
+
+
+def test_check_skips_prompt_warning_when_the_bundled_pool_is_unavailable(build, monkeypatch):
+    task = Task("synthetic:0", "synthetic", "A synthetic problem: what is 17 + 25?", "42")
+    monkeypatch.setattr(tool, "load_pool", lambda: (_ for _ in ()).throw(OSError("pool unavailable")))
+    raw = json.dumps({"version": "affine-batch-v2", "hotkey": HOTKEY, "groups": [
+        {"prompt": task.problem, "rollouts": [{"output": OUTPUT, "reward": 1.0}, {"output": OUTPUT + " again", "reward": 0.0}]}
+    ]}).encode()
+    report = tool.check(raw, HOTKEY, build.params())
+    assert report["valid"] is True
+    assert len(report["warnings"]) == 1 and "does NOT train" in report["warnings"][0]
 
 
 def test_cli_reproduce_rebuilds_the_draw_from_the_public_irt_snapshot(build, tmp_path, capsys, monkeypatch):
