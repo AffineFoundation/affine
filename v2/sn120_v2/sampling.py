@@ -88,8 +88,9 @@ class UniformSampler:
     def snapshot_id(self) -> str:
         return "uniform-" + digest({"pool": self.pool})[:16]
 
-    def draw(self, head: HeadVersion, round_seed: str, n_tasks: int) -> Draw:
-        return uniform_draw(self.pool, self.snapshot_id(), round_seed, n_tasks)
+    def draw(self, head: HeadVersion, round_seed: str, n_tasks: int, exclude: frozenset[str] = frozenset()) -> Draw:
+        pool = tuple(task for task in self.pool if task not in exclude) if exclude else self.pool
+        return uniform_draw(pool, self.snapshot_id(), round_seed, n_tasks)
 
     def update(
         self,

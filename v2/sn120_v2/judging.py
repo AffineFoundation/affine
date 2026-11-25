@@ -73,6 +73,7 @@ from .types import (
     SKIP,
     WINNER,
     BoxResult,
+    KL_FIELDS,
     EntryDecision,
     EntryResult,
     RoundDecision,
@@ -151,6 +152,28 @@ def estimate(weights: Sequence[float], diffs: Sequence[float]) -> tuple[float, f
     total = math.fsum(weights)
     spread = math.fsum((w * (d - delta)) ** 2 for w, d in zip(weights, diffs))
     return delta, math.sqrt(n / (n - 1) * spread) / total
+
+
+def score_confirmation(weights: Sequence[float], new_s0_outcomes: Sequence[str], parent_s0_outcomes: Sequence[str]) -> dict[str, float | int | bool | str]:
+    """Fresh paired sample-0 comparison. Null sample 1 and prior winner outcomes are not inputs.
+
+    There is deliberately no z/SE payout threshold: z and SE are diagnostics. Exact ties and losses fail.
+    """
+    _need(len(new_s0_outcomes) == 1 and len(parent_s0_outcomes) == 1,
+          "confirmation needs exactly one sample-0 outcome string for the new head and parent")
+    n = scored_prefix((*new_s0_outcomes, *parent_s0_outcomes))
+    _need(n == len(new_s0_outcomes[0]) == len(parent_s0_outcomes[0]) == len(weights),
+          "confirmation needs both sample-0 strings over the same full fresh draw")
+    new, old = pass_rates(new_s0_outcomes, n), pass_rates(parent_s0_outcomes, n)
+    delta, se = estimate(weights, [a - b for a, b in zip(new, old)])
+    confirmed = delta > TIE_TOLERANCE
+    return {
+        "delta": delta, "se": se, "z": delta / se if se > 0 else 0.0,
+        "new_pass_rate": weighted_mean(weights, new), "old_pass_rate": weighted_mean(weights, old),
+        "n_tasks": n, "confirmed": confirmed,
+        "reason": "fresh paired sample-0 delta is positive" if confirmed
+                  else f"fresh paired sample-0 delta {delta:.6g} does not exceed TIE_TOLERANCE {TIE_TOLERANCE:g}",
+    }
 
 
 def cap_limit(null_cap_rate: float, params: Params) -> float:
@@ -292,12 +315,29 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
         _need(len(result.null_outcomes) == params.null_samples, "null M needs null_samples_per_task outcome strings; one outcome string per sample when null")
         check_outcomes(result.null_outcomes, n, "null M")
         null_scored = scored_prefix(result.null_outcomes)
+    if ticket.parent is None:
+        _need(not result.parent_outcomes and not result.parent_error, "parent evidence arrived without a pinned parent slot")
+    else:
+        _need(params.confirm_next_round, "a parent slot requires confirm_next_round")
+        _need(bool(result.parent_outcomes) != bool(result.parent_error),
+              "a pinned parent needs either one sample-0 result or an explicit parent-only failure")
+        if ticket.parent.manifest is None:
+            _need(not result.parent_outcomes and bool(result.parent_error),
+                  "an unavailable parent manifest must produce parent-only no_decision evidence")
+        if result.parent_outcomes:
+            _need(ticket.parent.manifest is not None, "parent outcomes require the pinned parent manifest")
+            _need(len(result.parent_outcomes) == 1, "the parent has exactly sample 0")
+            check_outcomes(result.parent_outcomes, n, "parent")
+            _need(scored_prefix(result.parent_outcomes) == n and len(result.null_outcomes) == params.null_samples
+                  and scored_prefix(result.null_outcomes) == n,
+                  "parent and new-head null must complete the same full fresh draw")
     look_sizes = params.look_sizes(n)
     for seat, entry in zip(ticket.entries, result.entries):
         what = f"entry {entry.queue_pos}"
         from .gpu.merged import assert_tested_result
 
         assert_tested_result(params, entry)
+        _need(entry.kl_seq is None or params.min_kl_seq > 0, f"{what}: KL present while min_kl_seq is off")
         if entry.status != SCORED:
             _need(not entry.outcomes and entry.eliminated_at_look is None, f"{what}: an unscored entry has no outcomes")
             continue
@@ -317,6 +357,8 @@ def check_result(ticket: RoundTicket, result: BoxResult) -> None:
         _need(len(entry.outcomes) == samples, f"{what}: needs one outcome string per sample")
         check_outcomes(entry.outcomes, n, what)
         scored = scored_prefix(entry.outcomes)
+        if entry.kl_seq is not None:
+            _need(entry.kl_k <= min(params.kl_rollouts, scored), f"{what}: KL samples exceed the permitted scored rollouts")
         _need(scored <= null_scored, f"{what}: scored on more tasks than null M")
         look = entry.eliminated_at_look
         if look is None and result.stopped_at_limit:
@@ -345,6 +387,7 @@ def _entry_decision(seat, entry: EntryResult, status: str, reason: str, score: S
         lora_hash=entry.lora.lora_hash if entry.lora else "",
         score=score,
         eliminated_at_look=entry.eliminated_at_look,
+        **{name: getattr(entry, name) for name in KL_FIELDS},
     )
 
 
@@ -406,6 +449,15 @@ def decide(
                 rows.append((seat, entry, NULL_UPDATE,
                              f"stored update norm {shown} does not meet min_step_norm {params.min_step_norm:g}", None))
                 continue
+            if params.min_kl_seq > 0:
+                if entry.kl_seq is None:
+                    rows.append((seat, entry, NO_DECISION,
+                                 "KL measurement is missing while min_kl_seq is enabled", None))
+                    continue
+                if entry.kl_seq < params.min_kl_seq:
+                    rows.append((seat, entry, NULL_UPDATE,
+                                 f"measured KL {entry.kl_seq:.3g} nats/seq is below min_kl_seq {params.min_kl_seq:g}", None))
+                    continue
             if seat.queue_pos in copies:
                 copy = copies[seat.queue_pos]
                 rows.append((seat, entry, DUPLICATE, copy.reason, None))
