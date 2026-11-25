@@ -350,14 +350,16 @@ def test_llms_txt_is_the_same_text_from_the_snapshot_and_from_the_mining_json_th
     assert tuple(snap["queue"]["next"][0]) == publisher.QUEUE_COLUMNS and tuple(snap["kings"][0]) == publisher.KING_COLUMNS
     changelog = """## Rule changelog
 
-All dates UTC. These are the four shipped rule changes; the parameter table below is the current contract.
-- 2026-11-24: Crown and paid-confirmation eligibility require strict `z > 1`.
-- 2026-11-24: Normal no-file seats use a flat six-hour squat-trim cutoff; the zero-turn guard remains.
-- 2026-11-24: King evaluation uses four samples per task (`null_samples_per_task=4`).
-- 2026-11-24: The per-token KL floor is `min_kl_tok=0.0014` nats per token; the sequence floor is off (`min_kl_seq=0`).
+Date (UTC) / field / old → new. Dates identify shipped commits; the parameter table is the current contract.
+- 2026-11-24 / `min_kl_seq` + `min_kl_tok` / `min_kl_seq=10` → `min_kl_seq=0`, `min_kl_tok=0.0014` nats per token.
+- 2026-11-24 / `z_bar` + paired next-round confirmation / no z bar → crown and paid confirmation both require strict `z > 1`.
+- 2026-11-24 / squat trim / queue-rate-stretched wait → flat 6h cap (`squat_min_wait_s=10800`, `squat_age_factor=2`), retaining the zero-turn guard.
+- 2026-11-24 / confirming-round king + old-parent samples / inherited `1` → matched `2` per task (`null_samples_per_task=2`).
+- 2026-11-24 / `null_samples_per_task` / king samples `2` → `4` per task; confirming-round old-parent samples remain matched.
 """
     assert "\n".join(publisher.reflow(changelog.splitlines())) + "\n" in text
-    assert text.count("- 2026-11-24:") == 4 and "UTC-6" not in text
+    assert text.count("- 2026-11-24 /") == 5 and "UTC-6" not in text
+    assert "min_kl_seq=10" in text and "squat_min_wait_s=10800" in text and "old-parent samples / inherited `1`" in text
     running = next(snap for snap in world.publisher.snapshots if snap["phase"] == "RUNNING")
     assert [key for key, value in running["round"].items() if not isinstance(value, (dict, list))] == list(publisher.ROUND_FIELDS[:12])
     assert publisher.in_order({"z": 1, "uid": 2, "a": 3}, publisher.KING_COLUMNS) == ["uid", "z", "a"]

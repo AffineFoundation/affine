@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from sn120_v2 import layout
+from sn120_v2 import layout, publisher
 from sn120_v2.canonical import canonical_json, sha256_hex
 from sn120_v2.controller import Controller
 from sn120_v2.envs.math_pool import MathPool, Task, POOL_V2_0_FILE, POOL_V2_0_SHA256, load_pool
@@ -86,6 +86,72 @@ def test_rotated_round_opens_artifacts_before_journal_and_closes_ledger(tmp_path
     assert sum(row[0] for row in world.controller._rotation.ledger.values()) > 0
     replay = load(world.root / "journal.jsonl")
     assert replay.rotation_state_sha == world.controller.state.rotation_state_sha
+
+
+def test_real_publisher_restores_public_pool_objects_across_history(tmp_path):
+    world, _ = rotated_world(tmp_path, rotation_rule="info", rotation_active_size=2, rotation_churn_frac=0.5)
+    world.round()
+    world.register(2, 0.0)
+    latest = world.round()
+    world.controller.publisher = publisher.StorePublisher(world.store, "https://files.example/")
+    world.controller.publish(world.clock())
+    assert world.controller.last_error == ""
+    assert latest.rotation is not None
+    current_sha = latest.rotation["active_sha"]
+
+    class ObservedStore(LocalStore):
+        def __init__(self, root):
+            super().__init__(root)
+            self.active_puts = 0
+            self.snapshot_written = False
+
+        def put(self, key, data):
+            if key.startswith("public/pool/active/"):
+                self.active_puts += 1
+            if key == layout.MINING_JSON:
+                self.snapshot_written = True
+            super().put(key, data)
+
+    observed = ObservedStore(tmp_path / "observed")
+    for key in world.store.list(""):
+        observed.put(key, world.store.get(key))
+    observed.active_puts = 0
+    world.store = observed
+    world.controller.store = observed
+    world.controller.publisher.store = observed
+    snap = world.publisher.snapshots[-1]
+    assert len([record for record in snap["history"] if record.get("pool")]) >= 2
+    world.controller._publish(world.clock())
+    assert observed.active_puts == 0 and observed.snapshot_written
+
+    for key in (layout.active_pool(current_sha), layout.pool_ranking(latest.round_id),
+                layout.POOL_SUMMARY, layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL):
+        observed.delete(key)
+    observed.active_puts = observed.snapshot_written = 0
+    world.controller._publish(world.clock())
+    assert world.controller.last_error == "" and observed.snapshot_written
+    assert observed.active_puts == 1, "only the missing active object is restored"
+    assert observed.get(layout.active_pool(current_sha)) == canonical_json(world.controller._rotation.active_ids)
+    first_bytes = {key: observed.get(key) for key in observed.list("public/pool/")}
+    world.controller._publish(world.clock())
+    assert {key: observed.get(key) for key in observed.list("public/pool/")} == first_bytes
+
+    class RefusingStore(ObservedStore):
+        def put(self, key, data):
+            if key == layout.active_pool(current_sha):
+                return
+            super().put(key, data)
+
+    refused = RefusingStore(tmp_path / "refused")
+    for key, data in first_bytes.items():
+        refused.put(key, data)
+    refused.delete(layout.active_pool(current_sha))
+    refused.snapshot_written = False
+    world.controller.store = refused
+    world.controller.publisher.store = refused
+    world.controller._publish(world.clock())
+    assert "publish failed:" in world.controller.last_error and not refused.snapshot_written
+    assert not refused.exists(layout.active_pool(current_sha))
 
 
 def test_live_params_change_rebuilds_the_next_sqrt_fisher_open(tmp_path):

@@ -54,6 +54,7 @@ from .dedup import (
     STAGE_LORA,
     STAGE_ROLLOUT,
 )
+from .pool_runtime import verify_public_pool_snapshot
 from .params import (
     GENESIS_BASE_HASH,
     GENESIS_MODEL_REPO,
@@ -148,11 +149,12 @@ PARAMS_HEADING = "Every parameter"  # the section whose table states each parame
 RULE_CHANGELOG = (
     "## Rule changelog",
     "",
-    "All dates UTC. These are the four shipped rule changes; the parameter table below is the current contract.",
-    "- 2026-11-24: Crown and paid-confirmation eligibility require strict `z > 1`.",
-    "- 2026-11-24: Normal no-file seats use a flat six-hour squat-trim cutoff; the zero-turn guard remains.",
-    "- 2026-11-24: King evaluation uses four samples per task (`null_samples_per_task=4`).",
-    "- 2026-11-24: The per-token KL floor is `min_kl_tok=0.0014` nats per token; the sequence floor is off (`min_kl_seq=0`).",
+    "Date (UTC) / field / old → new. Dates identify shipped commits; the parameter table is the current contract.",
+    "- 2026-11-24 / `min_kl_seq` + `min_kl_tok` / `min_kl_seq=10` → `min_kl_seq=0`, `min_kl_tok=0.0014` nats per token.",
+    "- 2026-11-24 / `z_bar` + paired next-round confirmation / no z bar → crown and paid confirmation both require strict `z > 1`.",
+    "- 2026-11-24 / squat trim / queue-rate-stretched wait → flat 6h cap (`squat_min_wait_s=10800`, `squat_age_factor=2`), retaining the zero-turn guard.",
+    "- 2026-11-24 / confirming-round king + old-parent samples / inherited `1` → matched `2` per task (`null_samples_per_task=2`).",
+    "- 2026-11-24 / `null_samples_per_task` / king samples `2` → `4` per task; confirming-round old-parent samples remain matched.",
 )
 
 RECIPE_NOTES = {
@@ -2017,6 +2019,12 @@ class StorePublisher:
         try:
             if not self.store.exists(head_key):
                 raise InfraError(f"head manifest {head_key} is not public yet; the contract may not name this head")
+            # Every public pool reference is resolved before mining.json or its summary can point to it.
+            # Only public rotation data is used; missing active bytes are restored byte-idempotently.
+            try:
+                verify_public_pool_snapshot(self.store, snapshot)
+            except V2Error as exc:
+                raise InfraError(f"public pool verification failed: {exc}") from exc
             for key, data in ((layout.WINNER_STATS, stats_bytes), (layout.MINING_JSON, mining), (layout.LLMS_TXT, llms)):
                 self.store.put(key, data)
                 if self.store.sha256(key) != sha256_hex(data):
