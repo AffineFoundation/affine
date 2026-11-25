@@ -98,31 +98,18 @@ def squat_trim(
     queue: Queue,
     verdicts: Mapping[str, Verdict],
     now: int,
-    turns_last_day: int,
     min_wait_s: int,
     age_factor: float,
 ) -> list[RegKey]:
-    """Seats to move to the back: no valid file, and older than ``age_factor`` times the expected wait.
-
-    Expected wait = max(``min_wait_s``, seats ahead / turns per second), with
-    the turn rate taken from the last 24 hours. A seat with a valid file is
-    never moved. With no turns in the last day the wait is unknown, so no
-    seat is moved.
-    """
-    if turns_last_day <= 0:
-        return []
-    seconds_per_turn = SECONDS_PER_DAY / turns_last_day
+    """Normal seats with no valid file and an age strictly over ``age_factor * min_wait_s``."""
     moved: list[RegKey] = []
-    ahead = 0
     for seat in waiting(queue):
         if zone(seat) != NORMAL:
             continue
-        expected_wait = max(float(min_wait_s), ahead * seconds_per_turn)
-        ahead += 1
         verdict = verdicts.get(seat.reg.hotkey)
         has_file = verdict is not None and verdict.valid
         age = now - seat.reg.registered_at
-        if not has_file and seat.reg.registered_at > 0 and age > age_factor * expected_wait:
+        if not has_file and seat.reg.registered_at > 0 and age > age_factor * min_wait_s:
             moved.append(seat.reg.key)
     return moved
 
