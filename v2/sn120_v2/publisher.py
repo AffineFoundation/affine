@@ -64,7 +64,7 @@ from .params import (
     Params,
     Recipe,
 )
-from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, NOT_JUDGED, NOT_VALID, TEXT_LIMIT, VALID
+from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, HISTORY_PREVIEW, NOT_JUDGED, NOT_VALID, QUEUE_PREVIEW, TEXT_LIMIT, VALID, WINNER_STATS_SCHEMA, validate_winner_stats, winner_stats_from_snapshot
 from .queue import SECONDS_PER_DAY
 from .sampling import SEED_BITS
 from .seams import ObjectStore
@@ -133,7 +133,8 @@ ENTRY_COLUMNS = ("queue_pos", "uid", "hotkey", "batch_sha256", "status", "delta"
 # after these, in sorted order.
 ROUND_FIELDS = ("round_id", "head_version_id", "params_hash", "recipe_id", "round_seed", "irt_snapshot_id", "n_tasks", "opened_at", "closed_at")
 ROUND_FIELDS += ("outcome", "seats", "skipped", "winner_uid", "reason", "null_pass_rate", "null_cap_rate")
-QUEUE_COLUMNS = ("position", "uid", "hotkey", "registration_block", "file_valid", "front", "demoted", "held")
+QUEUE_COLUMNS = ("position", "uid", "hotkey", "registration_block", "file_valid", "file_verdict", "batch_sha256", "checked_at",
+                 "front", "demoted", "held", "valid_ahead", "eta_rounds")
 KING_COLUMNS = ("uid", "hotkey", "round_id", "head_version_id", "applied_at", "z")
 DUPLICATE_MEMBER_COLUMNS = ("queue_pos", "uid", "hotkey", "batch_sha256", "stage", "similarity", "first_seen_unix")
 DUPLICATE_STAGES = {
@@ -144,6 +145,15 @@ DUPLICATE_STAGES = {
     STAGE_LORA: "LoRA update cosine with a keeper in this round",
 }
 PARAMS_HEADING = "Every parameter"  # the section whose table states each parameter; ``stated_params`` reads it back
+RULE_CHANGELOG = (
+    "## Rule changelog",
+    "",
+    "All dates UTC. These are the four shipped rule changes; the parameter table below is the current contract.",
+    "- 2026-11-24: Crown and paid-confirmation eligibility require strict `z > 1`.",
+    "- 2026-11-24: Normal no-file seats use a flat six-hour squat-trim cutoff; the zero-turn guard remains.",
+    "- 2026-11-24: King evaluation uses four samples per task (`null_samples_per_task=4`).",
+    "- 2026-11-24: The per-token KL floor is `min_kl_tok=0.0014` nats per token; the sequence floor is off (`min_kl_seq=0`).",
+)
 
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
@@ -256,6 +266,7 @@ def object_keys() -> dict[str, str]:
     return {
         "llms_txt": layout.LLMS_TXT,
         "mining_json": layout.MINING_JSON,
+        "winner_stats": layout.WINNER_STATS,
         "current_head": layout.CURRENT,
         "head_manifest": layout.head_manifest("VERSION_ID"),
         "base_file": layout.public_base_prefix("BASE_HASH") + "/FILE",
@@ -804,9 +815,10 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- `file_valid`: the validator's verdict on the file that was stored for the hotkey at its last check of the",
         f"  files: {utc(checked) if checked else 'no check yet'} (`queue.files_checked_at` in mining.json). The validator reads the waiting files when it picks the entries",
         "  of a round, and again and again while no round runs. It does not read them while a round runs: a file that",
-        "  you store then shows the old verdict until the round ends. The validator never publishes batch content or",
-        "  `train` values. To see the rule that a file breaks, run the `check` command of section 5: it prints the",
-        "  rule code and the reason.",
+        "  you store then shows the old verdict until the round ends. The validator never publishes waiting or losing",
+        "  batch content or their `train` values. To see the rule that a file breaks, run the `check` command of section",
+        "  5: it prints the rule code and the reason. Waiting files have the SHA256 + check-time-only exception below;",
+        "  `train` values become public only for a crowned winner.",
         "- A new process of the validator has no verdict until its first check of the files. A publication before that",
         "  check has `queue.files_checked_at` null and `file_valid` no for every waiting seat, also for a good file.",
         "  This can be so when a process starts while the chain gives no answer. It can also be so when a process",
@@ -815,12 +827,30 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  round from a new check of the files, never from the published value. So do not replace a good file because",
         "  of it: wait for the next check.",
         "- The verdicts of the whole line are in mining.json under `queue.files`. Its list `verdicts` has one row for",
-        "  each hotkey with a waiting seat, in UID order: `uid`, `hotkey`, `file_valid` and `file_verdict`.",
+        "  each hotkey with a waiting seat, in UID order: `uid`, `hotkey`, `file_valid`, `file_verdict`, `batch_sha256`,",
+        "  `checked_at`, `valid_ahead` and `eta_rounds`. UID order is not queue order; for a repeated hotkey the count",
+        "  belongs to its earliest waiting seat. `queue.line` is the full real waiting order, including seats beyond",
+        f"  this {QUEUE_PREVIEW}-row preview, and `queue.next` is its first {QUEUE_PREVIEW} rows. Every seat row has its own SHA256 and check time.",
         f"  `file_verdict` is `{VALID}`, `{NOT_VALID}` or `{NOT_JUDGED}`. `{NOT_JUDGED}`: the validator has no verdict for the hotkey. No file",
-        "  was stored at the last check, or the seat came after that check, or a new process made no check yet.",
+        "  was stored at the last check, or the seat came after that check, or a new process made no check yet. In",
+        "  that case `batch_sha256` and the row's `checked_at` are null. Otherwise `batch_sha256` is the 64-lowercase-hex",
+        "  SHA256 of the stored bytes at that verdict, and `checked_at` is that verdict's Unix UTC seconds. The outer",
+        "  `queue.files.checked_at` is `queue.files_checked_at`: the time at which the whole check started.",
         f"  `file_valid` is yes only with `{VALID}`. `hotkeys` counts the rows; `{VALID}`, `{NOT_VALID}` and `{NOT_JUDGED}` count the rows",
-        "  with that verdict; `seats` counts the waiting seats. `checked_at` is `queue.files_checked_at`: the time at",
-        "  which that check started. The validator does not publish the sha256 of a waiting file.",
+        "  with that verdict; `seats` counts the waiting seats.",
+        "- `valid_ahead` counts only waiting seats strictly ahead in the real waiting order whose last verdict has",
+        "  `file_valid` true. Seats leased in the open round are not counted. `eta_rounds` is the coarse upper bound",
+        f"  ceil(valid_ahead / {params.batch_cap}), using only public `batch_cap`. It is not a scheduler prediction or a promise of",
+        "  files, duplicate owners, holds and available capacity can change a turn. No exact next-check or start time",
+        "  is published, and these fields reveal no draw-targeting information.",
+        "- Waiting-file publication is SHA256 + check time only. No waiting or losing batch bytes, prompts, outputs,",
+        "  train values, reason, rule, counts, format, store URI, download link or presigned URL is public. Use the",
+        "  local `check` command to diagnose your own file; only crowned winners' batches become public.",
+        "- `queue.pending` lists chain registrations which have no waiting seat and no leased seat in the open round.",
+        "  Each row contains only `uid`, `hotkey`, `registration_block` and `status: pending`; there are no file fields",
+        "  or URLs. The rows come from the controller's latest complete chain read, with no publisher-time chain query.",
+        "  A newly seen registration can therefore appear after its next ordinary read, and `pending` here does not",
+        "  refer to the private `pending/` store staging prefix.",
         "- Identity: a registered UID on this subnet (`btcli subnets register --netuid "
         f"{params.netuid}`). One registration (UID + registration block) buys one seat in one round, win or lose.",
         "  A hotkey gets one turn. When its entry was charged, the hotkey never enters again, also with a new",
@@ -1107,6 +1137,9 @@ def _upload_lines(contract_block: Mapping[str, Any]) -> list[str]:
         "  stored when a round takes your entry is the file that is trained.",
         "- Open the link:",
         f'  `export AFFINE_PUT_URL="$(python -m sn120_v2.links open --hotkey <ss58> --key <seed file> --links-url {links_url})"`.',
+        "  `open_link` is a CLI alias of `open`: `python -m sn120_v2.links open_link ...` has the same behavior.",
+        "  The Python function which decrypts a link document is named `open_link`; there was no earlier `open_link` CLI",
+        "  subcommand. Use either spelling; `--help` documents both.",
         "  The seed file holds the 32-byte Ed25519 seed of your hotkey as 64 hex characters. A bittensor hotkey file",
         '  that is not encrypted also works. Install: `pip install -e "v2[links]"`.',
         f"- Upload: {tool} checks the file, reads the URL from the environment variable `AFFINE_PUT_URL` and sends the",
@@ -1584,10 +1617,16 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- A file set (base, fp32 master, LoRA) has the id sha256(canonical JSON of {file name: sha256}). Check each",
         "  file hash, then the id. The fp32 master has its own prefix: do not put it in the directory of the base.",
         "- `version_id` of a head is the sha256 of the canonical JSON of the head object without `version_id`.",
-        "- Only a winner has a public batch, and with it public `train` values. For every other entry the round file",
+        "- Only a crowned/applied winner has a public batch, and with it public `train` values. For every other entry the round file",
         "  shows the decision, batch sha256 and available scores. `duplicate` and `null_update` are charged and cannot",
         "  win or be paid. Duplicate clusters publish only the identity and comparison fields listed in section 5; they",
-        "  never publish batch content.",
+        "  never publish batch content. Waiting seats get only their own stored-file SHA256 and verdict check time.",
+        f"- `{layout.WINNER_STATS}` is `{WINNER_STATS_SCHEMA}`: integer Unix UTC `generated_at` and a newest-first",
+        f"  `winners` list covering the same last {HISTORY_PREVIEW} closed rounds as `mining.json` (not an all-time archive). Each row",
+        "  has `round_id`, `uid`, `hotkey`, `applied_at`, `z`, `delta`, `se`, `head`, `lora`, `batch_sha256`,",
+        "  `batch_prompts`, `batch_rollouts`, `batch_format`, winner-only `train`, `batch_url`, and confirmation/paid",
+        "  flags already in state. `batch_url` is the public `public/rounds/<round_id>/batch.json` object.",
+        "  Losing, waiting and unapplied rows never enter this file.",
         "- In a round file each entry has a `reason`. The round has a `note`, and a `reason` when it has a result. The",
         f"  `note` is empty unless the round had no result or has the outcome `{ABANDONED}` (section 4). These texts give a",
         "  cause in words, for a person to read: the class of an error and its message. Before the validator",
@@ -1817,6 +1856,8 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "",
         *table(("parameter", "value"), numbers),
         "",
+        *RULE_CHANGELOG,
+        "",
         "- `eval_time_budget_s`: the longest time that the box waits for one answer of a model in scoring. It is not the",
         "  time of the scoring: the times of a round are in section 3.",
         "- `burn_uid`: the UID of the owner. It has no seat (section 4) and gets no weight: nothing is burned (section 7).",
@@ -1961,16 +2002,22 @@ class StorePublisher:
             upload_entry(self.links_url)  # a bad address stops the start, not each publish
 
     def publish(self, snapshot: Mapping[str, Any]) -> None:
-        """Render both files first, so a bad snapshot changes nothing. Then write and read back each one.
+        """Render and filter all public files first, so a bad snapshot changes nothing. Then write and read back each one.
 
         A store that is behind or fails raises ``InfraError``: the controller keeps running and publishes again.
         """
-        mining, llms = render(snapshot, self.public_url, self.links_url)
+        stats = validate_winner_stats(snapshot, winner_stats_from_snapshot(snapshot, self.public_url), self.public_url)
+        # This transport carries crowned-only facts into the separate public file. It is not part of mining.json;
+        # the publisher still receives only a mapping, never State or private journal/batch locations.
+        mining, llms = render({key: value for key, value in snapshot.items() if key != "winner_stats"},
+                              self.public_url, self.links_url)
+        refuse_private(stats, "winner-stats")
+        stats_bytes = (json.dumps(stats, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
         head_key = layout.head_manifest(snapshot["head"]["head"]["version_id"])
         try:
             if not self.store.exists(head_key):
                 raise InfraError(f"head manifest {head_key} is not public yet; the contract may not name this head")
-            for key, data in ((layout.MINING_JSON, mining), (layout.LLMS_TXT, llms)):
+            for key, data in ((layout.WINNER_STATS, stats_bytes), (layout.MINING_JSON, mining), (layout.LLMS_TXT, llms)):
                 self.store.put(key, data)
                 if self.store.sha256(key) != sha256_hex(data):
                     raise InfraError(f"{key} does not read back as written")

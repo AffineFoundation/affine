@@ -23,6 +23,7 @@ from moto.server import ThreadedMotoServer
 from sn120_v2 import layout, links, sim
 from sn120_v2.errors import ConfigError, InfraError
 from sn120_v2.publisher import render
+from sn120_v2.public import winner_stats_from_snapshot
 from sn120_v2.r2 import R2Store
 from sn120_v2.r2_names import PLAIN_NAMES, store_env
 from sn120_v2.types import HeadManifest
@@ -75,9 +76,11 @@ def store(env, tmp_path):
     store = R2Store.from_env(env, attempts=1)
     for key in world.store.list(""):
         store.put(key, world.store.get(key))
-    mining, llms = render(json.loads(json.dumps(world.publisher.snapshots[-1])), URL)
+    snapshot = json.loads(json.dumps(world.publisher.snapshots[-1]))
+    mining, llms = render(snapshot, URL)
     store.put(layout.MINING_JSON, mining)
     store.put(layout.LLMS_TXT, llms)
+    store.put(layout.WINNER_STATS, json.dumps(winner_stats_from_snapshot(snapshot, URL)).encode())
     for key, data in FOREIGN.items():
         store.put(key, data)
     return store
@@ -114,13 +117,15 @@ def test_one_run_copies_the_keys_of_the_layout_writes_the_links_and_builds_the_s
     mining = json.loads(files[layout.MINING_JSON])
     small = [key for key in store.list("public/") if key.startswith(("public/heads/", "public/rounds/")) and key not in FOREIGN]
     tables = {layout.irt_snapshot(mining["irt_snapshot_id"])} | {layout.irt_snapshot(row["irt_snapshot_id"]) for row in mining["history"]}
-    copied = {layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, *small, *tables, layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}
+    copied = {layout.MINING_JSON, layout.LLMS_TXT, layout.WINNER_STATS, layout.CURRENT, *small, *tables, layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}
     assert len(small) == 4 and set(files) == copied | {LINKS, INDEX, "llms.txt", "mining.json"} | BUILT
     for key in copied - {layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}:  # mirrored objects are byte-identical
         assert files[key] == store.get(key)
     assert json.loads(files[layout.ROLLOUT_INDEX]) == {"schema": "sn120-v2-rollouts-index-2", "backfill": None, "bench": [], "gate": [], "schema_doc": "SCHEMA.md"}
     assert (site / "public/rollouts/SCHEMA.md").read_bytes() == (PULL.parent / "static/rollouts/SCHEMA.md").read_bytes()
     assert files["llms.txt"] == files[layout.LLMS_TXT] and files["mining.json"] == files[layout.MINING_JSON]
+    assert json.loads(files["site-data.json"])["winner_stats_url"] == f"{URL}/{layout.WINNER_STATS}"
+    assert [row["uid"] for row in json.loads(files[layout.WINNER_STATS])["winners"]] == [4]
     assert set(json.loads(files[INDEX])["files"]) == copied - {"public/rollouts/SCHEMA.md"} | {LINKS}
     assert not list(site.rglob(".tmp-*")) and "site-data.json" in files["index.html"].decode()
 
@@ -300,6 +305,41 @@ def test_the_reference_models_of_the_v1_history_are_in_the_table_from_the_first_
     assert layout.BENCHMARKS in json.loads((site / INDEX).read_text())["files"]
 
 
+def test_bad_winner_stats_keep_the_last_good_mirror_and_site_data(env, store, tmp_path):
+    site = tmp_path / "site"
+    assert pull(env, site).returncode == 0
+    good = (site / layout.WINNER_STATS).read_bytes()
+    good_data = (site / "site-data.json").read_bytes()
+    stats = json.loads(good)
+    for bad in (stats | {"schema": "other"},
+                stats | {"private": "pending/batch"},
+                stats | {"winners": [dict(stats["winners"][0], uid=999)]},
+                stats | {"winners": [dict(stats["winners"][0], z=999)]},
+                stats | {"winners": [dict(stats["winners"][0], batch_url="https://other.example/public/rounds/r000001/batch.json")]},
+                stats | {"winners": [dict(stats["winners"][0], train={"groups": ["private batch text"]})]}):
+        store.put(layout.WINNER_STATS, json.dumps(bad).encode())
+        done = pull(env, site)
+        assert done.returncode == 1 and "FAILED winner stats" in done.stderr
+        assert (site / layout.WINNER_STATS).read_bytes() == good
+        assert (site / "site-data.json").read_bytes() == good_data
+
+
+def test_a_legacy_store_without_winner_stats_gets_the_safe_public_projection(env, store, tmp_path):
+    """The old mining.json has no winner train/counts. Never invent them when introducing the new mirror."""
+    store.delete(layout.WINNER_STATS)
+    # A legacy publisher's mining.json carries no winner-only transport, unlike today's in-memory fixture.
+    mining = json.loads(store.get(layout.MINING_JSON))
+    store.put(layout.MINING_JSON, json.dumps({key: value for key, value in mining.items() if key != "winner_stats"}).encode())
+    site = tmp_path / "site"
+    done = pull(env, site)
+    assert done.returncode == 0, done.stderr
+    stats = json.loads((site / layout.WINNER_STATS).read_bytes())
+    assert stats["schema"] == "sn120-v2-winner-stats-1" and [row["uid"] for row in stats["winners"]] == [4]
+    assert stats["winners"][0]["batch_url"] == f"{URL}/{layout.winner_batch(stats['winners'][0]['round_id'])}"
+    assert all(stats["winners"][0][key] is None for key in ("batch_prompts", "batch_rollouts", "batch_format", "train"))
+    assert json.loads((site / "site-data.json").read_text())["winner_stats_url"] == f"{URL}/{layout.WINNER_STATS}"
+
+
 def test_a_round_with_no_result_is_on_the_site_after_one_run(env, tmp_path):
     """No training finished: the round has no result, and mining.json gives its entry no ``status``."""
     world = sim.SimWorld(tmp_path / "world", sim.sim_params())
@@ -312,9 +352,11 @@ def test_a_round_with_no_result_is_on_the_site_after_one_run(env, tmp_path):
     store = R2Store.from_env(env, attempts=1)
     for key in world.store.list(""):
         store.put(key, world.store.get(key))
-    mining, llms = render(json.loads(json.dumps(world.publisher.snapshots[-1])), URL)
+    snapshot = json.loads(json.dumps(world.publisher.snapshots[-1]))
+    mining, llms = render(snapshot, URL)
     store.put(layout.MINING_JSON, mining)
     store.put(layout.LLMS_TXT, llms)
+    store.put(layout.WINNER_STATS, json.dumps(winner_stats_from_snapshot(snapshot, URL)).encode())
     assert "status" not in json.loads(mining)["history"][-1]["entries"][0]
     site = tmp_path / "site"
     done = pull(env, site)

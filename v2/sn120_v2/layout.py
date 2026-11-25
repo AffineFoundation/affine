@@ -31,6 +31,7 @@ _PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 CURRENT = "public/head.json"
 LLMS_TXT = "public/llms.txt"
 MINING_JSON = "public/mining.json"
+WINNER_STATS = "public/winner-stats.json"  # crowned winners only; no waiting or losing batch facts
 BENCHMARKS = "public/benchmarks.json"  # written by the benchmark service, read by the website
 # The upload link files, only when the link job runs with ``--to-store`` (``links.py`` builds the same two keys).
 LINK_FILES = "public/ff/links"

@@ -95,14 +95,24 @@ def append_only(previous: Rotation | None, current: Rotation) -> None:
 
 
 def active_file(store: ObjectStore, rotation: Rotation, catalog: MathPool | None = None, *, decision_record: Rotation | None = None) -> None:
+    """Verify content-addressed active sets before publishing any object that names them."""
     opened_at = rotation.opened_at
     store.put(layout.active_pool(rotation.active_sha), canonical_json(list(rotation.active_ids)))
+    try:
+        published = load_active(store, rotation.active_sha)
+    except (KeyError, ValueError, VerifyError) as exc:
+        raise VerifyError("published active pool failed readback") from exc
+    if published != rotation.active_ids:
+        raise VerifyError("published active pool ids differ from the rotation decision")
     if rotation.initial_active_sha:
         # A pure Rotation stores the initial active list in its previous-round
         # artifact when there is no preceding decision; the production open
-        # path writes it explicitly before this function.
-        if not store.exists(layout.active_pool(rotation.initial_active_sha)):
-            raise VerifyError("initial active pool artifact is missing")
+        # path writes it explicitly before this function. A reference to it is
+        # published only after its content-addressed bytes also read back.
+        try:
+            load_active(store, rotation.initial_active_sha)
+        except (KeyError, ValueError, VerifyError) as exc:
+            raise VerifyError("initial active pool artifact is missing or failed readback") from exc
     store.put(layout.pool_rotation(rotation.round_id), (decision_record or rotation).to_json())
     store.put(layout.pool_rotation_state(rotation.digest()), rotation.to_json())
     if rotation.rule_version == INFO_RULE_VERSION:

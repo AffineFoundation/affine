@@ -58,6 +58,123 @@ def test_the_controller_publishes_through_the_real_store(tmp_path):
     assert doc["queue"]["length"] == 1 and "| 0 | 12 | hk12 | 1012 | no |" in text
 
 
+def test_winner_stats_contain_only_applied_crowns_with_public_batch_facts(tmp_path):
+    made = world(tmp_path)
+    made.register(11, 0.4, train={"lora_lr": 0.0001, "steps": 2})
+    first = made.round()
+    made.register(12, 0.0)
+    second = made.round()
+    made.register(13, 0.4)
+    third = made.round()
+    assert [record.outcome for record in (first, second, third)] == ["applied", "null", "applied"]
+    snap = made.publisher.snapshots[-1]
+    doc, _, store = published(snap)
+    stats = json.loads(store[layout.WINNER_STATS])
+    assert "winner_stats" not in doc
+    assert stats["schema"] == public.WINNER_STATS_SCHEMA and type(stats["generated_at"]) is int
+    assert stats["generated_at"] == snap["generated_at"] and [row["uid"] for row in stats["winners"]] == [13, 11]
+    for row in stats["winners"]:
+        expected = next(king for king in made.controller.state.kings if king.round_id == row["round_id"])
+        assert row["head"] == expected.head_version_id and row["applied_at"] == expected.applied_at
+        assert row["batch_url"] == f"https://files.example/{layout.winner_batch(row['round_id'])}"
+        assert row["batch_prompts"] == 1 and row["batch_rollouts"] == 1 and row["batch_format"] == "sim-batch"
+        assert (row["confirmed"], row["paid"], row["payout_status"]) == (True, True, "paid")
+        assert set(row) <= public.WINNER_FIELDS | {"batch_url"}
+    assert stats["winners"][1]["train"] == {"lora_lr": 0.0001, "steps": 2}
+    assert second.round_id not in json.dumps(stats) and "hk12" not in json.dumps(stats)
+    assert all(word not in json.dumps(stats) for word in ("private/", "pending/", "put_url", '"groups"', '"rollouts": ['))
+
+
+def test_winner_transport_is_matched_and_reduced_to_safe_fields(tmp_path):
+    made = world(tmp_path)
+    made.register(11, 0.4)
+    made.register(12, 0.0)
+    made.round()
+    snap = json.loads(json.dumps(made.publisher.snapshots[-1]))
+    row = snap["winner_stats"]["winners"][0]
+    loser = next(entry for entry in snap["history"][0]["entries"] if entry["status"] != "winner")
+    snap["winner_stats"]["winners"] += [
+        dict(row, uid=loser["uid"], hotkey=loser["hotkey"], batch_sha256=loser["batch_sha256"]),
+        {"round_id": "r999999", "uid": 99, "hotkey": "hk99", "batch_sha256": "f" * 64},
+    ]
+    row |= {"uri": "private/rounds/r000001/batches/hk11.json", "reason": "private waiting verdict", "train": {"lora_lr": 0.00005}}
+    doc, _, store = published(snap)
+    stats = json.loads(store[layout.WINNER_STATS])
+    assert len(stats["winners"]) == 1 and stats["winners"][0]["train"] == {"lora_lr": 0.00005}
+    assert "uri" not in stats["winners"][0] and "reason" not in stats["winners"][0]
+    assert "private/" not in json.dumps(stats) and "hk99" not in json.dumps(stats) and "r999999" not in json.dumps(stats)
+    assert "winner_stats" not in doc
+    external = {key: value for key, value in snap.items() if key != "winner_stats"}
+    fallback = public.winner_stats_from_snapshot(external, "https://files.example")
+    assert fallback["winners"][0]["batch_prompts"] is None and fallback["winners"][0]["train"] is None
+    public.validate_winner_stats(external, fallback, "https://files.example")
+
+
+def test_winner_file_validation_rejects_forged_or_extra_public_content(tmp_path):
+    made = world(tmp_path)
+    made.register(11, 0.4, train={"steps": 2})
+    made.round()
+    snap = json.loads(json.dumps(made.publisher.snapshots[-1]))
+    _, _, store = published(snap)
+    stats = json.loads(store[layout.WINNER_STATS])
+    good = stats["winners"][0]
+    bad_rows = [
+        dict(good, uri="private/a-batch"),
+        dict(good, z=999),
+        dict(good, confirmed=False),
+        dict(good, batch_url="https://attacker.example/public/rounds/r000001/batch.json"),
+        dict(good, batch_url="/public/rounds/r000001/batch.json"),
+        dict(good, train={"steps": 2, "uri": "private/a-batch"}),
+        dict(good, train={"groups": ["private prompt"]}),
+        {name: value for name, value in good.items() if name != "lora"},
+    ]
+    for bad in (
+        stats | {"private": "pending/batch"},
+        *(stats | {"winners": [row]} for row in bad_rows),
+    ):
+        with pytest.raises(ValueError):
+            public.validate_winner_stats(snap, bad, "https://files.example")
+    external = {key: value for key, value in snap.items() if key != "winner_stats"}
+    fallback = public.winner_stats_from_snapshot(external, "https://files.example")
+    public.validate_winner_stats(external, fallback, "https://files.example")
+    for name, value in (("batch_prompts", 1), ("batch_rollouts", 1), ("batch_format", "sim-batch"), ("train", {"steps": 2})):
+        with pytest.raises(ValueError):
+            public.validate_winner_stats(external, fallback | {"winners": [fallback["winners"][0] | {name: value}]}, "https://files.example")
+
+
+def test_pending_crown_is_not_reported_as_confirmed_or_paid(tmp_path):
+    made = world(tmp_path, confirm_next_round=True)
+    made.register(11, 0.4)
+    made.round()
+    assert made.controller.state.pending_king is not None and not made.controller.state.kings
+    stats = json.loads(published(made.publisher.snapshots[-1])[2][layout.WINNER_STATS])
+    row = stats["winners"][0]
+    assert row["head"] == made.controller.state.pending_king.new_version_id
+    assert row["applied_at"] == made.controller.state.pending_king.applied_at
+    assert (row["confirmed"], row["paid"], row["payout_status"]) == (False, False, "unpaid")
+
+
+def test_a_failed_resolved_confirmation_is_unpaid_in_winner_stats_and_fallback(tmp_path):
+    made = world(tmp_path, confirm_next_round=True)
+    made.register(11, 0.4)
+    first = made.round()
+    made.evaluator.parent_quality = 0.5
+    made.register(12, 0.0)
+    second = made.round()
+    assert second.confirmation is not None and not second.confirmation.confirmed
+    assert not made.controller.state.kings and made.controller.state.pending_king is None
+    stats = json.loads(published(made.publisher.snapshots[-1])[2][layout.WINNER_STATS])
+    row = next(row for row in stats["winners"] if row["round_id"] == first.round_id)
+    assert (row["confirmed"], row["paid"], row["payout_status"]) == (False, False, "unpaid")
+    external = {key: value for key, value in made.publisher.snapshots[-1].items() if key != "winner_stats"}
+    fallback = public.winner_stats_from_snapshot(external, "https://files.example")
+    assert [(row["round_id"], row["uid"]) for row in fallback["winners"]] == [(row["round_id"], row["uid"]) for row in stats["winners"]]
+    projected = next(row for row in fallback["winners"] if row["round_id"] == first.round_id)
+    assert (projected["confirmed"], projected["paid"], projected["payout_status"]) == (False, False, "unpaid")
+    public.validate_winner_stats(external, fallback, "https://files.example")
+
+
+
 def test_both_files_come_from_one_snapshot_and_change_together(tmp_path):
     running, idle = world(tmp_path, play=True).publisher.snapshots[-2:]
     doc, text, store = published(running)
@@ -401,7 +518,7 @@ def test_private_or_malformed_content_never_reaches_the_public_files(tmp_path, b
     store = MemStore()
     with pytest.raises(ContractError):
         published(world(tmp_path).publisher.snapshots[-1] | bad, store)
-    assert layout.MINING_JSON not in store and layout.LLMS_TXT not in store
+    assert layout.MINING_JSON not in store and layout.LLMS_TXT not in store and layout.WINNER_STATS not in store
 
 
 def test_a_head_is_named_only_after_its_manifest_is_public(tmp_path):
