@@ -116,7 +116,7 @@ SAMPLING_GUIDANCE = ("With 2 rollouts per prompt, one official-head sample of 96
 LOCAL_DELTA_SE = "A 100-task local delta has a standard error of about 5.3 percentage points, estimated from the public 2000-task SE scaled by √(n/100)."
 SFT_SIZING_GUIDANCE = (
     "Start small: SFT is strong. Prefer a lower `sft_weight`, for example 0.1–0.3, and few SFT traces relative to "
-    "GRPO rollouts. Measure `kl_tok` locally with `python -m sn120_v2.replicate run ...` before submission. "
+    "GRPO rollouts. Measure `kl_tok` locally with `python -m sn120_v2.replicate run` and the arguments in section 10 before submission. "
     "One anonymized, unattributed public observation: 120 SFT traces + 80x2 GRPO at `sft_weight=1.0` produced "
     "`kl_tok=0.088` and −7 percentage points, versus GRPO-only +1.7 percentage points. This is only a caution "
     "that a large SFT term at weight 1.0 can move the policy too far, not a predicted result."

@@ -173,7 +173,7 @@ A passing check is not a training, KL, cap-hit, crown or confirmation result. To
 
 ### Conservative v4 SFT sizing
 
-Start small: SFT is strong. Prefer a lower `sft_weight`, for example 0.1–0.3, and few SFT traces relative to GRPO rollouts. Measure `kl_tok` locally with `python -m sn120_v2.replicate run ...` before submission.
+Start small: SFT is strong. Prefer a lower `sft_weight`, for example 0.1–0.3, and few SFT traces relative to GRPO rollouts. Measure `kl_tok` locally with `python -m sn120_v2.replicate run` and the arguments in [`v2/REPLICATE.md`](../v2/REPLICATE.md) before submission.
 
 One anonymized, unattributed public observation: 120 SFT traces + 80x2 GRPO at `sft_weight=1.0` produced `kl_tok=0.088` and −7 percentage points, versus GRPO-only +1.7 percentage points. This is only a caution that a large SFT term at weight 1.0 can move the policy too far, not a predicted result.
 
