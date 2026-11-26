@@ -52,7 +52,7 @@ from sn120_v2.types import WINNER
 
 STATIC = Path(__file__).parent / "static"
 # Order matters: a file is stamped with the hashes of the files before it.
-ASSETS = ("network-haffer.ttf", "network-mono.ttf", "favicon.svg", "site.js", "pool.js", "generator.js", "site.css", "generator.css", "index.html", "v1.html", "pool.html", "generator.html", "generator-guide.md", "generator-guide.html")
+ASSETS = ("network-haffer.ttf", "network-mono.ttf", "favicon.svg", "site.js", "pool.js", "generator.js", "site.css", "generator.css", "index.html", "v1.html", "pool.html", "generator.html", "generator-guide.md", "generator-guide.html", "confirmations.html")
 TEXT = (".css", ".html")
 DATA = "site-data.json"
 POOL_DATA = "pool-data.json"

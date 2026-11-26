@@ -75,7 +75,7 @@ from sn120_v2 import layout
 from sn120_v2.errors import ContractError, V2Error
 from sn120_v2.headchain import chain_links, check_chain, heads_of
 from sn120_v2.r2 import MAX_PRESIGN_S, R2Store
-from sn120_v2.public import validate_winner_stats, winner_enrichment, winner_stats_from_snapshot
+from sn120_v2.public import validate_confirmation_stats, validate_winner_stats, winner_enrichment, winner_stats_from_snapshot
 from sn120_v2.publisher import refuse_private
 from sn120_v2.r2_names import store_env
 from sn120_v2.types import HeadManifest
@@ -95,7 +95,7 @@ ROLLOUT_INDEX = layout.ROLLOUT_INDEX  # the one adoptable hand-written path
 BACKFILL_INDEX = "public/rollouts/backfill_index.json"  # never read from the store, never owned
 ROLLOUT_INDEX_SCHEMA = "sn120-v2-rollouts-index-2"
 ROUND_FILES = (layout.round_file, layout.round_scores, layout.winner_batch)
-FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.WINNER_STATS, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN,
+FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.WINNER_STATS, layout.CONFIRMATION_STATS, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN,
          layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS, layout.POOL_SUMMARY)
 RECHECK_ROUNDS = 2  # the newest round files are read again: a restart of the controller may write one twice
 PAIR_TRIES, PAIR_WAIT_S = 3, 1.0
@@ -317,6 +317,20 @@ class Pull:
         for name, data in (("mining.json", mining), ("llms.txt", llms)):
             self.put(ROOT_COPIES[name], data)
             build.write(self.site / name, data)
+
+    def confirmation_stats(self) -> None:
+        """Mirror only the exact confirmations object of the contract pair; no private journal is read."""
+        mining = json.loads((self.site / layout.MINING_JSON).read_bytes())
+        try:
+            data = self.store.get(layout.CONFIRMATION_STATS)
+            validate_confirmation_stats(json.loads(data), mining)
+        except KeyError:
+            # A legacy publisher has no standalone file yet; the contract pair already carries this public object.
+            if "confirmations" not in mining:
+                raise
+            data = json.dumps(mining["confirmations"], indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()
+        refuse_private(json.loads(data), "confirmation-stats")
+        self.put(layout.CONFIRMATION_STATS, data)
 
     def winner_stats(self) -> None:
         """Crowned-only history, checked before its first mirror. A legacy store gets the safe public projection."""
@@ -691,6 +705,7 @@ def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, m
     pull.step("clean", pull.clean)
     pull.step("llms.txt and mining.json", pull.contract)
     pull.step("winner stats", pull.winner_stats)
+    pull.step("confirmation stats", pull.confirmation_stats)
     pull.step("head and read links", lambda: pull.head(ttl_s))
     pull.step("heads", pull.heads)
     pull.step("rounds", pull.rounds)
@@ -720,6 +735,8 @@ def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, m
     pull.step("site pages", site_pages)
     # A contract that changed while the long pull ran still gets mirrored before this locked run exits.
     pull.step("llms.txt and mining.json final refresh", pull.contract)
+    pull.step("confirmation stats final refresh", pull.confirmation_stats)
+    pull.step("site pages final refresh", site_pages)
     for note in pull.notes:
         print(f"pull: note: {note}", file=sys.stderr)
     for problem in pull.problems:

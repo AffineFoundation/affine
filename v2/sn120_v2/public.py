@@ -360,6 +360,7 @@ def snapshot(
         },
         "kings": [king.to_dict() for king in payees(state.kings, params.kings_window)],
         "paid_kings": [{"uid": king.uid, "round_id": king.round_id} for king in paid_set(state.kings, state.null_rounds, params)],
+        "confirmations": confirmation_stats(state),
         "null_prune_from_round": params.null_prune_from_round,
     }
 
@@ -368,6 +369,92 @@ def snapshot(
 def _crowned_winner(record: RoundRecord) -> EntryDecision | None:
     """An actually crowned/applied king, never a named winner of an abandoned or null round."""
     return record.decision.winner if record.outcome == APPLIED and record.decision is not None else None
+
+
+CONFIRMATION_BANDS = (
+    ("z < 1.0", None, 1.0),
+    ("1.0 <= z < 1.25", 1.0, 1.25),
+    ("1.25 <= z < 1.5", 1.25, 1.5),
+    ("1.5 <= z < 2.0", 1.5, 2.0),
+    ("z >= 2.0", 2.0, None),
+)
+
+
+def confirmation_stats(state: State) -> dict[str, Any]:
+    """Every applied crown under next-round confirmation, newest first; no loser or waiting data.
+
+    Pre-rule crowns are omitted: a crown is in scope only when a later journal record resolved it, or
+    when it is the state's current pending crown. The replayed closed rounds are not shortened to the
+    public snapshot's preview. Resolved rows reuse ``confirmation_view`` for the existing paid flag and
+    payout status. An infrastructure ``no_decision`` is not a failed paired test and enters no rate.
+    """
+    resolved = {record.confirmation.pending_round_id: (record.round_id, record.confirmation)
+                for record in state.rounds if record.confirmation is not None}
+    under_rule = set(resolved)
+    if state.pending_king is not None:
+        under_rule.add(state.pending_king.crown_round_id)
+    rows = []
+    for record in reversed(state.rounds):
+        winner = _crowned_winner(record)
+        if winner is None or record.round_id not in under_rule:
+            continue
+        resolution = resolved.get(record.round_id)
+        if resolution is None:
+            # With the confirmation rule active, only the current crown can still be awaiting its next round.
+            if state.pending_king is None or record.round_id != state.pending_king.crown_round_id:
+                continue
+            status, confirmed, confirmation_round_id = "pending", None, None
+            confirmation_z = confirmation_delta = None
+            paid = False
+        else:
+            confirmation_round_id, confirmation = resolution
+            shown = confirmation_view(confirmation)
+            paid = shown["paid"]
+            no_decision = confirmation.reason.startswith("no_decision") or confirmation.n_tasks == 0
+            status = "no_decision" if no_decision else shown["payout_status"]
+            confirmed = confirmation.confirmed
+            confirmation_z = None if no_decision else confirmation.z
+            confirmation_delta = None if no_decision else confirmation.delta
+        rows.append({
+            "round_id": record.round_id, "uid": winner.uid, "hotkey": winner.hotkey,
+            "z": winner.score.z, "delta": winner.score.delta, "status": status,
+            "confirmation_round_id": confirmation_round_id, "confirmed": confirmed,
+            "confirmation_z": confirmation_z, "confirmation_delta": confirmation_delta, "paid": paid,
+        })
+
+    tested = [row for row in rows if row["status"] in ("paid", "unpaid")]
+
+    def aggregate(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+        paid = sum(row["paid"] for row in items)
+        return {"n": len(items), "paid": paid, "rate": paid / len(items) if items else None}
+
+    bands = []
+    for band, lo, hi in CONFIRMATION_BANDS:
+        bands.append({"band": band, "lo": lo, "hi": hi,
+                      **aggregate([row for row in tested if (lo is None or row["z"] >= lo) and (hi is None or row["z"] < hi)])})
+    cumulative = [{"min_z": min_z, **aggregate([row for row in tested if row["z"] >= min_z])}
+                  for min_z in (0.5, 1.0, 1.25, 1.5, 2.0)]
+    paid_z = [row["z"] for row in tested if row["paid"]]
+    unpaid_z = [row["z"] for row in tested if row["status"] == "unpaid"]
+    return {
+        "rows": rows, "bands": bands, "cumulative": cumulative,
+        "total": {**aggregate(tested), "pending": sum(row["status"] == "pending" for row in rows),
+                  "no_decision": sum(row["status"] == "no_decision" for row in rows)},
+        "lowest_paid_z": min(paid_z) if paid_z else None,
+        "highest_unpaid_z": max(unpaid_z) if unpaid_z else None,
+        "first_round_id": rows[-1]["round_id"] if rows else None,
+        "last_round_id": rows[0]["round_id"] if rows else None,
+    }
+
+
+def validate_confirmation_stats(stats: Mapping[str, Any], snapshot: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The standalone file is the same object embedded in this mining.json; fail closed on any mismatch."""
+    if not isinstance(stats, Mapping) or not isinstance(snapshot.get("confirmations"), Mapping):
+        raise ValueError("confirmation stats is not an object")
+    if to_jsonable(stats) != to_jsonable(snapshot["confirmations"]):
+        raise ValueError("confirmation stats is not the same object as confirmations in mining.json")
+    return stats
+
 
 
 def winner_stats(state: State, now: int, public_url: str = "") -> dict[str, Any]:

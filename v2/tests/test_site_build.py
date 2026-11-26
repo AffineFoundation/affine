@@ -47,7 +47,7 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
     done, out, _ = build(tmp_path, snapshot(tmp_path))
     assert done.returncode == 0, done.stderr
     assert sorted(path.name for path in out.iterdir()) == sorted(
-        ["index.html", "v1.html", "pool", "pool.html", "generator", "generator.html", "generator-guide", "generator-guide.html", "generator-guide.md", "generator.css", "generator.js", "site.css", "site.js", "pool.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
+        ["index.html", "v1.html", "pool", "pool.html", "generator", "generator.html", "generator-guide", "generator-guide.html", "generator-guide.md", "generator.css", "generator.js", "site.css", "site.js", "pool.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf", "confirmations.html"])
     page = (out / "index.html").read_text() + (out / "site.css").read_text()
     for name in ("site.js", "site.css", "favicon.svg"):  # the v1 page gets the same stamped files
         assert re.search(rf"""["']{name}\?v=[0-9a-f]{{8}}["']""", (out / "v1.html").read_text())
@@ -59,6 +59,24 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
         assert hashlib.sha256((out / name).read_bytes()).hexdigest()[:8] == stamp
     assert not re.search(r"""(?:href|src)=["'][\w.-]+\.(?:js|css|svg|ttf)["']""", page)  # no unversioned asset link
     assert f'href="{URL}/{layout.LLMS_TXT}"' in page and f'href="{URL}/{layout.MINING_JSON}"' in page
+
+
+def test_confirmations_page_is_self_contained_and_uses_only_the_public_record(tmp_path):
+    done, out, _ = build(tmp_path, snapshot(tmp_path))
+    assert done.returncode == 0, done.stderr
+    page = (out / "confirmations.html").read_text()
+    assert "{{" not in page
+    for name in ("site.css", "favicon.svg"):
+        assert re.search(rf'href="{name}\?v=[0-9a-f]{{8}}"', page)
+    assert "site.js" not in page and "<script>" in page and 'src="' not in page
+    assert f"fetch('{URL}/public/mining.json'.replace(/[^/]*$/, 'confirmation-stats.json') + '?t=' + Date.now()" in page
+    assert '<a href="supply.html">Supply</a><a href="confirmations.html" aria-current="page">Confirmations</a>' in page
+    assert f'href="{URL}/{layout.LLMS_TXT}"' in page and f'href="{URL}/{layout.MINING_JSON}"' in page
+    assert page.count("<table>") == 3
+    for name in ("round_id", "uid", "status", "confirmation_z", "confirmation_delta"):
+        assert f"row.{name}" in page
+    for forbidden in ("Costa Rica", "CR", "CST", "UTC-6"):
+        assert forbidden not in page
 
 
 def test_pool_page_builds_from_mirrored_summary_and_ranking(tmp_path):
