@@ -1325,7 +1325,13 @@ def _upload_lines(contract_block: Mapping[str, Any]) -> list[str]:
         "  minutes. An activation made for v1 stays valid: do not make it again. Install:",
         '  `pip install -e "v2[links,chain]"`.',
         f"- Where to get the link: {upload['sealed_links']}. The file is public, but only the secret key of your hotkey",
-        f"  opens it. A new file is written every {show(upload['reissue_every_seconds'] / 60)} minutes. Each link works for {show(upload['link_ttl_seconds'] / 3600)} hours.",
+        f"  opens it. The links job runs every minute. Each link works for {show(upload['link_ttl_seconds'] / 3600)} hours.",
+        f"  The live index {upload['index']} gives the authoritative `reissue_every_seconds`.",
+        "- A new registration gets its sealed link within about 2 minutes of the registration showing on chain (after",
+        "  activation), also while a round is open. The validator checks the waiting files once per round, right after",
+        "  the previous round closes and registrations are synced (`queue.files_checked_at` in mining.json); a file must",
+        "  be uploaded before that check to be judged for the next round. A file uploaded after the check waits for the",
+        "  next round's check.",
         "- You have a link while your hotkey is registered, has the activation, and its queue entry is not evaluated",
         "  yet. You may upload again as often as you like. Each upload replaces the file before. The file that is",
         "  stored when a round takes your entry is the file that is trained.",
@@ -1341,8 +1347,8 @@ def _upload_lines(contract_block: Mapping[str, Any]) -> list[str]:
         "  is signed for that header: without it the store refuses the upload.",
         "- The opened URL is a secret. Anyone who has it can replace your file until the link expires.",
         "- HTTP 404 on your link file means one of three things: the hotkey is not registered, it has no activation, or",
-        "  its entry was evaluated. After a new registration or activation, wait for the next link file. A hotkey",
-        "  whose entry was evaluated gets no link again (section 4).",
+        "  its entry was evaluated. After a new registration or activation, wait for the next link file, about 1 to 2",
+        "  minutes. A hotkey whose entry was evaluated gets no link again (section 4).",
         "- After the upload, read `file_valid` in section 4.",
     ]
 
@@ -1829,12 +1835,11 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         "## 7. Payout",
         "",
-        f"- A king is a round winner that was applied. The window is the last {params.kings_window} distinct king UIDs. A UID that wins",
-        "  again has one place in the window, with its newest win."
-        if not params.confirm_next_round else
-        f"- A king is a round winner that was applied and then confirmed in the next round. The window is the last {params.kings_window}",
-        "  distinct king UIDs. Pending and failed crowns are never paid. A confirmed UID that wins again keeps one place, with its newest win."
-        if params.confirm_next_round else "",
+        (f"- A king is a round winner that was applied. The window is the last {params.kings_window} distinct king UIDs. A UID that wins"
+         "  again has one place in the window, with its newest win."
+         if not params.confirm_next_round else
+         f"- A king is a round winner that was applied and then confirmed in the next round. The window is the last {params.kings_window}"
+         "  distinct king UIDs. Pending and failed crowns are never paid. A confirmed UID that wins again keeps one place, with its newest win."),
         f"- Each {beneficiaries} gets an equal share of all the weight, while the hotkey that won is still registered",
         "  on that UID: 1 / (the number of such kings).",
         "- The share of a paid king that is no longer registered is split among the other registered paid kings."
@@ -1845,6 +1850,8 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  registered, the writer sets nothing and the last valid weights stay on chain.",
         f"- One writer sets the weights, with one attempt each {params.weights_cadence_s} s. If the chain read fails or is not complete, or",
         "  the state does not load, that attempt sets nothing and the last valid weights stay on chain.",
+        "- A newly paid king first gets weights from the next hourly write (:05 UTC); with commit-reveal that shows in",
+        "  incentive one to two epochs later (about 1–2.5 h after the round closes).",
         "",
         *(rows_table(kings, KING_COLUMNS) if kings else ["There is no king yet."]),
         "",

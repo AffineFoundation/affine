@@ -775,11 +775,35 @@ def test_the_public_address_of_the_link_files_is_a_setting(tmp_path):
     upload = doc["contract"]["upload"]
     assert doc["contract"]["links_url"] == "https://site.example/ff/links" and upload == links.upload_entry("https://site.example/ff/links")
     assert "Where to get the link: https://site.example/ff/links/<hotkey>.json." in flat
-    assert f"A new file is written every {upload['reissue_every_seconds'] // 60} minutes. Each link works for {upload['link_ttl_seconds'] // 3600} hours." in flat
+    assert f"The links job runs every minute. Each link works for {upload['link_ttl_seconds'] // 3600} hours." in flat
+    assert f"The live index {upload['index']} gives the authoritative `reissue_every_seconds`." in flat
+    assert "A new registration gets its sealed link within about 2 minutes of the registration showing on chain (after activation), also while a round is open." in flat
+    assert "The validator checks the waiting files once per round, right after the previous round closes and registrations are synced (`queue.files_checked_at` in mining.json); a file must be uploaded before that check to be judged for the next round." in flat
+    assert "A file uploaded after the check waits for the next round's check." in flat
+    assert "After a new registration or activation, wait for the next link file, about 1 to 2 minutes." in flat
+    assert "A newly paid king first gets weights from the next hourly write (:05 UTC); with commit-reveal that shows in incentive one to two epochs later (about 1–2.5 h after the round closes)." in flat
+    assert "- A king is a round winner that was applied. The window is the last 10 distinct king UIDs. A UID that wins - A king is a round winner that was applied and then confirmed" not in flat
     assert "links open --hotkey <ss58> --key <seed file> --links-url https://site.example/ff/links)" in flat
     assert "links activate --wallet <wallet name> --hotkey <hotkey name>" in flat and "The opened URL is a secret." in flat
     with pytest.raises(ConfigError):
         publisher.StorePublisher(store, "", "site.example/ff/links")
+
+
+@pytest.mark.parametrize("confirm_next_round", [False, True])
+def test_the_king_definition_is_one_bullet_for_either_confirmation_setting(tmp_path, confirm_next_round):
+    text = published(world(tmp_path, confirm_next_round=confirm_next_round).publisher.snapshots[-1])[1]
+    payout = text.split("## 7. Payout\n", 1)[1].split("\n## 8.", 1)[0]
+    bullets = [line for line in payout.splitlines() if line.startswith("- A king is a round winner")]
+    assert len(bullets) == 1
+    flat = " ".join(payout.split())
+    if confirm_next_round:
+        assert "applied and then confirmed in the next round" in flat
+        assert "Pending and failed crowns are never paid." in flat
+        assert "A UID that wins again has one place" not in flat
+    else:
+        assert "A UID that wins again has one place in the window, with its newest win." in flat
+        assert "applied and then confirmed in the next round" not in flat
+        assert "Pending and failed crowns are never paid." not in flat
 
 
 def test_the_head_names_the_genesis_model_only_while_its_base_is_that_model(tmp_path):
