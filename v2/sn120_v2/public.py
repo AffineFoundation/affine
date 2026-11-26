@@ -360,6 +360,7 @@ def snapshot(
         },
         "kings": [king.to_dict() for king in payees(state.kings, params.kings_window)],
         "paid_kings": [{"uid": king.uid, "round_id": king.round_id} for king in paid_set(state.kings, state.null_rounds, params)],
+        "confirmations": confirmation_stats(state),
         "null_prune_from_round": params.null_prune_from_round,
     }
 

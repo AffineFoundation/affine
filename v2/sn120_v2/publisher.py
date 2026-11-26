@@ -1763,7 +1763,8 @@ def _confirmation_record_lines(doc: Mapping[str, Any], params: Params) -> list[s
         *band_table(stats.get("bands") or []),
         "",
         *table(("minimum original z", "n", "paid", "rate"),
-               [(row["min_z"], row["n"], row["paid"], rate(row["rate"])) for row in stats.get("cumulative") or []]),
+               [(f"{row['min_z']:.2f}".rstrip("0").rstrip(".") + (".0" if row["min_z"] == int(row["min_z"]) else ""),
+                 row["n"], row["paid"], rate(row["rate"])) for row in stats.get("cumulative") or []]),
         "",
         f"Resolved tests: {total.get('n', 0)}; paid: {total.get('paid', 0)}; rate: {rate(total.get('rate'))}. "
         f"Pending: {total.get('pending', 0)}; no_decision: {total.get('no_decision', 0)}. "
@@ -1773,8 +1774,8 @@ def _confirmation_record_lines(doc: Mapping[str, Any], params: Params) -> list[s
         "",
         "Last 30 crowns, newest first. `confirmation z` and `confirmation delta` are the next round's fresh paired test.",
         "",
-        *table(("round_id", "uid", "z", "delta", "confirmed", "confirmation z", "confirmation delta", "paid"),
-               [(row["round_id"], row["uid"], z(row["z"]), delta(row["delta"]), show(row["confirmed"]),
+        *table(("round_id", "uid", "z", "delta", "status", "confirmed", "confirmation z", "confirmation delta", "paid"),
+               [(row["round_id"], row["uid"], z(row["z"]), delta(row["delta"]), row["status"], show(row["confirmed"]),
                  z(row["confirmation_z"]), delta(row["confirmation_delta"]), row["paid"]) for row in rows[:30]]),
         f"Machine-readable record: `{layout.CONFIRMATION_STATS}`; the same object is `confirmations` in mining.json.",
         "",

@@ -48,7 +48,7 @@ from .judging import check_result, decide, duplicate_decision, legacy_parent_one
 from .params import GenesisSpec, Params
 from .payout import payees
 from .public import phase as public_phase
-from .public import confirmation_stats, public_text, round_report, snapshot, winner_stats
+from .public import public_text, round_report, snapshot, winner_stats
 from .queue import SyncPlan, plan_sync, select_round, split_among_boxes, squat_trim, waiting
 from .sampling import make_round_seed, train_seed
 from .seams import Admission, Folder, ObjectStore, Publisher, RoundRunner, TaskSampler
@@ -174,7 +174,6 @@ def public_snapshot(head: HeadPublish, state: State, params: Params, now: int, v
     # In-memory input for StorePublisher, removed before mining.json is rendered. It carries only the crowned
     # winner's already-public facts, never a private lease or batch location. No State reaches the publisher.
     shown["winner_stats"] = winner_stats(state, now)
-    shown["confirmations"] = confirmation_stats(state)
     if head.chain is not None and state.heads:
         shown["head_chain"] = head.chain(state)
     return shown

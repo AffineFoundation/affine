@@ -154,8 +154,32 @@ def test_replayed_state_and_publisher_write_matching_public_record_and_llms(tmp_
     assert "After-the-fact record: each applied crown, its original paired z and delta, and the fresh paired test in the next round that decides payment. A crown is paid only if that test passes." in flat
     assert "descriptive, not a rule change. The crown bar is unchanged: strict `z > 0.5`" in flat
     assert "z < 1.0" in payout and "minimum original z" in payout and "Last 30 crowns" in payout
+    assert "| minimum original z | n | paid | rate |" in payout
+    cumulative = [line for line in payout.splitlines() if line.startswith("| ") and line.split("|")[1].strip()
+                  in {"0.5", "1.0", "1.25", "1.5", "2.0"}]
+    assert [line.split("|")[1].strip() for line in cumulative] == ["0.5", "1.0", "1.25", "1.5", "2.0"]
+    assert "| round_id | uid | z | delta | status | confirmed | confirmation z | confirmation delta | paid |" in payout
+    assert f"| {first.round_id} | 11 | " in payout and " | paid | yes | " in payout
     assert all(word not in text for word in ("Costa Rica", "UTC-6", "CR", "CST"))
     assert layout.CONFIRMATION_STATS == "public/confirmation-stats.json"
+
+
+def test_report_shows_pending_and_no_decision_status_and_direct_public_snapshot_publishes(tmp_path):
+    records = [crown("r000114", 114, 0.6),
+               resolution("r000115", "r000114", 114, confirmed=False, z=0, delta=0, n_tasks=0,
+                          reason="no_decision: parent scoring failed: simulated infrastructure failure"),
+               crown("r000116", 116, 1.0)]
+    pending = PendingKing(116, "hk116", "r000116", "p" * 64, "n" * 64, "a" * 64, 2, 1.0)
+    made = confirming_world(tmp_path)
+    made.controller.state = dataclasses.replace(made.controller.state, rounds=records, pending_king=pending)
+    snapshot = public.snapshot(made.controller.state, made.params, 5)
+    expected = public.confirmation_stats(made.controller.state)
+    store = made.store
+    publisher.StorePublisher(store, "https://files.example/").publish(snapshot)
+    text = store.get(layout.LLMS_TXT).decode()
+    assert json.loads(store.get(layout.CONFIRMATION_STATS)) == expected
+    assert "| r000116 | 116 | 1.000 | 0.0100 | pending | none | none | none | no |" in text
+    assert "| r000114 | 114 | 0.600 | 0.0060 | no_decision | no | none | none | no |" in text
 
 
 def test_confirmation_file_fails_closed_on_tampering(tmp_path):
