@@ -350,6 +350,38 @@ def test_standalone_stats_accept_real_public_heads_and_type_checked_crowned_batc
         public.validate_winner_stats(doc, stats | {"winners": [dict(item, head="not-a-public-head") for item in stats["winners"]]}, "https://files.example")
 
 
+def test_standalone_stats_accept_an_aged_out_well_formed_head_only_without_projection_contradiction(tmp_path):
+    made = world(tmp_path)
+    made.register(11, 0.4)
+    made.round()
+    snapshot = json.loads(json.dumps(made.publisher.snapshots[-1]))
+    snapshot.pop("heads")
+    snapshot["kings"][0]["head_version_id"] = None
+    row = snapshot["winner_stats"]["winners"][0]
+    aged_out = sha256_hex(b"aged-out-parent-version")
+    assert aged_out not in {head["version_id"] for head in snapshot.get("heads", [])}
+    external = {key: value for key, value in snapshot.items() if key != "winner_stats"}
+    assert public.winner_stats_from_snapshot(external)["winners"][0]["head"] is None
+    row["head"] = aged_out
+    stats = {"schema": public.WINNER_STATS_SCHEMA, "generated_at": snapshot["generated_at"], "winners": [row]}
+    public.validate_winner_stats(external, stats)
+
+    for projected_head in (None, ""):
+        snapshot["kings"][0]["head_version_id"] = projected_head
+        public.validate_winner_stats(external, stats)
+
+    for bad in ("not-a-public-head", "A" * 64):
+        row["head"] = bad
+        with pytest.raises(ValueError, match="winner stats head is not a version in the public head history"):
+            public.validate_winner_stats(external, stats)
+
+    other = sha256_hex(b"another-head-not-in-the-public-window")
+    row["head"] = other
+    snapshot["kings"][0]["head_version_id"] = sha256_hex(b"projected-head-not-in-the-public-window")
+    with pytest.raises(ValueError, match="winner stats head is not a version in the public head history"):
+        public.validate_winner_stats(external, stats)
+
+
 def test_pending_crown_is_not_reported_as_confirmed_or_paid(tmp_path):
     made = world(tmp_path, confirm_next_round=True)
     made.register(11, 0.4)

@@ -623,7 +623,14 @@ def validate_winner_stats(snapshot: Mapping[str, Any], document: Mapping[str, An
         if transport and row["head"] != public_row["head"]:
             raise ValueError("winner stats head does not match public history")
         if row["head"] not in public_heads and row["head"] != public_row["head"]:
-            raise ValueError("winner stats head is not a version in the public head history")
+            # A lossy heads-window projection may no longer name an older crown's
+            # head. The producer may still record a parent or pre-fold version that
+            # has since aged out of snapshot["heads"]. Identity fields have already
+            # been checked; accept that remaining well-formed version id only when
+            # the projection has no head to contradict.
+            head, projected = row["head"], public_row["head"]
+            if projected or not (isinstance(head, str) and len(head) == 64 and set(head) <= set("0123456789abcdef")):
+                raise ValueError("winner stats head is not a version in the public head history")
         supplied = transport.get(row["round_id"])
         if supplied is not None and row["confirmed"] != supplied["confirmed"]:
             raise ValueError("winner stats confirmed does not match the crowned winner's confirmation")

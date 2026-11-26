@@ -189,6 +189,17 @@ def load_reserve(root: str | Path | None = None, *, with_catalog: bool = False, 
         raise ConfigError(f"reserve verification failed: {type(exc).__name__}: {exc}") from exc
 
 
+def _read_reserve_shard(root: Path, shard: ReserveShard) -> bytes:
+    """Read the packaged name first, then the content-addressed public mirror name."""
+    path = root / "shards" / shard.shard
+    if not path.is_file():
+        path = root / "shards" / f"{shard.shard}.{shard.sha256}.jsonl"
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise VerifyError(f"reserve shard {shard.shard} cannot be read: {exc}") from exc
+
+
 def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False, allow_retired: bool = False) -> tuple[Reserve, Catalog | None]:
     root = reserve_dir() if root is None else Path(root)
     manifest, withdrawn_raw, lines, withdrawn = read_raw(root)
@@ -252,10 +263,7 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False,
                 normalised.setdefault(normalise(task.problem), task_id)
     retired_ids = {str(row.get("id", "")) for row in retired_rows}
     for shard in history:
-        try:
-            raw = (root / "shards" / shard.shard).read_bytes()
-        except OSError as exc:
-            raise VerifyError(f"reserve shard {shard.shard} cannot be read: {exc}") from exc
+        raw = _read_reserve_shard(root, shard)
         if sha256_hex(raw) != shard.sha256:
             raise VerifyError(f"reserve shard {shard.shard} does not match its manifest sha256")
         rows = _rows(raw, shard.shard)
@@ -325,7 +333,7 @@ def candidate_metadata(root: str | Path | None, reserve: Reserve, catalog: Catal
             task = pool.task(task_id)
             meta[task_id] = {"source_prefix": task_id.split(":", 1)[0], "env": task.slice}
     for shard in reserve.shards:
-        raw = (root / "shards" / shard.shard).read_bytes()
+        raw = _read_reserve_shard(root, shard)
         if sha256_hex(raw) != shard.sha256:
             raise ConfigError(f"reserve shard {shard.shard} does not match its manifest sha256")
         for line in raw.splitlines():
