@@ -353,12 +353,14 @@ class Pull:
         try:
             _, catalog = load_reserve(root, with_catalog=True, allow_retired=True)
         except V2Error as exc:
-            if not required:
-                self.notes.append("winner enrichment check deferred until the public reserve catalog is mirrored")
-                return
-            for row in stats["winners"]:
-                self._strip_enrichment(row, fields=set(row) & ENRICHMENT_FIELDS,
-                                       reason=f"public reserve catalog unavailable ({type(exc).__name__})")
+            # The public reserve on the site uses content-addressed shard names that
+            # load_reserve may not be able to read. Do not discard producer-validated
+            # enrichment when the catalog simply cannot be loaded; only strip when
+            # the catalog is readable and a field cannot be reproduced.
+            self.notes.append(
+                "winner enrichment check deferred until the public reserve catalog is readable "
+                f"({type(exc).__name__})"
+            )
             return
         for row in stats["winners"]:
             fields = set(row) & ENRICHMENT_FIELDS

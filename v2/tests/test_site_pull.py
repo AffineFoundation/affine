@@ -249,13 +249,35 @@ def test_enriched_stats_strip_mismatched_optional_fields_and_mirror_core(env, st
     assert (site / layout.WINNER_STATS).read_bytes() == (site / layout.WINNER_STATS_ALIAS).read_bytes()
 
 
-def test_enrichment_unavailable_after_the_mirror_still_mirrors_sanitized_stats(env, store, tmp_path):
+def test_unavailable_reserve_defers_enrichment_checks_even_after_the_mirror(env, store, tmp_path, monkeypatch):
     stats = json.loads(store.get(layout.WINNER_STATS))
-    store.put(layout.WINNER_STATS, json.dumps(stats | {"winners": [dict(stats["winners"][0], group_count=1)]}).encode())
+    enriched = stats | {"winners": [dict(stats["winners"][0], group_count=1)]}
+    store.put(layout.WINNER_STATS, json.dumps(enriched).encode())
+
+    monkeypatch.syspath_prepend(str(PULL.parent))
+    import pull as pull_module
+    from sn120_v2.errors import ConfigError
+
+    checked = json.loads(json.dumps(enriched))
+    site = tmp_path / "direct"
+    site.mkdir()
+    instance = pull_module.Pull(store, site, 123)
+
+    def unavailable(*args, **kwargs):
+        raise ConfigError("reserve verification failed: public shard layout is unreadable")
+
+    monkeypatch.setattr("sn120_v2.envs.reserve.load_reserve", unavailable)
+    instance._check_enrichment({}, checked, required=True)
+    assert checked == enriched
+    assert instance.notes == ["winner enrichment check deferred until the public reserve catalog is readable (ConfigError)"]
+
     done = pull(env, tmp_path / "fresh")
     assert done.returncode == 0, done.stderr
-    assert "winner enrichment stripped" in done.stderr and "public reserve catalog unavailable" in done.stderr
-    assert "group_count" not in json.loads((tmp_path / "fresh" / layout.WINNER_STATS).read_bytes())["winners"][0]
+    assert "winner enrichment check deferred until the public reserve catalog is readable (ConfigError)" in done.stderr
+    assert "winner enrichment stripped" not in done.stderr
+    mirrored = (tmp_path / "fresh" / layout.WINNER_STATS).read_bytes()
+    assert json.loads(mirrored) == enriched
+    assert mirrored == (tmp_path / "fresh" / layout.WINNER_STATS_ALIAS).read_bytes()
 
 
 def test_only_keys_that_the_layout_names_are_read(env, store, tmp_path):
