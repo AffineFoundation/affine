@@ -777,10 +777,10 @@ def test_the_public_address_of_the_link_files_is_a_setting(tmp_path):
     assert "Where to get the link: https://site.example/ff/links/<hotkey>.json." in flat
     assert f"The links job runs every minute. Each link works for {upload['link_ttl_seconds'] // 3600} hours." in flat
     assert f"The live index {upload['index']} gives the authoritative `reissue_every_seconds`." in flat
-    assert "A new registration gets its sealed link within about 2 minutes of the registration showing on chain (after activation), also while a round is open." in flat
+    assert "A new registration gets its sealed link within about 5 minutes of the registration showing on chain (after activation), also while a round is open." in flat
     assert "The validator checks the waiting files once per round, right after the previous round closes and registrations are synced (`queue.files_checked_at` in mining.json); a file must be uploaded before that check to be judged for the next round." in flat
     assert "A file uploaded after the check waits for the next round's check." in flat
-    assert "After a new registration or activation, wait for the next link file, about 1 to 2 minutes." in flat
+    assert "After a new registration or activation, wait for the next link file, within about 5 minutes." in flat
     assert "A newly paid king first gets weights from the next hourly write (:05 UTC); with commit-reveal that shows in incentive one to two epochs later (about 1–2.5 h after the round closes)." in flat
     assert "- A king is a round winner that was applied. The window is the last 10 distinct king UIDs. A UID that wins - A king is a round winner that was applied and then confirmed" not in flat
     assert "links open --hotkey <ss58> --key <seed file> --links-url https://site.example/ff/links)" in flat

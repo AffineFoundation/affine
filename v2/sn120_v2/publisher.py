@@ -65,7 +65,7 @@ from .params import (
     Params,
     Recipe,
 )
-from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, HISTORY_PREVIEW, NOT_JUDGED, NOT_VALID, QUEUE_PREVIEW, TEXT_LIMIT, VALID, WINNER_STATS_SCHEMA, enrich_winner_stats, validate_winner_stats, winner_stats_from_snapshot
+from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, HISTORY_PREVIEW, NOT_JUDGED, NOT_VALID, QUEUE_PREVIEW, TEXT_LIMIT, VALID, WINNER_STATS_SCHEMA, enrich_winner_stats, validate_confirmation_stats, validate_winner_stats, winner_stats_from_snapshot
 from .queue import SECONDS_PER_DAY
 from .sampling import SEED_BITS
 from .seams import ObjectStore
@@ -294,6 +294,7 @@ def object_keys() -> dict[str, str]:
         "llms_txt": layout.LLMS_TXT,
         "mining_json": layout.MINING_JSON,
         "winner_stats": layout.WINNER_STATS,
+        "confirmation_stats": layout.CONFIRMATION_STATS,
         "current_head": layout.CURRENT,
         "head_manifest": layout.head_manifest("VERSION_ID"),
         "base_file": layout.public_base_prefix("BASE_HASH") + "/FILE",
@@ -1327,7 +1328,7 @@ def _upload_lines(contract_block: Mapping[str, Any]) -> list[str]:
         f"- Where to get the link: {upload['sealed_links']}. The file is public, but only the secret key of your hotkey",
         f"  opens it. The links job runs every minute. Each link works for {show(upload['link_ttl_seconds'] / 3600)} hours.",
         f"  The live index {upload['index']} gives the authoritative `reissue_every_seconds`.",
-        "- A new registration gets its sealed link within about 2 minutes of the registration showing on chain (after",
+        "- A new registration gets its sealed link within about 5 minutes of the registration showing on chain (after",
         "  activation), also while a round is open. The validator checks the waiting files once per round, right after",
         "  the previous round closes and registrations are synced (`queue.files_checked_at` in mining.json); a file must",
         "  be uploaded before that check to be judged for the next round. A file uploaded after the check waits for the",
@@ -1347,7 +1348,7 @@ def _upload_lines(contract_block: Mapping[str, Any]) -> list[str]:
         "  is signed for that header: without it the store refuses the upload.",
         "- The opened URL is a secret. Anyone who has it can replace your file until the link expires.",
         "- HTTP 404 on your link file means one of three things: the hotkey is not registered, it has no activation, or",
-        "  its entry was evaluated. After a new registration or activation, wait for the next link file, about 1 to 2",
+        "  its entry was evaluated. After a new registration or activation, wait for the next link file, within about 5",
         "  minutes. A hotkey whose entry was evaluated gets no link again (section 4).",
         "- After the upload, read `file_valid` in section 4.",
     ]
@@ -1731,6 +1732,55 @@ def _payout_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     ]
 
 
+def _confirmation_record_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
+    """Descriptive paired-test history, rendered from the same object as mining.json and its public mirror."""
+    stats = doc.get("confirmations") or {}
+    rows, total = stats.get("rows") or [], stats.get("total") or {"n": 0, "paid": 0, "rate": None, "pending": 0, "no_decision": 0}
+
+    def z(value: Any) -> Any:
+        return f"{value:.3f}" if value is not None else "none"
+
+    def delta(value: Any) -> Any:
+        return f"{value:.4f}" if value is not None else "none"
+
+    def rate(value: Any) -> Any:
+        return f"{round(100 * value)}%" if value is not None else "none"
+
+    def band_table(entries: Sequence[Mapping[str, Any]]) -> list[str]:
+        return table(("band", "n", "paid", "rate"),
+                     [(row["band"], row["n"], row["paid"], rate(row["rate"])) for row in entries])
+
+    return [
+        "### Crown confirmation record",
+        "",
+        "After-the-fact record: each applied crown, its original paired z and delta, and the fresh paired test in the next round",
+        "that decides payment. A crown is paid only if that test passes.",
+        "Crowns before the confirmation rule are omitted. `pending` has no next-round test yet; `no_decision` means that test",
+        "could not run for an infrastructure reason, so it is unpaid and has null confirmation z/delta. Bands, cumulative rows",
+        "and the total rate include only completed paid/unpaid tests. A crown that is no longer in the current paid window still",
+        "has `paid=true`: this records the result of its test, not a separate or new payout rule.",
+        "",
+        *band_table(stats.get("bands") or []),
+        "",
+        *table(("minimum original z", "n", "paid", "rate"),
+               [(row["min_z"], row["n"], row["paid"], rate(row["rate"])) for row in stats.get("cumulative") or []]),
+        "",
+        f"Resolved tests: {total.get('n', 0)}; paid: {total.get('paid', 0)}; rate: {rate(total.get('rate'))}. "
+        f"Pending: {total.get('pending', 0)}; no_decision: {total.get('no_decision', 0)}. "
+        f"Lowest paid original z: {z(stats.get('lowest_paid_z'))}; highest unpaid original z: {z(stats.get('highest_unpaid_z'))}.",
+        "This record is descriptive, not a rule change. The crown bar is unchanged: strict "
+        f"`z > {show(params.z_bar)}`.",
+        "",
+        "Last 30 crowns, newest first. `confirmation z` and `confirmation delta` are the next round's fresh paired test.",
+        "",
+        *table(("round_id", "uid", "z", "delta", "confirmed", "confirmation z", "confirmation delta", "paid"),
+               [(row["round_id"], row["uid"], z(row["z"]), delta(row["delta"]), show(row["confirmed"]),
+                 z(row["confirmation_z"]), delta(row["confirmation_delta"]), row["paid"]) for row in rows[:30]]),
+        f"Machine-readable record: `{layout.CONFIRMATION_STATS}`; the same object is `confirmations` in mining.json.",
+        "",
+    ]
+
+
 def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     kings, keys, url = doc.get("kings") or [], object_keys(), doc["contract"]["public_url"]
     beneficiaries = "paid king" if params.null_prune_from_round else "king of the window"
@@ -1854,6 +1904,8 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  incentive one to two epochs later (about 1–2.5 h after the round closes).",
         "",
         *(rows_table(kings, KING_COLUMNS) if kings else ["There is no king yet."]),
+        "",
+        *_confirmation_record_lines(doc, params),
         "",
         "## 8. The IRT snapshot",
         "",
@@ -2277,6 +2329,9 @@ class StorePublisher:
         a failed store raises ``InfraError`` and the controller publishes again.
         """
         stats = validate_winner_stats(snapshot, winner_stats_from_snapshot(snapshot, self.public_url), self.public_url)
+        confirmations = validate_confirmation_stats(snapshot.get("confirmations") or {}, snapshot)
+        confirmations_bytes = (json.dumps(confirmations, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+        refuse_private(confirmations, "confirmation-stats")
         # This transport carries crowned-only facts into the separate public file. It is not part of mining.json;
         # the publisher still receives only a mapping, never State or private journal/batch locations.
         mining, llms = render({key: value for key, value in snapshot.items() if key != "winner_stats"},
@@ -2292,7 +2347,7 @@ class StorePublisher:
                 verify_public_pool_snapshot(self.store, snapshot)
             except V2Error as exc:
                 raise InfraError(f"public pool verification failed: {exc}") from exc
-            for key, data in ((layout.MINING_JSON, mining), (layout.LLMS_TXT, llms)):
+            for key, data in ((layout.MINING_JSON, mining), (layout.LLMS_TXT, llms), (layout.CONFIRMATION_STATS, confirmations_bytes)):
                 self.store.put(key, data)
                 if self.store.sha256(key) != sha256_hex(data):
                     raise InfraError(f"{key} does not read back as written")

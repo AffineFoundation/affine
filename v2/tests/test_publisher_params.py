@@ -179,8 +179,8 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"after {admission.FAULT_TRIES} failed checks in a row",
         f"After {admission.FAULT_TRIES} counted checks in a row",
         f"No seat is moved when no turn was charged in the last {queue.SECONDS_PER_DAY // 3600} hours.",
-        "A new registration gets its sealed link within about 2 minutes",
-        "wait for the next link file, about 1 to 2 minutes",
+        "A new registration gets its sealed link within about 5 minutes",
+        "wait for the next link file, within about 5 minutes",
         "A newly paid king first gets weights from the next hourly write (:05 UTC); with commit-reveal that shows in incentive one to two epochs later (about 1–2.5 h after the round closes).",
         f"Each link works for {publisher.show(upload['link_ttl_seconds'] / 3600)} hours",
         f"a text of more than {public.TEXT_LIMIT} characters",
@@ -310,6 +310,9 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     start = text.index("## Start here:")
     end = text.index("### Live task bodies and rotation", start)
     spans += [(start, end), *(found.span() for found in re.finditer("section 5", text))]
+    # This report is replayed history, not a parameter or a rule. Its numbers move with the state.
+    start = text.index("### Crown confirmation record")
+    spans.append((start, text.index("## 8.", start)))
     typed = [f"...{text[max(0, at - 70) : at]}>>{text[at : at + 30]}..." for at in digits if not any(low <= at < high for low, high in spans)]
     assert not typed, "a number in llms.txt that no parameter and no named constant gives:\n" + "\n".join(typed)
     unused = [phrase for phrase in phrases if phrase in flat[1] and not any(low <= at < high for found in re.finditer(re.escape(phrase), text) for low, high in [found.span()] for at in digits)]

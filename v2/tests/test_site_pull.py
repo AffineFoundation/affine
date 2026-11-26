@@ -34,7 +34,7 @@ URL = "https://site.example"
 SECRET = "fake-secret-value-never-shown"
 LINKS, INDEX = "public/read_links.json", "public/pull_index.json"
 BUILT = {"index.html", "v1.html", "pool.html", "pool/index.html", "pool.js", "site.css", "site.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf",
-         "generator.html", "generator/index.html", "generator.js", "generator.css", "generator-guide.md", "generator/generator-guide.md", "generator-guide.html", "generator-guide/index.html"}
+         "generator.html", "generator/index.html", "generator.js", "generator.css", "generator-guide.md", "generator/generator-guide.md", "generator-guide.html", "generator-guide/index.html", "confirmations.html"}
 FOREIGN = {  # what other software keeps under public/ of the same bucket, and keys that only look like v2's
     "public/41/current.json": b'{"epoch": 41}',
     "public/streams/main/current.json": b'{"stream": "main"}',
@@ -115,7 +115,7 @@ def test_one_run_copies_the_keys_of_the_layout_writes_the_links_and_builds_the_s
     mining = json.loads(files[layout.MINING_JSON])
     small = [key for key in store.list("public/") if key.startswith(("public/heads/", "public/rounds/")) and key not in FOREIGN]
     tables = {layout.irt_snapshot(mining["irt_snapshot_id"])} | {layout.irt_snapshot(row["irt_snapshot_id"]) for row in mining["history"]}
-    copied = {layout.MINING_JSON, layout.LLMS_TXT, layout.WINNER_STATS, layout.CURRENT, *small, *tables, layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}
+    copied = {layout.MINING_JSON, layout.LLMS_TXT, layout.WINNER_STATS, layout.CONFIRMATION_STATS, layout.CURRENT, *small, *tables, layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}
     assert len(small) == 4 and set(files) == copied | {LINKS, INDEX, "llms.txt", "mining.json", layout.WINNER_STATS_ALIAS} | BUILT
     for key in copied - {layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}:  # mirrored objects are byte-identical
         assert files[key] == store.get(key)
@@ -167,10 +167,15 @@ def test_the_run_invokes_winner_stats_immediately_after_the_contract(env, tmp_pa
     assert module.run(store=None, site=tmp_path, public_url=URL, ttl_s=1, keep_rounds=2, max_bytes=1,
                       v1_history=None, now=1) == 0
     assert called[1][0] == "llms.txt and mining.json" and called[2][0] == "winner stats"
-    assert called[-1][0] == "llms.txt and mining.json final refresh"
-    assert called[-1][1].__func__ is module.Pull.contract
+    assert called[-1][0] == "site pages final refresh"
+    assert called[-2][0] == "confirmation stats final refresh"
+    assert called[-2][1].__func__ is module.Pull.confirmation_stats
+    assert called[-3][0] == "llms.txt and mining.json final refresh"
+    assert called[-3][1].__func__ is module.Pull.contract
     assert called[2][1].__func__ is module.Pull.winner_stats
-    assert layout.WINNER_STATS in module.FIXED
+    assert called[3][0] == "confirmation stats"
+    assert called[3][1].__func__ is module.Pull.confirmation_stats
+    assert layout.WINNER_STATS in module.FIXED and layout.CONFIRMATION_STATS in module.FIXED
 
 
 def test_a_contract_changed_during_pull_is_mirrored_before_exit(env, store, tmp_path):
@@ -188,11 +193,14 @@ def test_a_contract_changed_during_pull_is_mirrored_before_exit(env, store, tmp_
         from sn120_v2.publisher import render
         snap = {key: value for key, value in copy.deepcopy(made).items() if key not in ("snapshot_digest", "contract")}
         snap["generated_at"] = generated + 100
+        newer_confirmations = snap["confirmations"] | {"total": snap["confirmations"]["total"] | {"pending": 99}}
+        snap["confirmations"] = newer_confirmations
         newer_mining, newer_llms = render(snap, URL)
 
         def change_mid_run(self, ttl_s):
             store.put(layout.MINING_JSON, newer_mining)
             store.put(layout.LLMS_TXT, newer_llms)
+            store.put(layout.CONFIRMATION_STATS, json.dumps(newer_confirmations).encode())
 
         monkeypatch.setattr(module.Pull, "head", change_mid_run)
         assert module.run(store, tmp_path, URL, 1, 200, 128 << 20, None, 1) == 0
@@ -201,6 +209,7 @@ def test_a_contract_changed_during_pull_is_mirrored_before_exit(env, store, tmp_
         assert (tmp_path / "mining.json").read_bytes() == newer_mining
         assert (tmp_path / "llms.txt").read_bytes() == newer_llms
         assert json.loads(newer_mining)["snapshot_digest"] != old_digest
+        assert json.loads((tmp_path / layout.CONFIRMATION_STATS).read_bytes())["total"]["pending"] == 99
     finally:
         monkeypatch.undo()
 
@@ -445,6 +454,37 @@ def test_bad_winner_stats_keep_the_last_good_mirror_and_site_data(env, store, tm
         assert done.returncode == 1 and "FAILED winner stats" in done.stderr
         assert (site / layout.WINNER_STATS).read_bytes() == good
         assert (site / "site-data.json").read_bytes() == good_data
+
+
+def test_confirmation_stats_mirror_validates_the_contract_and_supports_an_older_store(env, store, tmp_path):
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.syspath_prepend(str(PULL.parent))
+        spec = importlib.util.spec_from_file_location("sn120_site_pull_confirmation_test", PULL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        site = tmp_path / "site"
+        (site / "public").mkdir(parents=True)
+        mining = store.get(layout.MINING_JSON)
+        module.build.write(site / layout.MINING_JSON, mining)
+        instance = module.Pull(store, site, 123)
+        instance.confirmation_stats()
+        mirrored = site / layout.CONFIRMATION_STATS
+        good = mirrored.read_bytes()
+        assert json.loads(good) == json.loads(mining)["confirmations"]
+        assert good == store.get(layout.CONFIRMATION_STATS)
+
+        bad = json.loads(good) | {"total": json.loads(good)["total"] | {"pending": 99}}
+        store.put(layout.CONFIRMATION_STATS, json.dumps(bad).encode())
+        with pytest.raises(ValueError, match="same object"):
+            instance.confirmation_stats()
+        assert mirrored.read_bytes() == good
+
+        store.delete(layout.CONFIRMATION_STATS)
+        instance.confirmation_stats()
+        assert json.loads(mirrored.read_bytes()) == json.loads(mining)["confirmations"]
+    finally:
+        monkeypatch.undo()
 
 
 def test_a_legacy_store_without_winner_stats_gets_the_safe_public_projection(env, store, tmp_path):
