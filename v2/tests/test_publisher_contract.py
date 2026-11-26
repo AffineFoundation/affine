@@ -789,6 +789,23 @@ def test_the_public_address_of_the_link_files_is_a_setting(tmp_path):
         publisher.StorePublisher(store, "", "site.example/ff/links")
 
 
+@pytest.mark.parametrize("confirm_next_round", [False, True])
+def test_the_king_definition_is_one_bullet_for_either_confirmation_setting(tmp_path, confirm_next_round):
+    text = published(world(tmp_path, confirm_next_round=confirm_next_round).publisher.snapshots[-1])[1]
+    payout = text.split("## 7. Payout\n", 1)[1].split("\n## 8.", 1)[0]
+    bullets = [line for line in payout.splitlines() if line.startswith("- A king is a round winner")]
+    assert len(bullets) == 1
+    flat = " ".join(payout.split())
+    if confirm_next_round:
+        assert "applied and then confirmed in the next round" in flat
+        assert "Pending and failed crowns are never paid." in flat
+        assert "A UID that wins again has one place" not in flat
+    else:
+        assert "A UID that wins again has one place in the window, with its newest win." in flat
+        assert "applied and then confirmed in the next round" not in flat
+        assert "Pending and failed crowns are never paid." not in flat
+
+
 def test_the_head_names_the_genesis_model_only_while_its_base_is_that_model(tmp_path):
     made = world(tmp_path).controller.state.head
     fields = dict(base_fp32_master_digest=made.base_fp32_master_digest, loras=(), round_id=made.round_id, applied_at=made.applied_at)

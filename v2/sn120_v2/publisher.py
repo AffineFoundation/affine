@@ -1835,8 +1835,11 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         "## 7. Payout",
         "",
-        f"- A king is a round winner that was applied and then confirmed in the next round. The window is the last {params.kings_window}",
-        "  distinct king UIDs. Pending and failed crowns are never paid. A confirmed UID that wins again keeps one place, with its newest win.",
+        (f"- A king is a round winner that was applied. The window is the last {params.kings_window} distinct king UIDs. A UID that wins"
+         "  again has one place in the window, with its newest win."
+         if not params.confirm_next_round else
+         f"- A king is a round winner that was applied and then confirmed in the next round. The window is the last {params.kings_window}"
+         "  distinct king UIDs. Pending and failed crowns are never paid. A confirmed UID that wins again keeps one place, with its newest win."),
         f"- Each {beneficiaries} gets an equal share of all the weight, while the hotkey that won is still registered",
         "  on that UID: 1 / (the number of such kings).",
         "- The share of a paid king that is no longer registered is split among the other registered paid kings."
