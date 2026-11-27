@@ -24,7 +24,8 @@ finite-population term, so it is slightly on the safe side. With equal
 weights it is the paired standard error: sd(d) / sqrt(n).
 
 Win rule. A LoRA is eligible when it was scored on every task, z is strictly
-above ``z_bar``, and its cap-hit rate is not above
+above the crown bar (``params.crown_bar``: ``z_crown`` when set, else ``z_bar``),
+and its cap-hit rate is not above
 max(cap_hit_floor, null cap-hit rate + cap_hit_margin). Only a rate strictly
 greater than that limit is rejected. The eligible LoRA with the highest
 delta wins. A tie goes to the earlier-queued entry. With no eligible LoRA,
@@ -54,7 +55,7 @@ import dataclasses
 import math
 from fractions import Fraction
 from statistics import NormalDist, median
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from .errors import ContractError, HeadMismatchError
 from .params import Params
@@ -265,8 +266,8 @@ def score_entry(
     if params.crown_gate == "argmax_symmetric":
         if not delta > TIE_TOLERANCE:
             reasons.append(f"delta {delta:.6g} does not beat the king by more than {TIE_TOLERANCE:g}")
-        if params.z_bar > 0 and not (se > 0 and z > params.z_bar):
-            reasons.append(f"z {z:.3f} is not above {params.z_bar:g}")
+        if params.crown_bar > 0 and not (se > 0 and z > params.crown_bar):
+            reasons.append(f"z {z:.3f} is not above {params.crown_bar:g}")
     elif not z > params.z_bar:
         reasons.append(f"z {z:.3f} is not above {params.z_bar:g}")
     rollouts = n * len(lora_outcomes)
@@ -429,8 +430,12 @@ def decide(
     leases: Sequence[tuple[RoundTicket, BoxResult]],
     duplicate_evidence: Sequence[EntryDecision] = (),
     duplicate_clusters: Sequence[dict] = (),
+    gates: Mapping[int, str] | None = None,
 ) -> RoundDecision:
     """Settle a round from sealed results and replayable duplicate evidence.
+
+    ``gates`` maps a queue position to a reason it cannot crown (computed by the controller, e.g. the
+    anti-recitation check). Such a scored entry, like one above ``max_kl_tok``, stays a charged ``lost``.
 
     Null updates are terminal before duplicate keepers or scoring candidates are selected. Stage-B
     ``duplicate_evidence`` is an input, not a post-hoc rewrite, so a duplicate can never win.
@@ -463,6 +468,7 @@ def decide(
     field_scores: list[tuple[int, Score, Sequence[str]]] = []
     seats = {seat.queue_pos: seat for ticket, _ in leases for seat in ticket.entries}
     _need(len(seats) == sum(len(ticket.entries) for ticket, _ in leases), "a queue position occurs twice")
+    blocked = dict(gates or {})
     copies = {}
     for row in duplicate_evidence:
         seat = seats.get(row.queue_pos)
@@ -485,7 +491,7 @@ def decide(
                 continue
             if params.kl_floor_on:
                 if entry.kl_seq is None:
-                    enabled = "min_kl_seq" if params.min_kl_seq > 0 else "min_kl_tok"
+                    enabled = "min_kl_seq" if params.min_kl_seq > 0 else "min_kl_tok" if params.min_kl_tok > 0 else "max_kl_tok"
                     rows.append((seat, entry, NO_DECISION,
                                  f"KL measurement is missing while {enabled} is enabled", None))
                     continue
@@ -497,6 +503,9 @@ def decide(
                     rows.append((seat, entry, NULL_UPDATE,
                                  f"measured KL {entry.kl_tok:.3g} nats/token is below min_kl_tok {params.min_kl_tok:g}", None))
                     continue
+                if params.max_kl_tok > 0 and entry.kl_tok > params.max_kl_tok and seat.queue_pos not in blocked:
+                    blocked[seat.queue_pos] = (f"behaviour KL {entry.kl_tok:.3g} nats/token is above "
+                                               f"max_kl_tok {params.max_kl_tok:g}")
             if seat.queue_pos in copies:
                 copy = copies[seat.queue_pos]
                 rows.append((seat, entry, DUPLICATE, copy.reason, None))
@@ -536,16 +545,18 @@ def decide(
         rows = [(seat, entry, status, reason, gated[seat.queue_pos] if status == LOST else score)
                 for seat, entry, status, reason, score in rows]
 
-    winner = pick_winner(candidates)
+    winner = pick_winner([(position, score) for position, score in candidates if position not in blocked])
     entries = []
     for seat, entry, status, reason, score in sorted(rows, key=lambda row: row[0].queue_pos):
-        if status == LOST:
+        if status == LOST and seat.queue_pos in blocked:
+            reason = blocked[seat.queue_pos]
+        elif status == LOST:
             status = WINNER if seat.queue_pos == winner else LOST
             reason = "" if status == WINNER else "; ".join(score.reasons) or "another LoRA had a higher delta"
         entries.append(_entry_decision(seat, entry, status, reason, score))
 
     if winner is not None and params.crown_gate == "argmax_symmetric":
-        why = f"entry {winner} had the highest mean pass rate, above the king" + (f", with z above {params.z_bar:g}" if params.z_bar > 0 else "")
+        why = f"entry {winner} had the highest mean pass rate, above the king" + (f", with z above {params.crown_bar:g}" if params.crown_bar > 0 else "")
     elif winner is not None and params.crown_gate == "field_median":
         why = (f"entry {winner} beat M by more than {params.z_bar:g} SE and the field's "
                f"per-task median by more than {params.z_field_bar:g} SE")

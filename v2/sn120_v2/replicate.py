@@ -30,8 +30,8 @@ from typing import Any, Callable, Mapping, Sequence
 from transformers import AutoTokenizer
 
 from . import judging, layout
-from .admission import Grader, HFTokens, Invalid, LazyPool, Tokens, check_batch, pool_grader
-from .canonical import file_sha256, manifest_digest, to_jsonable
+from .admission import Grader, HFTokens, Invalid, LazyPool, Tokens, check_batch, frozen_batch, pool_grader
+from .canonical import file_sha256, manifest_digest, sha256_hex, to_jsonable
 from .envs.math_grader import GradePool
 from .envs.math_pool import ENV_ID, POOL_SHA256, MathPool, load_pool, pool_for_draw
 from .errors import ConfigError, InfraError, V2Error, VerifyError
@@ -46,6 +46,7 @@ from .headchain import heads_of
 from .headfold import FoldSettings, LinkSource, download, read, read_json, rebuild, say
 from .irt import draw_from_snapshot
 from .params import Params
+from .recite import PoolIndex, ReciteReport, fail_reason as recite_fail_reason, measure_batch
 from .seams import Evaluator, ObjectStore, Trainer
 from .store import LocalStore
 from .types import CAP, NOT_RUN, PASS, Draw, Entry, FrozenBatch, HeadManifest, HeadVersion, Registration, RoundTicket
@@ -147,7 +148,7 @@ def local_params(params: Params, image: str, code: str, gpus: int, round_clock: 
         stop = params.round_time_limit_s - params.promote_reserve_s
         note("round-clock", f"No time limit of the round applies. On the box the training ends {params.train_time_budget_s} s after the start of the round and the scoring stops at {stop} s; what is scored by then is the whole test. The limit of one reply ({params.eval_time_budget_s} s) is the same here.")
         changes.update(round_time_limit_s=NO_ROUND_LIMIT_S, lease_timeout_s=NO_ROUND_LIMIT_S, promote_reserve_s=0, train_time_budget_s=NO_ROUND_LIMIT_S - 1)
-    note("one-batch", f"This is a round of one batch. The result says whether this LoRA beats null M by the win rule" + (f": delta above the tie tolerance and z strictly above {params.z_bar}, with positive standard error" if params.crown_gate == "argmax_symmetric" and params.z_bar > 0 else "") + f". In a real round the eligible LoRA with the highest delta wins. The training job has all {gpus} GPU(s) of this run; on the box a job has floor({params.n_gpus} / batches of the round) GPUs, at least 1. The LoRA table of the servers (--max-loras) is 1; on the box it is the number of batches of the round.")
+    note("one-batch", f"This is a round of one batch. The result says whether this LoRA beats null M by the win rule" + (f": delta above the tie tolerance and z strictly above {params.crown_bar}, with positive standard error" if params.crown_gate == "argmax_symmetric" and params.crown_bar > 0 else "") + f". In a real round the eligible LoRA with the highest delta wins. The training job has all {gpus} GPU(s) of this run; on the box a job has floor({params.n_gpus} / batches of the round) GPUs, at least 1. The LoRA table of the servers (--max-loras) is 1; on the box it is the number of batches of the round.")
     note("master", "For eval_merged=true the real fp32 master is required and is large (tens of GB): fetch downloads and verifies it, and run builds the official fp32-master + LoRA candidate. For eval_merged=false the master is not required.")
     note("free-gpus", f"Before the scoring starts, only GPUs 0 to {gpus - 1} must be free. The box waits for all of its GPUs.")
     return (dataclasses.replace(params, **changes) if changes else params), notes
@@ -416,6 +417,7 @@ class Round:
     draw: Draw  # the tasks the run scores, in the order of the round
     view: Mapping[str, Any]  # what is public about the real round; only the seed for a seed of your choice
     box_file: Mapping[str, Any] | None  # the public round file, when one was given
+    active_ids: tuple[str, ...] | None = None  # active task ids; absent means the unrotated base pool
 
 
 def the_round(contract: Contract, *, round_id: str | None = None, round_file: str | None = None, round_seed: str | None = None, irt_snapshot: str | None = None, first_tasks: int | None = None) -> Round:
@@ -440,6 +442,34 @@ def the_round(contract: Contract, *, round_id: str | None = None, round_file: st
         draw = Draw(draw.snapshot_id, draw.round_seed, draw.task_ids[:first_tasks], draw.weights[:first_tasks])
     shown = {"round_id": view.get("round_id"), "round_seed": draw.round_seed, "irt_snapshot_id": draw.snapshot_id, "n_tasks": n_draw, "scored_tasks": len(draw.task_ids)}
     return Round(shown, draw, view, box_file)
+
+
+def active_recite_index(contract: Contract, the: Round, pool: MathPool) -> PoolIndex:
+    """Index the active pool of the repeated round, not merely the local current task list."""
+    block = the.view.get("pool") or {}
+    ids = the.active_ids
+    if ids is None and block.get("active"):
+        if not isinstance(block["active"], str):
+            raise ConfigError("the round's active pool is not a public object key")
+        ids = tuple(read_json(contract.url(block["active"]), "the active pool"))
+    if not ids:
+        ids = pool.task_ids
+    return PoolIndex((pool.task(task_id).task_id, pool.task(task_id).problem, pool.task(task_id).answer) for task_id in ids)
+
+
+def recite_gate(raw: bytes, index: PoolIndex | None, limit: float) -> tuple[ReciteReport | None, str, str]:
+    """Measure the frozen batch. An internal check error fails open and is logged, as on the controller."""
+    if limit <= 0:
+        return None, "disabled", ""
+    try:
+        if index is None:
+            raise ConfigError("the round's active pool is not available")
+        report = measure_batch(raw, index)
+        print(f"anti-recitation: batch {sha256_hex(raw)[:12]}: {json.dumps(report.to_dict(), sort_keys=True)}", file=sys.stderr, flush=True)
+        return report, "measured", recite_fail_reason(report, limit)
+    except Exception as exc:
+        print(f"anti-recitation check failed open: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        return None, "error (failed open)", ""
 
 
 def round_notes(contract: Contract, the: Round) -> list[dict[str, str]]:
@@ -498,6 +528,7 @@ def run_round(
     tokens: Tokens | None = None,
     grader: Grader | None = None,
     clock: Callable[[], float] = time.time,
+    recite_index: PoolIndex | None = None,
 ) -> dict[str, Any]:
     """One batch as a round of one entry: the validator's file check, then the box's runner and the judging.
 
@@ -517,7 +548,7 @@ def run_round(
     }
     key, now = layout.frozen_batch(ROUND_ID, hotkey), int(clock())
     built.store.put(key, raw)
-    frozen = FrozenBatch(hotkey, batch.sha256, key, batch.format, batch.n_prompts, batch.n_rollouts, dict(batch.train), batch.stage_recipes(params.recipe))
+    frozen = frozen_batch(batch, Registration(0, hotkey, 0), key, local)
     ticket = RoundTicket(ROUND_ID, LEASE_ID, BOX_ID, head, local, draw, (Entry(0, Registration(0, hotkey, 0), frozen),), now, now + local.lease_timeout_s)
     runner = (
         SoloRunner(built.trainer, built.evaluator, lambda: int(clock()), built.image)
@@ -525,17 +556,23 @@ def run_round(
         else LocalRunner(built.trainer, built.evaluator, lambda: int(clock()), built.image)
     )
     result = runner.run(ticket)
-    decision = judging.decide([(ticket, result)])
+    recite_report, recite_status, reason = recite_gate(raw, recite_index, local.recite_max_share)
+    gates = {0: reason} if reason else {}
+    decision = judging.decide([(ticket, result)], gates=gates)
     row, mine = decision.entries[0], result.entries[0]
     report |= {"status": row.status, "reason": row.reason or decision.reason, "eliminated_at_look": row.eliminated_at_look, "score": row.score and row.score.to_dict()}
     report |= {"null_outcomes": list(result.null_outcomes), "outcomes": list(mine.outcomes), "stopped_at_limit": result.stopped_at_limit, "phase_s": dict(result.phase_s)}
-    report["kl_gate"] = {"enabled": local.kl_floor_on, "min_kl_seq": local.min_kl_seq, "min_kl_tok": local.min_kl_tok, "kl_rollouts": local.kl_rollouts, "kl_max_tokens": local.kl_max_tokens, "measured": mine.kl_seq is not None, "sample": 0, "source": "sn120_v2/gpu/kl.py"}
+    report["kl_gate"] = {"enabled": local.kl_floor_on, "min_kl_seq": local.min_kl_seq, "min_kl_tok": local.min_kl_tok, "max_kl_tok": local.max_kl_tok, "kl_rollouts": local.kl_rollouts, "kl_max_tokens": local.kl_max_tokens, "measured": mine.kl_seq is not None, "sample": 0, "source": "sn120_v2/gpu/kl.py"}
     report["kl_gate"] |= {name: getattr(mine, name) for name in ("kl_seq", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens") if getattr(mine, name) is not None}
     if mine.kl_seq is not None:
         report["kl_gate"]["passed"] = all((
             local.min_kl_seq <= 0 or mine.kl_seq >= local.min_kl_seq,
             local.min_kl_tok <= 0 or mine.kl_tok >= local.min_kl_tok,
+            local.max_kl_tok <= 0 or mine.kl_tok <= local.max_kl_tok,
         ))
+    report["anti_recitation"] = {"enabled": local.recite_max_share > 0, "max_share": local.recite_max_share,
+                                 "status": recite_status, "passed": not reason,
+                                 **(recite_report.to_dict() if recite_report is not None else {})}
     report["win_vs_null"] = {"won": row.status == "winner", "status": row.status, "reason": row.reason or decision.reason, "score": row.score.to_dict() if row.score else None}
     if row.score is not None:
         n = row.score.n_tasks
@@ -596,6 +633,7 @@ def run(args: argparse.Namespace, contract: Contract) -> dict[str, Any]:
     if isinstance(the.view.get("pool"), Mapping):
         from .pool_catalog import public_catalog
         pool, active = public_catalog(contract, Path(args.work), the.view, pool)
+        the = dataclasses.replace(the, active_ids=tuple(active))
         if set(the.draw.task_ids) - set(active):
             raise VerifyError("the round draw contains a task outside its rotated active set")
     if pool.sha256 != POOL_SHA256:
@@ -615,7 +653,8 @@ def run(args: argparse.Namespace, contract: Contract) -> dict[str, Any]:
     try:
         tokens = head_tokens(base)
         grader = pool_grader(built.evaluator.pool, admission, chunk=GRADE_WORKERS)
-        result = run_round(raw, args.hotkey, params, local, head, the.draw, built, tokens=tokens, grader=grader)
+        index = active_recite_index(contract, the, pool) if local.recite_max_share > 0 else None
+        result = run_round(raw, args.hotkey, params, local, head, the.draw, built, tokens=tokens, grader=grader, recite_index=index)
     finally:
         admission.close()
         closer = getattr(built.evaluator.grader, "close", None)
