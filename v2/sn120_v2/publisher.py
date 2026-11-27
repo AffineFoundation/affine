@@ -216,6 +216,11 @@ GENERATOR_TASK_CHECK_CHANGELOG = (
 )
 RULE_CHANGELOG += GENERATOR_TASK_CHECK_CHANGELOG
 
+ANCHOR_RULE_CHANGELOG = (
+    "- 2026-11-27 / `anchor_n` easy-task anchors / none → with `anchor_n > 0` each round also scores a public, seeded sample of retired tasks the head solved (`anchor_*` params); an otherwise-eligible entry whose one-sided anchor z is below `-anchor_z_veto` cannot take the crown; anchors never count toward delta; `anchor_n=0` (the default) leaves rounds and params hashes unchanged.",
+)
+RULE_CHANGELOG += ANCHOR_RULE_CHANGELOG
+
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
     "steps": "epochs (full passes) over the batch or each v4 stage; each pass makes `minibatches` updates",
@@ -1768,6 +1773,33 @@ def _win_rule_lines(params: Params) -> list[str]:
     ]
 
 
+def _anchor_lines(params: Params) -> list[str]:
+    """Anchors (easy-task regression check). No text while ``anchor_n`` is 0."""
+    if params.anchor_n <= 0:
+        return []
+    high = round(params.anchor_n * params.anchor_hi_share)
+    return [
+        "- Anchors (easy-task regression check): rotation retires tasks the head solves, so each round also scores up to",
+        f"  `anchor_n` ({show(params.anchor_n)}) anchors: retired tasks only (never active, reserve or candidate tasks), not withdrawn,",
+        "  not rejected by the pool quality guard, whose body resolves, and whose measured head record while active (passes /",
+        f"  rollouts) has at least `anchor_min_rollouts` ({show(params.anchor_min_rollouts)}) rollouts and a pass rate of at least",
+        f"  `anchor_min_p` ({show(params.anchor_min_p)}). The record is the measured one, not the IRT estimate. The pending crown's",
+        "  training prompts are excluded as from the gate draw. Up to "
+        f"{high} anchors come from records of at least `anchor_hi_p` ({show(params.anchor_hi_p)}), a share of",
+        f"  `anchor_hi_share` ({show(params.anchor_hi_share)}); the rest from [`anchor_min_p`, `anchor_hi_p`); a short stratum is filled from the other.",
+        "  Within a stratum the rank is sha256(\"<round_seed>|anchor|<task_id>\"), smallest first. The round seed is taken after",
+        "  the round's batches are frozen. The `n_tasks` gate draw is unchanged; anchors are added at evenly spaced, seed-offset",
+        "  positions, weight 1, and the round names them (`round.anchors`, `draw.anchor_ids`, rollout rows with `anchor: true`).",
+        "- Anchors never count toward delta, se, z, the cover/cap/full-draw checks, confirmation, the IRT update, rotation,",
+        "  retirement or admission, and a retired anchor stays retired. The box scores the whole task list, so the KL sample",
+        "  may include anchor rollouts (KL measures divergence from the head only). Per entry, the anchor delta, se and z use",
+        "  the estimator above on the anchors scored by that entry (each weight 1). Veto (one-sided): an otherwise-eligible entry",
+        f"  is not eligible when at least `anchor_min_scored` ({show(params.anchor_min_scored)}) anchors were scored, se > 0 and anchor z is",
+        f"  strictly below -`anchor_z_veto` (-{show(params.anchor_z_veto)}); the next-best eligible entry may win. With fewer anchors",
+        "  scored the check is \"not evaluated\" and vetoes nothing.",
+    ]
+
+
 def _payout_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     """The payout rule and the paid set that survives its simulation, newest first."""
     paid = doc.get("paid_kings") or []
@@ -1898,6 +1930,7 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
             "  published sampling weights w_t. se = sqrt(n / (n - 1) * sum((w_t * (d_t - delta))^2)) / sum(w_t). z = delta / se.",
         ]),
         *_win_rule_lines(params),
+        *_anchor_lines(params),
         "- The eligible LoRA with the highest delta wins. A tie goes to the miner that was earlier in the queue.",
         "  With no eligible LoRA, M stays and there is no king. There is no second confirmation round."
         if not params.confirm_next_round else
@@ -2169,7 +2202,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
     numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params)
-               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "z_crown") and getattr(params, f.name) == f.default)]
+               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "z_crown") and getattr(params, f.name) == f.default) and not (f.name.startswith("anchor_") and params.anchor_n == 0)]
     url = doc["contract"]["public_url"]
     where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
@@ -2291,7 +2324,7 @@ def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_tex
         problems.append(f"llms.txt and mining.json are not a pair: llms.txt names snapshot {found and found.group(1)}, mining.json {doc['snapshot_digest']}")
     stated = stated_params(text)
     values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params)
-              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "z_crown") and getattr(params, f.name) == f.default)}
+              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "z_crown") and getattr(params, f.name) == f.default) and not (f.name.startswith("anchor_") and params.anchor_n == 0)}
     for name in sorted(values.keys() | stated.keys()):
         if stated.get(name) != values.get(name):
             problems.append(f"`{name}`: llms.txt states {stated.get(name, 'no value')}, mining.json has {values.get(name, 'no such parameter')}")

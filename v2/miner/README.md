@@ -177,6 +177,8 @@ PYSNIP
 
 The next-round confirmation uses fresh paired rollouts and its own comparison; winning once is not immediate payment. A confirmed king enters the paid set only at confirmation, without retroactive weight. Registered confirmed kings divide the weight equally, with shares of unregistered kings redistributed among the remaining eligible confirmed kings. If no valid write can be made, the writer preserves the last valid weights and never falls back to burn/owner weights.
 
+**Easy-task anchors.** When `params.anchor_n` is above 0, each round also scores a public, seeded sample of retired tasks the head solved (measured record at least `anchor_min_p`), listed in the round's `anchors` and flagged `anchor: true` in the rollout rows. Anchors never count toward delta, z, confirmation or rotation. They are a one-sided regression check: an otherwise eligible candidate with at least `anchor_min_scored` anchors scored and an anchor z strictly below `-anchor_z_veto` cannot take the crown, so training that forgets easy problems can lose a round it would otherwise win. The full rule is the llms.txt paragraph "Anchors (easy-task regression check)"; read the `anchor_*` values from the live params.
+
 ## Generate, transform, and check a batch
 
 Serve the current contract's head, then use the reference rollout generator from the repository root:

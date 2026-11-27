@@ -174,6 +174,9 @@ def published_rows(capture: Path, ticket, result, role: str, model: str, winner_
     outcomes = result.null_outcomes if role == "head" else next(
         entry.outcomes for entry in result.entries if entry.lora is not None and entry.lora.lora_hash == model
     )
+    # Anchor rows (Draw.anchor_ids) are flagged; a round without anchors keeps its rows byte for byte.
+    anchor_ids = set(getattr(ticket.draw, "anchor_ids", ()))
+    anchors = {index for index, task in enumerate(ticket.draw.task_ids) if task in anchor_ids}
     with capture.open("rb") as raw:
         for sample, text in enumerate(outcomes):
             for task_pos, outcome in enumerate(text):
@@ -188,7 +191,7 @@ def published_rows(capture: Path, ticket, result, role: str, model: str, winner_
                     raise ValueError("a captured outcome differs from the sealed result")
                 yield found | dict(role=role, winner_uid=winner_uid,
                                    model_version_id=ticket.head.version_id if role == "head" else model,
-                                   **(identity or {}))
+                                   **(identity or {}), **({"anchor": True} if task_pos in anchors else {}))
 
 
 class GateRolloutPublisher:

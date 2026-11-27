@@ -215,7 +215,8 @@ class Params(Record):
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
         "eval_merged", "null_prune_from_round", "min_kl_seq", "min_kl_tok", "kl_rollouts",
         "kl_max_tokens", "kl_time_limit_s", "confirm_next_round", "max_stages", "train_tokens_per_s_floor",
-        "z_crown",
+        "z_crown", "anchor_n", "anchor_min_p", "anchor_min_rollouts", "anchor_hi_p", "anchor_hi_share",
+        "anchor_z_veto", "anchor_min_scored",
     )
 
     netuid: int = 120
@@ -289,6 +290,18 @@ class Params(Record):
     kl_rollouts: int = 128  # deterministic sample-0 subsample; capped completions included
     kl_max_tokens: int = 0  # first N completion tokens per rollout; 0 = the full completion
     kl_time_limit_s: int = 1200  # independent hard cap, also bounded by the promotion deadline
+
+    # Anchors: an easy-task regression check. ``anchor_n`` retired tasks the head solved (measured record pass rate
+    # >= anchor_min_p over >= anchor_min_rollouts head rollouts while active) are scored next to the gate draw.
+    # They never count toward delta, IRT, rotation or confirmation. A crown is vetoed when the paired anchor z is
+    # below -anchor_z_veto over at least anchor_min_scored scored anchors. 0 = off; every default is omitted from JSON.
+    anchor_n: int = 0
+    anchor_min_p: float = 0.8
+    anchor_min_rollouts: int = 4
+    anchor_hi_p: float = 0.95  # stratum boundary: round(anchor_n * anchor_hi_share) anchors come from records >= this
+    anchor_hi_share: float = 0.25
+    anchor_z_veto: float = 1.645  # one-sided: veto when anchor z < -anchor_z_veto
+    anchor_min_scored: int = 100  # fewer scored anchors: the check is not evaluated and does not veto
 
     recipe: Recipe = field(default_factory=Recipe)
 
@@ -443,6 +456,13 @@ class Params(Record):
         _need(type(self.kl_rollouts) is int and self.kl_rollouts >= 8, "kl_rollouts must be an integer of at least 8")
         _need(type(self.kl_max_tokens) is int and self.kl_max_tokens >= 0, "kl_max_tokens must be a nonnegative integer")
         _need(type(self.kl_time_limit_s) is int and self.kl_time_limit_s > 0, "kl_time_limit_s must be a positive integer")
+        _need(type(self.anchor_n) is int and self.anchor_n >= 0, "anchor_n must be an integer of at least 0")
+        _need(type(self.anchor_min_rollouts) is int and self.anchor_min_rollouts >= 0, "anchor_min_rollouts must be an integer of at least 0")
+        _need(type(self.anchor_min_scored) is int and self.anchor_min_scored >= 0, "anchor_min_scored must be an integer of at least 0")
+        _need(_unit(self.anchor_min_p) and _unit(self.anchor_hi_p) and _unit(self.anchor_hi_share), "anchor_min_p, anchor_hi_p and anchor_hi_share must be in [0, 1]")
+        _need(math.isfinite(self.anchor_z_veto) and self.anchor_z_veto >= 0, "anchor_z_veto must be zero or more")
+        # Anchors live only on the argmax path: it has no early drops, so no anchor can enter a drop test.
+        _need(self.anchor_n == 0 or self.crown_gate == "argmax_symmetric", "anchor_n applies only to crown_gate argmax_symmetric")
         _need(0.0 < self.drop_alpha < 1.0, "drop_alpha must be between 0 and 1")
         _need(_unit(self.cap_hit_floor) and _unit(self.cap_hit_margin), "cap-hit settings must be in [0, 1]")
         _need(_unit(self.min_cover) and self.min_cover > 0, "min_cover must be in (0, 1]")

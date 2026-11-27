@@ -94,6 +94,14 @@ def public_text(text: object, environ: Mapping[str, str] | None = None) -> str:
     return text
 
 
+ANCHOR_SCORE_FIELDS = ("anchor_delta", "anchor_se", "anchor_z", "anchor_n_scored", "anchor_king_pass", "anchor_entry_pass", "anchor_check")
+
+
+def anchors_view(anchor_ids, anchor_p) -> dict[str, Any]:
+    """The round's anchors: public retired tasks and their measured head record pass rates at open."""
+    return {"n": len(anchor_ids), "ids": list(anchor_ids), "record_p": list(anchor_p)}
+
+
 def entry_view(entry: EntryDecision) -> dict[str, Any]:
     view: dict[str, Any] = {
         "queue_pos": entry.queue_pos,
@@ -107,6 +115,9 @@ def entry_view(entry: EntryDecision) -> dict[str, Any]:
     if entry.score is not None:
         score = entry.score
         view |= {"delta": score.delta, "se": score.se, "z": score.z, "cap_rate": score.cap_rate, "n_tasks": score.n_tasks}
+        if score.anchor_n_scored is not None:
+            # The easy-task anchor check (never part of delta). Present only in rounds with anchor_n > 0.
+            view |= {name: getattr(score, name) for name in ANCHOR_SCORE_FIELDS}
     view |= {name: value for name in ("kl_seq", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens") if (value := getattr(entry, name)) is not None}
     if entry.status == WINNER:
         view |= {"lora_hash": entry.lora_hash, "pass_rate": entry.score.pass_rate, "null_pass_rate": entry.score.null_pass_rate}
@@ -176,6 +187,7 @@ def round_view(record: RoundRecord) -> dict[str, Any]:
         "duplicate_clusters": list(record.duplicate_clusters),
         "duplicates": [entry_view(entry) | {"reason": public_text(entry.reason)} for entry in record.duplicate_decisions],
         **({"confirmation": confirmation_view(record.confirmation)} if record.confirmation is not None else {}),
+        **({"anchors": anchors_view(record.anchor_ids, record.anchor_p)} if record.anchor_ids else {}),
     }
     if record.decision is None:
         view["entries"] = sorted([
