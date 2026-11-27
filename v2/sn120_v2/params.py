@@ -215,6 +215,7 @@ class Params(Record):
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
         "eval_merged", "null_prune_from_round", "min_kl_seq", "min_kl_tok", "kl_rollouts",
         "kl_max_tokens", "kl_time_limit_s", "confirm_next_round", "max_stages", "train_tokens_per_s_floor",
+        "z_crown", "recite_max_share", "max_kl_tok",
     )
 
     netuid: int = 120
@@ -263,8 +264,7 @@ class Params(Record):
     rotation_retire_low_p: float = 0.0  # zero: no empirical low-pass retirement
     rotation_n_min_low: int = 8
     rotation_active_size: int = 0  # zero: size of the initial base-pool active set
-    # "info": score every candidate by p * (1 - p); "info-guard": the same ranking plus the fail-closed admission gate.
-    rotation_rule: str = "v1"
+    rotation_rule: str = "v1"  # "info": score every candidate by p * (1 - p). "info-guard": the same ranking, plus the fail-closed admission gate
     rotation_churn_frac: float = 0.10  # maximum steady-state swaps: floor(frac * target)
     rotation_prior_p: float = 0.5  # when neither an IRT row nor a reserve prior is known
     rotation_queue_publish: int = 2000  # ranked upcoming candidates in the public rotation decision
@@ -273,6 +273,9 @@ class Params(Record):
     # Judging. The field-median gate adds a second, final-look z test against
     # the per-task median of the post-dedup candidates plus the king.
     z_bar: float = 1.0  # the paired king bar; a winner needs z strictly above this
+    # None = the crown bar is z_bar. Set, it is the crown/accept bar only (argmax_symmetric); the confirmation
+    # test always uses z_bar. Omitted from JSON while None, so existing params_hash values do not change.
+    z_crown: float | None = None
     crown_gate: str = "field_median"
     z_field_bar: float = 1.0  # finite; calibrated values may be negative
     cap_hit_floor: float = 0.33  # reject only when cap rate > max(cap_hit_floor, null cap rate + cap_hit_margin)
@@ -286,6 +289,8 @@ class Params(Record):
     kl_rollouts: int = 128  # deterministic sample-0 subsample; capped completions included
     kl_max_tokens: int = 0  # first N completion tokens per rollout; 0 = the full completion
     kl_time_limit_s: int = 1200  # independent hard cap, also bounded by the promotion deadline
+    max_kl_tok: float = 0.0  # behaviour KL ceiling: kl_tok above it cannot crown or confirm; 0 = off
+    recite_max_share: float = 0.0  # anti-recitation: share of target 10-grams found in active-pool task text; 0 = off
 
     recipe: Recipe = field(default_factory=Recipe)
 
@@ -425,6 +430,8 @@ class Params(Record):
         _need(bool(self.looks) and self.looks[-1] == 1.0, "looks must end at 1.0")
         _need(all(0 < a < b for a, b in zip(self.looks, self.looks[1:])) and self.looks[0] > 0, "looks must rise from above 0")
         _need(math.isfinite(self.z_bar) and self.z_bar >= 0, "z_bar must be zero or more")
+        _need(self.z_crown is None or (math.isfinite(self.z_crown) and self.z_crown >= 0), "z_crown must be None or zero or more")
+        _need(self.z_crown is None or self.crown_gate == "argmax_symmetric", "z_crown applies only to crown_gate argmax_symmetric")
         _need(self.crown_gate in ("king", "field_median", "argmax_symmetric"), "crown_gate must be 'king', 'field_median' or 'argmax_symmetric'")
         _need(math.isfinite(self.z_field_bar), "z_field_bar must be finite")
         _need(self.train_seed_scope in SEED_SCOPES, "train_seed_scope must be 'round' or 'batch'")
@@ -435,6 +442,11 @@ class Params(Record):
         _need(math.isfinite(self.min_step_norm) and self.min_step_norm >= 0, "min_step_norm must be finite and nonnegative")
         _need(math.isfinite(self.min_kl_seq) and self.min_kl_seq >= 0, "min_kl_seq must be finite and nonnegative")
         _need(math.isfinite(self.min_kl_tok) and self.min_kl_tok >= 0, "min_kl_tok must be finite and nonnegative")
+        _need(math.isfinite(self.max_kl_tok) and self.max_kl_tok >= 0, "max_kl_tok must be finite and nonnegative")
+        _need(self.max_kl_tok <= 0 or self.max_kl_tok > self.min_kl_tok, "max_kl_tok must be above min_kl_tok")
+        _need(self.max_kl_tok <= 0 or self.kl_floor_on, "max_kl_tok needs the KL measurement")
+        _need(isinstance(self.recite_max_share, (int, float)) and not isinstance(self.recite_max_share, bool)
+              and 0 <= self.recite_max_share < 1, "recite_max_share must be in [0, 1)")
         _need(type(self.kl_rollouts) is int and self.kl_rollouts >= 8, "kl_rollouts must be an integer of at least 8")
         _need(type(self.kl_max_tokens) is int and self.kl_max_tokens >= 0, "kl_max_tokens must be a nonnegative integer")
         _need(type(self.kl_time_limit_s) is int and self.kl_time_limit_s > 0, "kl_time_limit_s must be a positive integer")
@@ -476,12 +488,18 @@ class Params(Record):
         _need(math.isfinite(self.budget_usd_per_hour) and self.budget_usd_per_hour > 0, "budget must be positive")
 
     @property
+    def crown_bar(self) -> float:
+        """The bar a crown needs (strict z above it). Confirmation never uses this; it uses ``z_bar``."""
+        return self.z_bar if self.z_crown is None else self.z_crown
+
+    @property
     def null_samples(self) -> int:
         return self.samples_per_task if self.null_samples_per_task is None else self.null_samples_per_task
 
     @property
     def kl_floor_on(self) -> bool:
-        return self.min_kl_seq > 0 or self.min_kl_tok > 0
+        """KL is measured: a floor or the ``max_kl_tok`` ceiling is on."""
+        return self.min_kl_seq > 0 or self.min_kl_tok > 0 or self.max_kl_tok > 0
 
     @property
     def params_hash(self) -> str:
