@@ -200,6 +200,15 @@ def pool_ranking(round_id: str) -> str:
     return f"public/pool/ranking/{_part(round_id)}.json"
 
 
+def pool_guard(sha256: str) -> str:
+    """The sealed public pool-quality guard ledger of an ``affine-pool-rotation-v3`` round.
+
+    Content-addressed: the rotation record names the exact bytes it admitted
+    from. Rows are public-safe decisions only; no judge reasoning is here.
+    """
+    return f"public/pool/guard/{_part(sha256)}.jsonl"
+
+
 POOL_SUMMARY = "public/pool/summary.json"
 
 RETIRED_POOL = "public/pool/retired.json"

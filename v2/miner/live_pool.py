@@ -187,7 +187,7 @@ def _catalog(public_url: str, pool: Mapping[str, Any], mining: Mapping[str, Any]
     for key, name in ((layout.RETIRED_POOL, "retired.json"), (layout.RETIRED_TASKS, "retired_tasks.json")):
         # These pointers can change between active sets; never use stale copies.
         _put_fresh(root / name, read_bytes(public_url, key))
-    allow_retired = rotation.get("rule_version", (mining.get("params") or {}).get("rotation_rule")) in ("affine-pool-rotation-v2", "info")
+    allow_retired = rotation.get("rule_version", (mining.get("params") or {}).get("rotation_rule")) in ("affine-pool-rotation-v2", "affine-pool-rotation-v3", "info", "info-guard")
     _, catalog = load_reserve(root, with_catalog=True, allow_retired=allow_retired)
     if not active:
         return catalog
