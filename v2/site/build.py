@@ -100,7 +100,8 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
 
     Every output field is named here, so an unknown or private snapshot field
     cannot reach the page. A batch link and a LoRA hash are set for an applied
-    winner only. Caps and the winner bar come from the snapshot's ``Params``.
+    winner only. Caps come from the snapshot's ``Params``. ``z_bar`` is the confirmation bar; ``crown_bar`` is the
+    bar a crown needs: ``z_crown`` when the live params set it, otherwise ``z_bar``.
     """
     if snap.get("schema") != SCHEMA:
         raise ValueError(f"unknown snapshot schema {snap.get('schema')!r}; this builder reads {SCHEMA!r}")
@@ -180,7 +181,9 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
 
     return {
         "generated_at": float(snap["generated_at"]), "netuid": snap["netuid"], "env": snap["env"], "phase": snap["phase"],
-        "head": head_id, "z_bar": params["z_bar"], "max_output_tokens": params["max_output_tokens"],
+        "head": head_id, "z_bar": params["z_bar"],
+        "crown_bar": params["z_crown"] if params.get("z_crown") is not None else params["z_bar"],
+        "max_output_tokens": params["max_output_tokens"],
         "kings_window": params["kings_window"],
         "round": {"id": live.get("round_id"), "seats": live.get("seats"), "cap": params["batch_cap"],
                   "tasks": live.get("n_tasks") or params["n_tasks"], "opened_at": live.get("opened_at")},

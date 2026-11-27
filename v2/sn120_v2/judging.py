@@ -24,7 +24,8 @@ finite-population term, so it is slightly on the safe side. With equal
 weights it is the paired standard error: sd(d) / sqrt(n).
 
 Win rule. A LoRA is eligible when it was scored on every task, z is strictly
-above ``z_bar``, and its cap-hit rate is not above
+above the crown bar (``params.crown_bar``: ``z_crown`` when set, else ``z_bar``),
+and its cap-hit rate is not above
 max(cap_hit_floor, null cap-hit rate + cap_hit_margin). Only a rate strictly
 greater than that limit is rejected. The eligible LoRA with the highest
 delta wins. A tie goes to the earlier-queued entry. With no eligible LoRA,
@@ -265,8 +266,8 @@ def score_entry(
     if params.crown_gate == "argmax_symmetric":
         if not delta > TIE_TOLERANCE:
             reasons.append(f"delta {delta:.6g} does not beat the king by more than {TIE_TOLERANCE:g}")
-        if params.z_bar > 0 and not (se > 0 and z > params.z_bar):
-            reasons.append(f"z {z:.3f} is not above {params.z_bar:g}")
+        if params.crown_bar > 0 and not (se > 0 and z > params.crown_bar):
+            reasons.append(f"z {z:.3f} is not above {params.crown_bar:g}")
     elif not z > params.z_bar:
         reasons.append(f"z {z:.3f} is not above {params.z_bar:g}")
     rollouts = n * len(lora_outcomes)
@@ -545,7 +546,7 @@ def decide(
         entries.append(_entry_decision(seat, entry, status, reason, score))
 
     if winner is not None and params.crown_gate == "argmax_symmetric":
-        why = f"entry {winner} had the highest mean pass rate, above the king" + (f", with z above {params.z_bar:g}" if params.z_bar > 0 else "")
+        why = f"entry {winner} had the highest mean pass rate, above the king" + (f", with z above {params.crown_bar:g}" if params.crown_bar > 0 else "")
     elif winner is not None and params.crown_gate == "field_median":
         why = (f"entry {winner} beat M by more than {params.z_bar:g} SE and the field's "
                f"per-task median by more than {params.z_field_bar:g} SE")

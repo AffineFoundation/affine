@@ -18,7 +18,7 @@
 <div class="section-heading"><h2 id="confirmation-t">Crown confirmation record</h2><span class="reading">After the fact</span></div>
 <p id="totals" class="note" role="status">Loading confirmation statistics…</p>
 <p class="note">Each applied crown under the next-round confirmation rule, its original paired z and delta, and the fresh paired test that decides payment. A crown is paid only if that test passes. Crowns before the rule are omitted. Bands, cumulative rows and total rates cover completed paid/unpaid tests only. Pending crowns await the next round; no_decision crowns had an infrastructure failure, are unpaid, and are excluded from rates. A historical <code>paid</code> row records that the crown passed its test, not that it remains in the current paid window.</p>
-<p class="note">This record is descriptive, not a rule change. The crown bar is unchanged: strict <code>z &gt; 0.5</code>. Original z and confirmation z are rounded to 3 decimals, delta to 4 decimals, rates to integer percent.</p>
+<p class="note">This record is descriptive, not a rule change. Each crown is judged against the crown bar of the live params (<code>z_crown</code> when set, otherwise <code>z_bar</code>). The next-round confirmation is strict <code>z &gt; z_bar</code>, the confirmation bar in the live params. Original z and confirmation z are rounded to 3 decimals, delta to 4 decimals, rates to integer percent.</p>
 </section>
 <section id="bands" aria-labelledby="bands-t">
 <div class="section-heading"><h2 id="bands-t">Confirmation by original z</h2></div>

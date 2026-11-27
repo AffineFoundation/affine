@@ -181,6 +181,11 @@ V4_RULE_CHANGELOG = (
 )
 RULE_CHANGELOG += V4_RULE_CHANGELOG
 
+Z_CROWN_RULE_CHANGELOG = (
+    "- 2026-11-27 / `z_crown` / crown and confirmation shared `z_bar` (strict `z > 0.5`) → the crown uses `z_crown` (strict `z > 1.5` in the approved params); confirmation keeps `z_bar` (fresh paired `z > 0.5` and recorded crown-round `z > 0.5`); `confirm_next_round` stays on; existing params hashes are unchanged.",
+)
+RULE_CHANGELOG += Z_CROWN_RULE_CHANGELOG
+
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
     "steps": "epochs (full passes) over the batch or each v4 stage; each pass makes `minibatches` updates",
@@ -209,6 +214,11 @@ RECIPE_NOTES = {
     "code_digest": "sha256 of the training code",
     "image_digests": "worker images that may train and score",
 }
+
+
+def crown_name(params: Params) -> str:
+    """The name of the bar a crown must clear: ``z_crown`` when set, else the shared ``z_bar``."""
+    return "`z_crown`" if params.z_crown is not None else "`z_bar`"
 
 
 def show(value: Any) -> str:
@@ -842,7 +852,7 @@ def _round_time_lines(params: Params) -> list[str]:
         f"  by then is truncated to a whole block of {params.eval_chunk_tasks} tasks; an unfinished block is not used. There are no further looks.",
         f"- At the stop time, with the first look ({first_look} tasks) complete: each open LoRA is judged by the win rule of",
         "  section 6 on the complete cutoff blocks that null M and every open LoRA finished. Those tasks are then the whole",
-        f"  test: {('delta above the tie tolerance and z strictly above ' + show(params.z_bar) + ' can win' if params.z_bar > 0 else 'delta above the tie tolerance can win') if params.crown_gate == 'argmax_symmetric' else 'z strictly above ' + show(params.z_bar) + ' can win'}. Such an entry is charged, win or lose, as in a full round.",
+        f"  test: {('delta above the tie tolerance and z strictly above ' + show(params.crown_bar) + ' can win' if params.crown_bar > 0 else 'delta above the tie tolerance can win') if params.crown_gate == 'argmax_symmetric' else 'z strictly above ' + show(params.z_bar) + ' can win'}. Such an entry is charged, win or lose, as in a full round.",
         f"- At the stop time, with fewer than {first_look} tasks scored: each trained LoRA is `{NOT_SCORED}`. You are not charged,",
         "  your seat is first in the next round, and no failure is counted for the seat.",
         f"- The lease ends {show(params.lease_timeout_s / 60)} minutes after it starts. A box result that arrives after the end of the lease is",
@@ -1359,9 +1369,14 @@ def _onboarding_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     base = (doc["contract"].get("public_url") or "https://affine.io").rstrip("/")
     mining = f"{base}/{layout.MINING_JSON.rsplit('/', 1)[-1]}"
     check = f"`python v2/miner/affine_miner.py check --mining-json {mining} --hotkey <ss58> batch.json`"
-    crown = (f"strict `z > z_bar` (currently live: `z_bar=0.5`, so `z > 0.5`; this snapshot: `z > {show(params.z_bar)}`; "
-             "always reread the live value rather than treating 0.5 as permanent)" if params.crown_gate == "argmax_symmetric"
-             else "the crown gate in the live params")
+    if params.crown_gate != "argmax_symmetric":
+        crown = "the crown gate in the live params"
+    elif params.z_crown is None:
+        crown = (f"strict `z > z_bar` (currently live: `z_bar=0.5`, so `z > 0.5`; this snapshot: `z > {show(params.z_bar)}`; "
+                 "always reread the live value rather than treating 0.5 as permanent)")
+    else:
+        crown = (f"strict `z > z_crown` (this snapshot: `z_crown={show(params.z_crown)}`, so `z > {show(params.z_crown)}`; "
+                 "always reread the live value rather than treating it as permanent; confirmation uses `z_bar`)")
     confirmation = (f"The crown is applied now but paid only after next round's fresh paired confirmation with `z > {show(params.z_bar)}`."
                     if params.confirm_next_round else "The current params apply and pay a crown without a separate next-round confirmation.")
     return [
@@ -1600,11 +1615,11 @@ def _scoring_lines(params: Params) -> list[str]:
                 *([
                     "  Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays",
                     "  if it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are",
-                    "  retired. `z_bar` and `z_field_bar` are ignored. Early drops are disabled, so every candidate is scored on the full",
+                    f"  retired. {'`z_bar` and `z_field_bar` are ignored.' if params.z_crown is None else '`z_field_bar` is ignored; `z_bar` still gates confirmation.'} Early drops are disabled, so every candidate is scored on the full",
                     "  draw or shared stop-limit prefix. The cap-hit (`cap_hit_floor`/`cap_hit_margin`), full-draw, cover and",
-                ] if params.z_bar == 0 else [
+                ] if params.crown_bar == 0 else [
                     "  Merged evaluation is unchanged. A LoRA crowns only with the highest delta among entries with delta above the tie",
-                    f"  tolerance ({show(TIE_TOLERANCE)}) AND z strictly above `z_bar` ({show(params.z_bar)}). `z_field_bar` is ignored. Early",
+                    f"  tolerance ({show(TIE_TOLERANCE)}) AND z strictly above {crown_name(params)} ({show(params.crown_bar)}). `z_field_bar` is ignored. Early",
                     "  drops are disabled, so every candidate is scored on the full draw or shared stop-limit prefix. The cap-hit",
                     "  (`cap_hit_floor`/`cap_hit_margin`), full-draw, cover and",
                 ]),
@@ -1627,7 +1642,7 @@ def _scoring_lines(params: Params) -> list[str]:
         "- Win rule, in full. A LoRA is eligible when all of these are true. It has an outcome for every task of the",
         "  draw, or, when the stop time ended the scoring, for every task that null M has an outcome for; a LoRA that",
         "  was dropped at a look does not. n is at least `min_scored_tasks`.",
-        *(["  its delta above the king must be greater than the tie tolerance" + (f" ({show(TIE_TOLERANCE)}), and its se must be positive and z strictly above `z_bar` ({show(params.z_bar)})." if params.z_bar > 0 else ".")] if params.crown_gate == "argmax_symmetric"
+        *(["  its delta above the king must be greater than the tie tolerance" + (f" ({show(TIE_TOLERANCE)}), and its se must be positive and z strictly above {crown_name(params)} ({show(params.crown_bar)})." if params.crown_bar > 0 else ".")] if params.crown_gate == "argmax_symmetric"
           else ["  z > `z_bar` AND `field_z` > `z_field_bar`."] if params.crown_gate == "field_median" else ["  z > `z_bar`."]),
         "  (its count of",
         *([
@@ -1684,10 +1699,10 @@ def _win_rule_lines(params: Params) -> list[str]:
             *([
                 "- Merged evaluation is unchanged. The highest mean pass rate among the king and the candidates wins; the king stays if",
                 "  it is best (ties go to the king, then to the earlier queue position). There is no z threshold; the old z bars are retired.",
-                "  `z_bar` and `z_field_bar` are ignored. Early drops are disabled: every candidate is scored on the full draw, or the",
-            ] if params.z_bar == 0 else [
+                f"  {'`z_bar` and `z_field_bar` are ignored.' if params.z_crown is None else '`z_field_bar` is ignored; `z_bar` still gates confirmation.'} Early drops are disabled: every candidate is scored on the full draw, or the",
+            ] if params.crown_bar == 0 else [
                 "- Merged evaluation is unchanged. A LoRA crowns only with the highest delta among entries with delta above the tie tolerance",
-                f"  ({show(TIE_TOLERANCE)}) AND z strictly above `z_bar` ({show(params.z_bar)}). `z_field_bar` is ignored. Early drops are",
+                f"  ({show(TIE_TOLERANCE)}) AND z strictly above {crown_name(params)} ({show(params.crown_bar)}). `z_field_bar` is ignored. Early drops are",
                 "  disabled: every candidate is scored on the full draw, or the",
             ]),
             "  shared stop-limit prefix. The cap-hit (`cap_hit_floor`/`cap_hit_margin`), cover, full-draw and `min_scored_tasks` checks",
@@ -1769,8 +1784,10 @@ def _confirmation_record_lines(doc: Mapping[str, Any], params: Params) -> list[s
         f"Resolved tests: {total.get('n', 0)}; paid: {total.get('paid', 0)}; rate: {rate(total.get('rate'))}. "
         f"Pending: {total.get('pending', 0)}; no_decision: {total.get('no_decision', 0)}. "
         f"Lowest paid original z: {z(stats.get('lowest_paid_z'))}; highest unpaid original z: {z(stats.get('highest_unpaid_z'))}.",
-        "This record is descriptive, not a rule change. The crown bar is unchanged: strict "
-        f"`z > {show(params.z_bar)}`.",
+        *(["This record is descriptive, not a rule change. The crown bar is unchanged: strict "
+           f"`z > {show(params.z_bar)}`."] if params.z_crown is None else
+          [f"This record is descriptive, not a rule change. The crown bar is strict `z > {show(params.z_crown)}` (`z_crown`); "
+           f"the confirmation bar is strict `z > {show(params.z_bar)}` (`z_bar`)."]),
         "",
         "Last 30 crowns, newest first. `confirmation z` and `confirmation delta` are the next round's fresh paired test.",
         "",
@@ -2110,7 +2127,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
     numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params)
-               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round") and getattr(params, f.name) == f.default)]
+               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "z_crown") and getattr(params, f.name) == f.default)]
     url = doc["contract"]["public_url"]
     where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
@@ -2129,7 +2146,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         ] if params.null_samples_per_task is not None else [
             "round and a null copy of M are scored on the same public tasks with the same seeds. At most one LoRA wins,",
         ]),
-        f"and only if it beats M by more than the tie tolerance" + (f" and has z strictly above {show(params.z_bar)}. " if params.crown_gate == "argmax_symmetric" and params.z_bar > 0 else ". ") + "The winner is applied to the head and"
+        f"and only if it beats M by more than the tie tolerance" + (f" and has z strictly above {show(params.crown_bar)}. " if params.crown_gate == "argmax_symmetric" and params.crown_bar > 0 else ". ") + "The winner is applied to the head and"
         if params.crown_gate == "argmax_symmetric" else
         f"and only if it beats M by more than {show(params.z_bar)} standard error. The winner is applied to the head and",
         "its miner becomes a king. Only kings earn." if not params.confirm_next_round else
@@ -2232,7 +2249,7 @@ def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_tex
         problems.append(f"llms.txt and mining.json are not a pair: llms.txt names snapshot {found and found.group(1)}, mining.json {doc['snapshot_digest']}")
     stated = stated_params(text)
     values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params)
-              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round") and getattr(params, f.name) == f.default)}
+              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "z_crown") and getattr(params, f.name) == f.default)}
     for name in sorted(values.keys() | stated.keys()):
         if stated.get(name) != values.get(name):
             problems.append(f"`{name}`: llms.txt states {stated.get(name, 'no value')}, mining.json has {values.get(name, 'no such parameter')}")

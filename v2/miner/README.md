@@ -50,7 +50,7 @@ The live parameters in `mining.json.params` override this guide. Read [`docs/MIN
 
 6. **Interpret file verdicts by phase and timestamp.** Waiting files are checked while the validator is **IDLE (no round is open)**, and valid files are checked again when a round takes its entries. The validator does **not** read waiting files while a round is **RUNNING**. A mid-round verdict is the previous snapshot: match `batch_sha256` and `checked_at` to your bytes rather than treating it as a fresh check. The authoritative fields are `mining.json.phase`, `queue.files_checked_at`, and `queue.files.verdicts`.
 
-7. **Compete for a crown.** Among otherwise eligible candidates, the highest delta wins; the current symmetric crown gate also requires delta above the published tie tolerance and **strict `z > z_bar`**. The currently live value is **`z_bar = 0.5`**, but it is a live parameter and can change. Derive it with the stdlib snippet below rather than copying a number into your tooling.
+7. **Compete for a crown.** Among otherwise eligible candidates, the highest delta wins; the current symmetric crown gate also requires delta above the published tie tolerance and **strict `z > crown bar`**. The crown bar is `params.z_crown` when that value is present and not null, and `params.z_bar` otherwise. Both are live parameters and can change. Derive them with the stdlib snippet below rather than copying a number into your tooling.
 
 8. **Wait for fresh paired confirmation.** A crowned candidate is applied and served as the new head, but is not paid yet. In the next round, parent and new head receive fresh paired samples on a shared draw. Only a successful new comparison, with the crown-round and fresh paired z thresholds satisfied, is confirmed and paid. Old winner outcomes do not substitute for this new evidence; an unconfirmed or failed crown earns nothing.
 
@@ -153,10 +153,10 @@ For the current rotation decision, scores, measured counts and priors, inspect t
 
 ## Derive the current crown threshold and cadence
 
-At present, live **`z_bar` is 0.5**; therefore the current z comparison is strictly `z > 0.5`, not `>=`. It can change between rounds. Read `params.z_bar` and `params.weights_cadence_s` every time rather than treating either as permanent:
+The crown bar is `params.z_crown` when that value is present and not null, and `params.z_bar` otherwise. The next-round confirmation always uses `params.z_bar`, even when `z_crown` is set, so one comparison never stands in for the other. Read these values, `params.weights_cadence_s` and the other printed settings every time rather than treating any of them as permanent:
 
 ```bash
-python3 - <<'PY'
+python3 - <<'PYSNIP'
 import json, time, urllib.request
 url = f"https://affine.io/mining.json?_={time.time_ns()}"
 request = urllib.request.Request(url, headers={
@@ -165,11 +165,14 @@ request = urllib.request.Request(url, headers={
 })
 with urllib.request.urlopen(request, timeout=30) as response:
     params = json.load(response)["params"]
-print("z_bar =", params["z_bar"])
+z_crown = params.get("z_crown")
+crown_bar = z_crown if z_crown is not None else params["z_bar"]
+print("crown bar (strict z >) =", crown_bar, "from", "z_crown" if z_crown is not None else "z_bar")
+print("confirmation bar (strict z >) =", params["z_bar"], "from z_bar")
 print("weights_cadence_s =", params["weights_cadence_s"])
 print("irt_draw_rule =", params["irt_draw_rule"])
 print("irt_middle_band =", params["irt_middle_band"])
-PY
+PYSNIP
 ```
 
 The next-round confirmation uses fresh paired rollouts and its own comparison; winning once is not immediate payment. A confirmed king enters the paid set only at confirmation, without retroactive weight. Registered confirmed kings divide the weight equally, with shares of unregistered kings redistributed among the remaining eligible confirmed kings. If no valid write can be made, the writer preserves the last valid weights and never falls back to burn/owner weights.

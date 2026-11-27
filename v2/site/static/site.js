@@ -20,7 +20,7 @@
   const pill = (s, c, t) => `<span class="pill ${c}"${t ? ` title="${esc(t)}"` : ''}>${esc(s)}</span>`;
   const score = (x, d, t) => x == null ? mute('—') : `<span class="${x > 0 ? 'up' : x < 0 ? 'dn' : 'mute'}" title="${esc(t)}">${sgn(x, d)}</span>`;
   const RESULT = {
-    winner: ['WINNER', 'up', 'Beat the head M by more than the winner bar.'],
+    winner: ['WINNER', 'up', 'Beat the head M by more than the crown bar.'],
     lost: ['LOST', 'dn', 'Had a fair tournament and did not win. The registration is used up.'],
     no_decision: ['NO DECISION', 'wait', 'Our infrastructure failed. Not charged; the seat goes back to the front of the queue.'],
     skip: ['SKIP', 'private', 'The file was missing or invalid when the round froze it. Not charged; the seat keeps its place.'],
@@ -67,7 +67,7 @@
     flags: { h: 'Status', w: 170, r: r => r.status === 'pending' ? pill(...FLAG.pending) : r.flags.map(f => pill(...FLAG[f])).join(' ') || mute('waiting') },
     result: { h: 'Result', w: 112, r: r => pill(...(r.status == null ? NO_RESULT : RESULT[r.status] || [r.status, 'private', ''])) },
     gain: { h: 'Gain', w: 76, n: 1, r: r => score(r.delta == null ? null : 100 * r.delta, 2, `Pass rate minus the pass rate of M, in percentage points (standard error ${(100 * r.se).toFixed(2)})`), t: 'LoRA pass rate minus head pass rate, in percentage points.' },
-    bar: { h: 'vs bar', w: 68, n: 1, r: r => score(r.z == null ? null : r.z - D.z_bar, 2, `z minus the winner bar (${D.z_bar})`), t: 'z minus the winner bar. Above zero clears the bar.' },
+    bar: { h: 'vs bar', w: 68, n: 1, r: r => score(r.z == null ? null : r.z - (D.crown_bar ?? D.z_bar), 2, `z minus the crown bar (${D.crown_bar ?? D.z_bar})`), t: 'z minus the crown bar (z_crown when set, else z_bar). Above zero clears the crown bar.' },
     capHit: { h: 'Cap-hit', w: 68, n: 1, r: r => pct(r.cap_rate), t: 'Share of answers that hit the token cap. Such an answer is not passed.' },
     look: { h: 'Dropped', w: 68, n: 1, r: r => r.look == null ? mute('—') : 'look ' + (r.look + 1), t: 'The early look at which this LoRA was dropped, if any.' },
     sha: { h: 'Batch sha256', w: 100, r: r => key(r.sha, 8, 0) },
@@ -279,9 +279,9 @@
     };
     const last = f => rs.filter(f).pop(), z = last(r => r.best_z != null), pass = last(r => r.null_pass != null), end = rs[rs.length - 1];
     tile('c-z', z && `${z.round_id} z ${sgn(z.best_z)}`, {
-      include: [0, d.z_bar], ref: d.z_bar, fmt: v => sgn(v, v % 1 ? 1 : 0),
+      include: [0, d.crown_bar ?? d.z_bar], ref: d.crown_bar ?? d.z_bar, fmt: v => sgn(v, v % 1 ? 1 : 0),
       series: [{ bar: 1, v: i => rs[i].best_z, c: i => TONE[rs[i].outcome] || 'var(--accepted)', hollow: i => !TONE[rs[i].outcome] }],
-      tip: i => tip(rs[i], [[rs[i].outcome === 'applied' ? 'winner z' : 'best z', rs[i].best_z == null ? '—' : sgn(rs[i].best_z)], ['winner bar', 'z > ' + d.z_bar], ['batches', rs[i].seats]]),
+      tip: i => tip(rs[i], [[rs[i].outcome === 'applied' ? 'winner z' : 'best z', rs[i].best_z == null ? '—' : sgn(rs[i].best_z)], ['crown bar', 'z > ' + (d.crown_bar ?? d.z_bar)], ['batches', rs[i].seats]]),
     });
     tile('c-pass', pass && `${pass.round_id} M ${share(pass.null_pass)}`, {
       bound: [0, 1], least: .01, fmt: whole,
@@ -316,7 +316,7 @@
     const q = [...leased, ...waits, ...pending], ready = waits.filter(x => x.file_valid).length;
     const live = {
       id: r.id || '—', state: d.phase, seats: r.seats == null ? '—' : `${r.seats} / ${r.cap}`, tasks: r.tasks,
-      head: clip(d.head, 8, 0), bar: 'z > ' + d.z_bar, cap: d.max_output_tokens.toLocaleString('en-US'), next: ready + ' ready',
+      head: clip(d.head, 8, 0), bar: 'z > ' + (d.crown_bar ?? d.z_bar), confirm_bar: 'z > ' + d.z_bar, cap: d.max_output_tokens.toLocaleString('en-US'), next: ready + ' ready',
     };
     for (const el of document.querySelectorAll('#round [data-f]')) el.textContent = live[el.dataset.f];
     document.querySelector('#round .reading').innerHTML = 'env ' + esc(d.env) + (r.opened_at ? ' · opened ' + ago(r.opened_at) : '');

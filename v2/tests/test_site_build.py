@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import re
 import runpy
@@ -169,6 +170,7 @@ def test_only_an_applied_winner_gets_files_and_unknown_fields_never_reach_the_pa
     assert data["kings"][0]["lora"] == winner["lora_hash"] and data["kings"][1]["file_url"] is None
     params = snap["params"]  # the bar and the caps come from the snapshot's Params
     assert (data["z_bar"], data["max_output_tokens"], data["round"]["cap"]) == (params["z_bar"], params["max_output_tokens"], params["batch_cap"])
+    assert data["crown_bar"] == params["z_bar"], "unset z_crown: the crown bar is z_bar"
     assert data["generated_at"] == snap["generated_at"] and data["phase"] == "RUNNING" and data["round"]["seats"] == 1
     assert [head["current"] for head in data["heads"]] == [True, False, False] and data["heads"][0]["manifest"]
     assert data["rounds"][0]["outcome"] == "applied" and data["rounds"][0]["winner_uid"] == 4 and data["rounds"][0]["skipped"] == 1
@@ -587,3 +589,18 @@ def test_a_partial_v1_site_or_a_file_that_is_not_an_archive_is_refused(tmp_path)
     assert done.returncode == 1 and "v1 history not installed" in done.stderr and not (out / "v1-data.json").exists()
     done, out, _ = build(tmp_path, snap, "--v1-history", str(tmp_path / "missing.json"))
     assert done.returncode == 1 and not (out / "v1-data.json").exists()
+
+
+def test_site_shows_the_crown_bar_from_z_crown_and_keeps_the_confirmation_bar(tmp_path):
+    snap = snapshot(tmp_path)
+    assert snap["params"].get("z_crown") is None
+    done, out, text = build(tmp_path, snap)
+    assert done.returncode == 0, done.stderr
+    assert "z &gt; 0.5" not in (out / "confirmations.html").read_text() and "z_crown" in (out / "confirmations.html").read_text()
+    assert "Crown bar" in (out / "index.html").read_text() and 'data-f="confirm_bar"' in (out / "index.html").read_text()
+    crowned = copy.deepcopy(snap)
+    crowned["params"].update(z_crown=1.5, crown_gate="argmax_symmetric")  # z_crown is refused without this gate
+    done, out, text = build(tmp_path, crowned)
+    assert done.returncode == 0, done.stderr
+    data = json.loads(text)
+    assert (data["crown_bar"], data["z_bar"]) == (1.5, snap["params"]["z_bar"])

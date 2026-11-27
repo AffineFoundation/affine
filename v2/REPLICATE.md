@@ -196,7 +196,7 @@ For direct grading, `sn120_v2.envs.math_grader.grade(task, output, capped)` acce
 | Training | `sn120_v2/gpu/trainer.py` `LoraTrainer` starts `python -m sn120_v2.gpu.train_job`. The recipe is the one of mining.json with your `train` values. The seed is `train_seed(round_seed, batch_sha256)`. |
 | Scoring | `sn120_v2/gpu/evaluator.py` `VllmEvaluator`: vLLM servers with the arguments of the box, the request body of the box, the seed `rollout_seed(round_seed, task_id, sample)` for null M and for the LoRA, and the official grader. |
 | The round | `sn120_v2/worker.py` `LocalRunner` for ordinary runs; `sn120_v2/gpu/solo.py` `SoloRunner` for `eval_merged=true`, with training, merged-candidate scoring and the official KL handoff. |
-| The decision | `sn120_v2/judging.py` `decide`: delta, standard error, z, the cap-hit and cover rules, the status. With `crown_gate` = `argmax_symmetric` and `z_bar` > 0, eligibility needs delta > `TIE_TOLERANCE` AND z strictly above `z_bar` (with se > 0), including `winner` here. |
+| The decision | `sn120_v2/judging.py` `decide`: delta, standard error, z, the cap-hit and cover rules, the status. With `crown_gate` = `argmax_symmetric` and a crown bar > 0 (`params.crown_bar`: `z_crown` when set, else `z_bar`), eligibility needs delta > `TIE_TOLERANCE` AND z strictly above that crown bar (with se > 0), including `winner` here. Confirmation uses `z_bar` only. |
 | The draw | `sn120_v2/irt.py` `draw_from_snapshot`. |
 | The model cache | `sn120_v2/gpu/resident.py` `Resident`: every file set is hashed before it is used. |
 

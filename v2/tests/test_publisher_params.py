@@ -139,6 +139,8 @@ def test_each_param_alone_moves_the_text(tmp_path):
             name = field.name
             if name in ("recipe", "miner_bounds", "env", "_legacy_fields"):  # the recipe and its bounds: field by field below; env: one value exists
                 continue
+            if name == "z_crown":  # valid only with crown_gate argmax_symmetric, not this field_median base; test_z_crown.py covers its rows and text
+                continue
             value, changed = one_changed(record, name)
             if name == "rotation_enabled":
                 # Default-off params and llms bytes are unchanged; enabling is
@@ -322,10 +324,10 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     # Opt-in fields are absent at defaults, preserving old Params and llms
     # bytes. Non-default serving and rotation values must still be stated.
     omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if (name == "null_samples_per_task" or name == "min_kl_tok" or name.startswith("rotation_")) and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
-    omitted |= {"confirm_next_round"}
+    omitted |= {"confirm_next_round", "z_crown"}  # z_crown is stated only when it is set; both texts here leave it None
     public_fields = {f.name for f in dataclasses.fields(Params) if not f.name.startswith("_")} - {"recipe"}
     assert set(first) == public_fields - omitted
-    assert set(second) == public_fields
+    assert set(second) == public_fields - {"z_crown"}
     assert {name for name in first if first[name] == second[name]} == {"env", "env_pin", "dtype", "kv_cache_dtype", "fold_every_k"}, "all_moved must move every number of the params; merged mode fixes fold_every_k at 1"
     headings = HEADING.findall(texts[0])
     assert headings == [str(number) for number in range(1, len(headings) + 1)] and set(SECTION.findall(text)) <= set(headings)

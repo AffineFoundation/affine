@@ -215,6 +215,7 @@ class Params(Record):
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
         "eval_merged", "null_prune_from_round", "min_kl_seq", "min_kl_tok", "kl_rollouts",
         "kl_max_tokens", "kl_time_limit_s", "confirm_next_round", "max_stages", "train_tokens_per_s_floor",
+        "z_crown",
     )
 
     netuid: int = 120
@@ -272,6 +273,9 @@ class Params(Record):
     # Judging. The field-median gate adds a second, final-look z test against
     # the per-task median of the post-dedup candidates plus the king.
     z_bar: float = 1.0  # the paired king bar; a winner needs z strictly above this
+    # None = the crown bar is z_bar. Set, it is the crown/accept bar only (argmax_symmetric); the confirmation
+    # test always uses z_bar. Omitted from JSON while None, so existing params_hash values do not change.
+    z_crown: float | None = None
     crown_gate: str = "field_median"
     z_field_bar: float = 1.0  # finite; calibrated values may be negative
     cap_hit_floor: float = 0.33  # reject only when cap rate > max(cap_hit_floor, null cap rate + cap_hit_margin)
@@ -424,6 +428,8 @@ class Params(Record):
         _need(bool(self.looks) and self.looks[-1] == 1.0, "looks must end at 1.0")
         _need(all(0 < a < b for a, b in zip(self.looks, self.looks[1:])) and self.looks[0] > 0, "looks must rise from above 0")
         _need(math.isfinite(self.z_bar) and self.z_bar >= 0, "z_bar must be zero or more")
+        _need(self.z_crown is None or (math.isfinite(self.z_crown) and self.z_crown >= 0), "z_crown must be None or zero or more")
+        _need(self.z_crown is None or self.crown_gate == "argmax_symmetric", "z_crown applies only to crown_gate argmax_symmetric")
         _need(self.crown_gate in ("king", "field_median", "argmax_symmetric"), "crown_gate must be 'king', 'field_median' or 'argmax_symmetric'")
         _need(math.isfinite(self.z_field_bar), "z_field_bar must be finite")
         _need(self.train_seed_scope in SEED_SCOPES, "train_seed_scope must be 'round' or 'batch'")
@@ -473,6 +479,11 @@ class Params(Record):
         _need(isinstance(self.null_prune_from_round, str) and (not self.null_prune_from_round or re.fullmatch(r"r\d{6}", self.null_prune_from_round)), "null_prune_from_round must be empty or rNNNNNN")
         _need(self.weights_cadence_s > 0, "weights_cadence_s must be positive")
         _need(math.isfinite(self.budget_usd_per_hour) and self.budget_usd_per_hour > 0, "budget must be positive")
+
+    @property
+    def crown_bar(self) -> float:
+        """The bar a crown needs (strict z above it). Confirmation never uses this; it uses ``z_bar``."""
+        return self.z_bar if self.z_crown is None else self.z_crown
 
     @property
     def null_samples(self) -> int:
