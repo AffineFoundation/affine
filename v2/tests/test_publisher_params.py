@@ -88,7 +88,7 @@ def all_moved(params: Params) -> Params:
 
     bounds = tuple(shift(bound) for bound in params.recipe.miner_bounds)
     recipe = shift(params.recipe, miner_bounds=bounds, global_norm_cap=1.75)
-    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False, null_samples_per_task=2, fold_every_k=1, crown_gate="king", null_prune_from_round="r000001", max_stages=4, train_tokens_per_s_floor=40_000)
+    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False, null_samples_per_task=2, fold_every_k=1, crown_gate="king", null_prune_from_round="r000001", max_stages=4, train_tokens_per_s_floor=40_000, anchor_n=0)  # anchor_n > 0 needs argmax_symmetric: test_anchors.py
 
 
 def sentences(text: str) -> str:
@@ -140,6 +140,8 @@ def test_each_param_alone_moves_the_text(tmp_path):
             if name in ("recipe", "miner_bounds", "env", "_legacy_fields"):  # the recipe and its bounds: field by field below; env: one value exists
                 continue
             if name == "z_crown":  # valid only with crown_gate argmax_symmetric, not this field_median base; test_z_crown.py covers its rows and text
+                continue
+            if name.startswith("anchor_"):  # anchor_n > 0 is valid only with crown_gate argmax_symmetric; test_anchors.py covers its rows and text
                 continue
             value, changed = one_changed(record, name)
             if name == "rotation_enabled":
@@ -327,6 +329,7 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if (name == "null_samples_per_task" or name == "min_kl_tok" or name.startswith("rotation_")) and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
     omitted |= {"confirm_next_round", "z_crown"}  # z_crown is stated only when it is set; both texts here leave it None
     public_fields = {f.name for f in dataclasses.fields(Params) if not f.name.startswith("_")} - {"recipe"}
+    public_fields -= {name for name in public_fields if name.startswith("anchor_")}  # both texts keep anchor_n 0: test_anchors.py states them
     assert set(first) == public_fields - omitted
     assert set(second) == public_fields - {"z_crown"}
     assert {name for name in first if first[name] == second[name]} == {"env", "env_pin", "dtype", "kv_cache_dtype", "fold_every_k"}, "all_moved must move every number of the params; merged mode fixes fold_every_k at 1"
