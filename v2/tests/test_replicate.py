@@ -280,6 +280,13 @@ def test_the_cache_verifies_the_real_master_and_refuses_a_corrupt_one(world, tmp
 # ---- fetch ----
 
 
+def test_fetch_accepts_info_guard_contract(world, capsys):
+    world.write(params=dataclasses.replace(world.params, rotation_rule="info-guard"))
+    report = fetch(world, capsys)
+    assert report["files"] == 3 and report["base_hash"] == world.head.base_hash
+    assert replicate.Contract.load(str(world.tmp / "mining.json")).params.rotation_rule == "info-guard"
+
+
 def test_fetch_from_a_directory_checks_each_file_and_fills_the_cache_in_one_move(world, capsys):
     (world.source / "model-00001.safetensors").write_bytes(b"other weights")
     code, report = cli(capsys, "fetch", "--mining-json", str(world.tmp / "mining.json"), "--work", str(world.work), "--from", str(world.source))
