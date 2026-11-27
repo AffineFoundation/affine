@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import heapq
+import json
 import math
+import re
 from typing import Any, Mapping, Sequence
 
 from .canonical import Record, canonical_json, is_sha256, sha256_hex
@@ -18,19 +20,33 @@ from .types import CAP, FAIL, PASS
 
 RULE_VERSION = "affine-pool-rotation-v1"
 INFO_RULE_VERSION = "affine-pool-rotation-v2"
+GUARD_RULE_VERSION = "affine-pool-rotation-v3"
+INFO_RULES = ("info", "info-guard")
+RANKED_RULE_VERSIONS = (INFO_RULE_VERSION, GUARD_RULE_VERSION)
 BASE_ACTIVE_SIZE = 20_120
 WITHDRAWN, HIGH, LOW = "withdrawn", "high", "low"
 EXCESS, DISPLACED = "excess", "displaced"
 
 
+def ranked(rule_version_or_rule: str) -> bool:
+    """True for every ranked rule, by rule version or by ``rotation_rule``."""
+    return rule_version_or_rule in RANKED_RULE_VERSIONS or rule_version_or_rule in INFO_RULES
+
+
+def guarded(params: Params) -> bool:
+    return params.rotation_rule == "info-guard"
+
+
 def rule_version(params: Params) -> str:
+    if params.rotation_rule == "info-guard":
+        return GUARD_RULE_VERSION
     return INFO_RULE_VERSION if params.rotation_rule == "info" else RULE_VERSION
 
 
 def rule_params(params: Params) -> dict[str, Any]:
     names = ("rotation_enabled", "rotation_k", "rotation_retire_p", "rotation_n_min",
              "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size")
-    if params.rotation_rule == "info":
+    if params.rotation_rule in INFO_RULES:
         names += ("rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max")
     return {name: getattr(params, name) for name in names}
 
@@ -100,6 +116,87 @@ class Retired(Record):
         return {"id": self.id, "reason": self.reason}
 
 
+GUARD_ROW_FIELDS = frozenset({"id", "content_sha", "verdict", "category", "guard_version", "added_at"})
+GUARD_PASS, GUARD_REJECT = "pass", "reject"
+_GUARD_ID = re.compile(r"([a-z][a-z0-9_]*):([0-9]+)\Z")
+_GUARD_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")  # UTC calendar date, as everywhere else
+
+
+@dataclass(frozen=True)
+class GuardLedger:
+    """The sealed public admission ledger: one decision per (id, content_sha).
+
+    Pure rule input. It carries no judge reasoning, no proposed answer and no
+    task text; see ``sn120_v2.guard`` for how a row is produced. ``sha256`` is
+    the hash of the exact published bytes, which is what a Rotation records.
+    """
+    sha256: str
+    count: int = 0
+    passes: dict[str, str] = field(default_factory=dict)   # id -> content_sha
+    rejects: dict[str, str] = field(default_factory=dict)  # id -> content_sha
+
+    def eligible(self, task_id: str, content_sha: str | None) -> bool:
+        """Admission is allowed only by a recorded pass for the current body."""
+        return bool(content_sha) and self.passes.get(task_id) == content_sha
+
+
+EMPTY_GUARD = GuardLedger(sha256_hex(b""), 0)
+
+
+def parse_guard_ledger(raw: bytes) -> GuardLedger:
+    """Strict canonical-JSONL parse. One row per (id, content_sha); never two."""
+    passes: dict[str, str] = {}
+    rejects: dict[str, str] = {}
+    seen: set[tuple[str, str]] = set()
+    lines = raw.splitlines(keepends=True) if raw else []
+    if raw and not raw.endswith(b"\n"):
+        raise VerifyError("guard ledger rows must each end with a newline")
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError as exc:
+            raise VerifyError(f"guard ledger: invalid canonical JSONL: {exc}") from exc
+        if not isinstance(row, dict) or set(row) != GUARD_ROW_FIELDS:
+            raise VerifyError("guard ledger row has a bad schema")
+        if any(not isinstance(row[name], str) for name in GUARD_ROW_FIELDS):
+            raise VerifyError("every guard ledger field must be a string")
+        if not _GUARD_ID.fullmatch(row["id"]) or not is_sha256(row["content_sha"]):
+            raise VerifyError("guard ledger row has a bad task id or content_sha")
+        if row["verdict"] not in (GUARD_PASS, GUARD_REJECT) or not row["category"].strip():
+            raise VerifyError("guard ledger row has a bad verdict or category")
+        if row["category"] != row["category"].lower() or not row["guard_version"].strip():
+            raise VerifyError("guard ledger category must be lowercase and guard_version nonempty")
+        if not _GUARD_DATE.fullmatch(row["added_at"]):
+            raise VerifyError("guard ledger added_at must be a UTC YYYY-MM-DD date")
+        if canonical_json(row) + b"\n" != line:
+            raise VerifyError("guard ledger rows must be canonical JSONL, one newline-terminated row each")
+        key = (row["id"], row["content_sha"])
+        if key in seen:
+            raise VerifyError(f"guard ledger decides {row['id']} twice for the same body")
+        seen.add(key)
+        (passes if row["verdict"] == GUARD_PASS else rejects)[row["id"]] = row["content_sha"]
+    return GuardLedger(sha256_hex(raw), len(lines), passes, rejects)
+
+
+def extends_guard_bytes(previous: bytes, current: bytes) -> None:
+    """Append-only on the bytes, exactly like withdrawn.jsonl."""
+    if not current.startswith(previous):
+        raise VerifyError("guard ledger shrank or changed an earlier row")
+
+
+def extends_guard(previous: GuardLedger, current: GuardLedger) -> None:
+    """The same rule as far as two Rotation records can state it.
+
+    A published rotation records the ledger's sha and count, not its rows, so
+    this is the count-and-identity half; ``extends_guard_bytes`` is the full
+    check and runs wherever the bytes themselves are loaded.
+    """
+    if current.count < previous.count:
+        raise VerifyError("guard ledger shrank")
+    if current.count == previous.count and current.sha256 != previous.sha256:
+        raise VerifyError("guard ledger changed an earlier row")
+
+
 @dataclass(frozen=True)
 class Rotation(Record):
     round_id: str
@@ -119,7 +216,8 @@ class Rotation(Record):
     initial_active_sha: str = ""
     rule_params: dict[str, Any] = field(default_factory=dict)
     rule_version: str = RULE_VERSION
-    LEFT_OUT_AT_DEFAULT = ("candidate_ranking", "retire_reason_counts", "restored_irt_rows", "initial_retired_archive", "initial_candidate_meta", "initial_retired_ledger", "retired_ledger", "opened_at")
+    LEFT_OUT_AT_DEFAULT = ("candidate_ranking", "retire_reason_counts", "restored_irt_rows", "initial_retired_archive", "initial_candidate_meta", "initial_retired_ledger", "retired_ledger", "opened_at",
+                           "guard_ledger_sha", "guard_ledger_count", "guard_pass", "guard_reject", "guard_shortfall", "next_up_eligible")
     candidate_ranking: tuple[dict[str, Any], ...] = ()
     retire_reason_counts: dict[str, int] = field(default_factory=dict)
     restored_irt_rows: dict[str, tuple[float, float, int]] = field(default_factory=dict)
@@ -128,16 +226,35 @@ class Rotation(Record):
     initial_retired_ledger: dict[str, tuple[int, int]] = field(default_factory=dict)
     retired_ledger: dict[str, tuple[int, int]] = field(default_factory=dict)
     opened_at: int = 0
+    # The sealed public guard ledger of a v3 (info-guard) decision. Only its
+    # content id, size and the counts are recorded here; the rows themselves
+    # are the published object at ``layout.pool_guard(guard_ledger_sha)``.
+    guard_ledger_sha: str = ""
+    guard_ledger_count: int = 0
+    guard_pass: int = 0
+    guard_reject: int = 0
+    guard_shortfall: int = 0
+    next_up_eligible: int = 0
 
     def __post_init__(self) -> None:
         if active_sha(self.active_ids) != self.active_sha or set(self.admitted) - set(self.active_ids):
             raise VerifyError("rotation active ids do not match active_sha")
-        if self.queue_remaining < 0 or self.rule_version not in (RULE_VERSION, INFO_RULE_VERSION):
+        if self.queue_remaining < 0 or self.rule_version not in (RULE_VERSION, INFO_RULE_VERSION, GUARD_RULE_VERSION):
             raise VerifyError("unknown pool rotation rule")
         if self.rule_version == RULE_VERSION and (self.candidate_ranking or self.retire_reason_counts or self.restored_irt_rows or self.initial_retired_archive or self.initial_candidate_meta or self.initial_retired_ledger or self.retired_ledger):
             raise VerifyError("v1 rotation cannot carry v2 ranked-pool state")
-        if self.rule_version == INFO_RULE_VERSION and not self.candidate_ranking:
-            raise VerifyError("v2 rotation lacks its public candidate ranking")
+        if self.rule_version in RANKED_RULE_VERSIONS and not self.candidate_ranking:
+            raise VerifyError("a ranked rotation lacks its public candidate ranking")
+        guard_state = (self.guard_ledger_sha, self.guard_ledger_count, self.guard_pass, self.guard_reject, self.guard_shortfall, self.next_up_eligible)
+        if self.rule_version != GUARD_RULE_VERSION and any(guard_state):
+            raise VerifyError("only an info-guard rotation may carry guard-ledger state")
+        if self.rule_version == GUARD_RULE_VERSION:
+            if not is_sha256(self.guard_ledger_sha):
+                raise VerifyError("an info-guard rotation must seal a guard ledger by sha256")
+            if min(self.guard_ledger_count, self.guard_pass, self.guard_reject, self.guard_shortfall, self.next_up_eligible) < 0:
+                raise VerifyError("guard-ledger counts must not be negative")
+            if self.guard_pass + self.guard_reject > self.guard_ledger_count:
+                raise VerifyError("guard-ledger decisions exceed its row count")
 
     def journal_block(self) -> dict[str, Any]:
         block = {
@@ -151,9 +268,23 @@ class Rotation(Record):
             "rule_version": self.rule_version,
             "prev_state_sha": self.prev_state_sha,
         }
-        if self.rule_version == INFO_RULE_VERSION:
+        if self.rule_version in RANKED_RULE_VERSIONS:
             block["retire_reason_counts"] = self.retire_reason_counts
+        if self.rule_version == GUARD_RULE_VERSION:
+            block |= self.guard_block()
         return block
+
+    def guard_block(self) -> dict[str, Any]:
+        """Public counts of the sealed guard ledger. No candidate is named.
+
+        Empty for a round under an earlier rule: a v1 or v2 round has no guard,
+        and nothing it publishes may suggest it had one.
+        """
+        if self.rule_version != GUARD_RULE_VERSION:
+            return {}
+        return {"guard_ledger_sha": self.guard_ledger_sha, "guard_ledger_count": self.guard_ledger_count,
+                "guard_pass": self.guard_pass, "guard_reject": self.guard_reject,
+                "guard_shortfall": self.guard_shortfall, "next_up_eligible": self.next_up_eligible}
 
     def pool_block(self) -> dict[str, Any]:
         from . import layout  # key naming only; still no I/O
@@ -172,7 +303,9 @@ class Rotation(Record):
             "reserve_manifest": layout.RESERVE_MANIFEST,
             **({"ranking": layout.pool_ranking(self.round_id), "summary": layout.POOL_SUMMARY,
                 "rule_params": self.rule_params, "retire_reason_counts": self.retire_reason_counts}
-               if self.rule_version == INFO_RULE_VERSION else {}),
+               if self.rule_version in RANKED_RULE_VERSIONS else {}),
+            **({"guard_ledger": layout.pool_guard(self.guard_ledger_sha), **self.guard_block()}
+               if self.rule_version == GUARD_RULE_VERSION else {}),
         }
 
 
@@ -309,6 +442,7 @@ def rotate_info(
     allow_unscored_previous: bool = False,
     initial_candidate_meta: Mapping[str, Mapping[str, Any]] | None = None,
     initial_retired_ledger: Mapping[str, Sequence[int]] | None = None,
+    guard: GuardLedger | None = None,
 ) -> Rotation:
     """Rank every non-withdrawn candidate, then shrink, fill and swap.
 
@@ -316,9 +450,25 @@ def rotate_info(
     previous round, not the new active set. All order ties use
     sha256(round_id|rank|task_id); no iteration or file order can change a
     decision. Withdrawing is permanent: no retired row is a new candidate.
+
+    Under ``rotation_rule="info-guard"`` (``affine-pool-rotation-v3``) a
+    candidate from outside the active set may be admitted only when the
+    sealed public guard ledger records a pass for its id *and* for the
+    ``content_sha`` the catalog currently publishes for it. The gate is
+    fail-closed: with too few eligible candidates the round admits fewer and
+    records the shortfall. It never removes an active task by itself, and it
+    never changes the ranking or ``next_up``, which keep every non-withdrawn
+    outside candidate so the pre-judge worker can see what to judge next. No
+    network call and no model runs here; the judge is an offline operator
+    tool that only ever appends rows to the ledger.
     """
-    if not params.rotation_enabled or params.rotation_rule != "info":
-        raise ConfigError("rotate_info requires rotation_enabled=true and rotation_rule=info")
+    if not params.rotation_enabled or params.rotation_rule not in INFO_RULES:
+        raise ConfigError("rotate_info requires rotation_enabled=true and rotation_rule='info' or 'info-guard'")
+    gate = params.rotation_rule == "info-guard"
+    if gate and guard is None:
+        raise ConfigError("the info-guard rule needs its sealed guard ledger")
+    if not gate and guard is not None:
+        raise ConfigError("only the info-guard rule takes a guard ledger")
     if initial_candidate_meta:
         reserve = Reserve.from_dict(reserve.to_dict() | {"candidate_meta": dict(initial_candidate_meta)})
     input_archive = sorted(retired_archive, key=lambda item: (int(item.get("event_seq", -1)), str(item.get("round_id", "")), str(item.get("id", ""))))
@@ -427,14 +577,26 @@ def rotate_info(
             retire(task_id, HIGH if HIGH in flags else LOW if LOW in flags else EXCESS)
             kept.remove(task_id)
     outside = (set(reserve.queue) | set(archives)) - withdrawn - kept - {task for task, row in archives.items() if row.get("reason") == WITHDRAWN}
+
+    def admissible(task_id: str) -> bool:
+        """Fail closed: without the gate every candidate passes; with it, only a recorded pass for the current body does."""
+        if not gate:
+            return True
+        assert guard is not None
+        return guard.eligible(task_id, _candidate_meta(reserve, task_id).get("content_sha"))
+
+    shortfall = 0
     if len(kept) < target:
-        for task_id in sorted(outside, key=descending)[:target - len(kept)]:
+        wanted = target - len(kept)
+        fill = sorted((task_id for task_id in outside if admissible(task_id)), key=descending)[:wanted]
+        shortfall = wanted - len(fill)
+        for task_id in fill:
             kept.add(task_id)
             rows[task_id]["admitted"] = True
         outside -= kept
     cap = int(params.rotation_churn_frac * target) if params.rotation_churn_max == 0 else min(int(params.rotation_churn_frac * target), params.rotation_churn_max)
     active_heap = [ascending(task_id) for task_id in kept]
-    outside_heap = [descending(task_id) for task_id in outside]
+    outside_heap = [descending(task_id) for task_id in outside if admissible(task_id)]
     heapq.heapify(active_heap)
     heapq.heapify(outside_heap)
     swaps = 0
@@ -452,7 +614,9 @@ def rotate_info(
         outside.remove(candidate)
         kept.add(candidate)
         rows[candidate]["admitted"] = True
-        heapq.heappush(outside_heap, descending(task_id))
+        if admissible(task_id):
+            # A task the gate would refuse never re-enters, not even by swap.
+            heapq.heappush(outside_heap, descending(task_id))
         swaps += 1
     active = tuple(sorted(kept))
     ranking = tuple({key: value for key, value in row.items() if key != "tie"}
@@ -462,16 +626,24 @@ def rotate_info(
     upcoming = tuple(row["id"] for row in ranking if row["id"] in outside and row["id"] not in withdrawn)
     restored = {task_id: tuple(archives[task_id]["irt_row"][:3]) for task_id in admitted if task_id in archives and archives[task_id].get("irt_row")}
     counts = {reason: sum(row.reason == reason for row in retired.values()) for reason in sorted({row.reason for row in retired.values()})}
+    next_up = upcoming[:params.rotation_queue_publish]
+    guard_fields: dict[str, Any] = {}
+    if gate:
+        assert guard is not None
+        guard_fields = {"guard_ledger_sha": guard.sha256, "guard_ledger_count": guard.count,
+                        "guard_pass": len(guard.passes), "guard_reject": len(guard.rejects),
+                        "guard_shortfall": shortfall,
+                        "next_up_eligible": sum(admissible(task_id) for task_id in next_up)}
     return Rotation(
         round_id=round_id, active_ids=active, active_sha=active_sha(active), prev_active_sha=previous_sha,
         admitted=admitted, retired=tuple(retired.values()), reserve_manifest_sha=reserve.manifest_sha,
-        queue_remaining=len(set(reserve.queue) - kept - withdrawn), next_up=upcoming[:params.rotation_queue_publish],
+        queue_remaining=len(set(reserve.queue) - kept - withdrawn), next_up=next_up,
         reserve_history=reserve.history(), ledger={key: (rows[key]["head_rollouts"], rows[key]["head_passes"]) for key in active},
         retired_archive=tuple(archive), source_snapshot_id=source_snapshot_id,
         prev_state_sha=prev_state_sha, initial_active_sha=previous_sha if not prev_state_sha else "",
         rule_params=rule_params(params),
-        rule_version=INFO_RULE_VERSION, candidate_ranking=ranking, retire_reason_counts=counts,
-        restored_irt_rows=restored,
+        rule_version=rule_version(params), candidate_ranking=ranking, retire_reason_counts=counts,
+        restored_irt_rows=restored, **guard_fields,
         retired_ledger={key: _ledger_row(initial_retired_ledger or {}, key) for key in (initial_retired_ledger or {})} |
                        {row.id: (row.head_rollouts, row.head_passes) for row in retired.values()},
         initial_retired_archive=tuple(input_archive) if initial_candidate_meta is not None else (),

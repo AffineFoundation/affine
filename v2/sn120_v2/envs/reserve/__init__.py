@@ -17,12 +17,13 @@ from typing import Any, Iterator
 
 from ...canonical import canonical_json, file_sha256, sha256_hex
 from ...errors import ConfigError, VerifyError
-from ...rotation import Reserve, ReserveShard
+from ...rotation import EMPTY_GUARD, GuardLedger, Reserve, ReserveShard, parse_guard_ledger
 from ..math_pool import MathPool, POOL_V2_0_FILE, POOL_V2_0_SHA256, Task, load_pool
 
 RESERVE_ENV = "SN120_RESERVE_DIR"
 MANIFEST = "MANIFEST.jsonl"
 WITHDRAWN = "withdrawn.jsonl"
+GUARD = "guard.jsonl"  # the pool-quality guard ledger; append-only, public-safe, sealed into each v3 rotation
 INGEST_LOCK = ".ingest.lock"
 PACKAGED_RESERVE = Path(__file__).parent
 ID = re.compile(r"([a-z][a-z0-9_]*):([0-9]+)\Z")
@@ -318,7 +319,41 @@ def _load_reserve(root: str | Path | None = None, *, with_catalog: bool = False,
     return reserve, catalog
 
 
-def candidate_metadata(root: str | Path | None, reserve: Reserve, catalog: Catalog | None = None) -> dict[str, dict[str, Any]]:
+def read_guard(root: str | Path | None = None) -> bytes:
+    """The raw guard-ledger bytes of a reserve directory; missing means empty.
+
+    Call it under ``ingest_lock``, like every other read of this directory.
+    """
+    root = reserve_dir() if root is None else Path(root)
+    path = root / GUARD
+    try:
+        return path.read_bytes() if path.exists() else b""
+    except OSError as exc:
+        raise ConfigError(f"cannot read guard ledger {path}: {exc}") from exc
+
+
+def load_guard(root: str | Path | None = None) -> tuple[GuardLedger, bytes]:
+    """Verify and parse the guard ledger. An absent file is an empty ledger."""
+    raw = read_guard(root)
+    if not raw:
+        return EMPTY_GUARD, b""
+    try:
+        return parse_guard_ledger(raw), raw
+    except VerifyError as exc:
+        raise ConfigError(f"guard ledger verification failed: {exc}") from exc
+
+
+def content_sha(task: Task) -> str:
+    """The public body id of a task: sha256 of its canonical problem and answer.
+
+    The guard ledger binds a decision to this, so an edited body loses its
+    pass and cannot be admitted until it is judged again.
+    """
+    return sha256_hex(canonical_json({"problem": task.problem, "answer": task.answer}))
+
+
+def candidate_metadata(root: str | Path | None, reserve: Reserve, catalog: Catalog | None = None,
+                       *, with_content_sha: bool = False) -> dict[str, dict[str, Any]]:
     """IDs and small public ranking fields, keyed by shard bytes not task text.
 
     This reads shards once at runtime construction, never once per round.
@@ -349,6 +384,12 @@ def candidate_metadata(root: str | Path | None, reserve: Reserve, catalog: Catal
         for task_id in catalog.task_ids:
             task = catalog.task(task_id)
             meta.setdefault(task_id, {"source_prefix": task_id.split(":", 1)[0], "env": task.slice})
+    if with_content_sha and catalog is not None:
+        # Only the guard rule needs this, and only it pays for the extra public
+        # bytes: an id without a resolvable body simply stays ineligible.
+        for task_id in catalog.task_ids:
+            meta.setdefault(task_id, {"source_prefix": task_id.split(":", 1)[0], "env": catalog.task(task_id).slice})
+            meta[task_id]["content_sha"] = content_sha(catalog.task(task_id))
     return meta
 
 

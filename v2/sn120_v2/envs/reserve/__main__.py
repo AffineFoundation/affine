@@ -227,6 +227,45 @@ def _withdraw_locked(args: argparse.Namespace, root: Path) -> dict[str, Any]:
     return row
 
 
+def withdraw_many_locked(root: Path, rows: list[dict[str, str]]) -> dict[str, Any]:
+    """Withdraw a batch under one pointer rewrite, with the same invariants as one withdrawal.
+
+    The caller already holds the exclusive ``ingest_lock``. A batch is one
+    rewrite of the manifest pointer rather than one per id: the previous
+    pointer is sealed in the preceding round, so a round sees either the whole
+    batch or none of it. An id already withdrawn, a repeat inside the batch, or
+    an empty reason fails the whole batch before anything is written.
+    """
+    reserve, _ = load_reserve(root)
+    stamp = utc_now()
+    prepared: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in rows:
+        task_id, reason = row["id"], str(row.get("reason", "")).strip()
+        if not reason:
+            raise V2Error(f"withdraw needs a nonempty reason for {task_id}")
+        if task_id in reserve.withdrawn_ids:
+            raise V2Error(f"{task_id} is already withdrawn")
+        if task_id in seen:
+            raise V2Error(f"{task_id} is withdrawn twice in one batch")
+        seen.add(task_id)
+        prepared.append({"id": task_id, "reason": reason, "added_at": stamp})
+    if not prepared:
+        return {"withdrawn": 0, "ids": []}
+    with (root / WITHDRAWN).open("ab") as stream:
+        stream.write(b"".join(canonical_json(row) + b"\n" for row in prepared))
+        stream.flush()
+        os.fsync(stream.fileno())
+    raw = (root / WITHDRAWN).read_bytes()
+    history = (root / MANIFEST).read_bytes().splitlines()
+    if "withdrawn" not in json.loads(history[-1]):
+        raise V2Error("reserve manifest has no withdrawn pointer")
+    history[-1] = canonical_json({"withdrawn": {"sha256": sha256_hex(raw), "count": len(raw.splitlines())}})
+    atomic_write(root / MANIFEST, b"\n".join(history) + b"\n")
+    load_reserve(root)  # verify the committed bytes, fail loudly on any problem
+    return {"withdrawn": len(prepared), "ids": [row["id"] for row in prepared], "added_at": stamp}
+
+
 def status() -> dict[str, Any]:
     reserve, _ = load_reserve()
     return {"shards": len(reserve.shards), "tasks": sum(row.count for row in reserve.shards),
