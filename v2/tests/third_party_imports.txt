@@ -14,6 +14,7 @@ conftest
 test_dedup
 test_generator_remote
 test_rotation_controller
+test_pool_rotation_v2
 pull
 
 # gpu: train/eval workers and low-rank duplicate arithmetic

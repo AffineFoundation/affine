@@ -14,7 +14,7 @@ from sn120_v2.params import Params
 from sn120_v2.rotation import (EMPTY_GUARD, GUARD_RULE_VERSION, GuardLedger, Reserve, extends_guard,
                                extends_guard_bytes, parse_guard_ledger, rotate_info, rule_version)
 from sn120_v2.guard.store import public_row
-from tests.test_pool_rotation_v2 import info_params, snapshot
+from test_pool_rotation_v2 import info_params, snapshot
 
 VERSION = "guard-v1:0123456789abcdef"
 
