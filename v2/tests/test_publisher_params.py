@@ -210,6 +210,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"| `looks` | {publisher.show(params.looks)} |",  # the last look is always 1: a rule of Params
         f"| `fold_every_k` | {publisher.show(params.fold_every_k)} |",  # merged mode requires the default 1
         f"After {params.fold_every_k} applied winner(s), the stack",
+        *(line.strip() for line in publisher.GENERATOR_TASK_CHECK_LINES if re.search(r"\d", line)),  # the Generator rule's 2-6/8 and 0 are contract text, not params
         # The state of this world, not a parameter.
         "Seats that wait: 0.",
         # A fact of the chain, of a key format or of HTTP. No constant of this code gives it.

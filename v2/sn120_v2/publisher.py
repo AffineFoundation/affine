@@ -20,6 +20,7 @@ operator's steps are in LLMS_CHECK.md).
 from __future__ import annotations
 
 import argparse
+import copy
 import dataclasses
 import difflib
 import inspect
@@ -186,6 +187,34 @@ Z_CROWN_RULE_CHANGELOG = (
     "- 2026-11-27 / `z_crown` / crown and confirmation shared `z_bar` (strict `z > 0.5`) → the crown uses `z_crown` (strict `z > 1.5` in the approved params); confirmation keeps `z_bar` (fresh paired `z > 0.5` and recorded crown-round `z > 0.5`); `confirm_next_round` stays on; existing params hashes are unchanged.",
 )
 RULE_CHANGELOG += Z_CROWN_RULE_CHANGELOG
+
+GENERATOR_SIDELINED_URL = "https://affine.io/generator/sidelined.jsonl"
+GENERATOR_GUIDE_URL = "https://affine.io/generator/generator-guide.md"
+# The judge categories that make a Generator task broken (the pool quality guard's reject verdicts, lowercased).
+GENERATOR_BROKEN_CATEGORIES = ("bad_key", "ambiguous", "ill_posed", "multi_answer", "format_mismatch",
+                               "truncated", "needs_figure", "proof")
+# mining.json `contract.generator_task_check`. Contract text only: it reads no params and changes no hash.
+GENERATOR_TASK_CHECK = {
+    "rule": "every scored Generator task gets deterministic checks; every task that passes the 2-6/8 king rule gets an LLM judge; if any task a miner submitted in an epoch is judged broken (wrong answer/logical error, or ambiguous/underspecified with no single answer, missing figure, multi-answer, ill-posed, format mismatch, proof, truncated), that miner's Generator score for that epoch is 0 and none of its tasks enter the pool",
+    "broken_categories": list(GENERATOR_BROKEN_CATEGORIES),
+    "published": "verdict category only, never reasoning or answers",
+    "sidelined_ledger": GENERATOR_SIDELINED_URL,
+    "guide": GENERATOR_GUIDE_URL,
+}
+# The llms.txt paragraph that states the same rule, in the `gen:` / Generator area.
+GENERATOR_TASK_CHECK_LINES = (
+    "- **Generator task check (mechanism 1):** every scored Generator task gets deterministic checks, and every task that",
+    "  passes the 2-6/8 king rule also gets an LLM judge. If any task a miner submitted in an epoch is judged broken (wrong",
+    "  answer or logical error; ambiguous or underspecified with no single answer; missing figure; multi-answer; ill-posed;",
+    "  format mismatch; proof; truncated), that miner's Generator score for that epoch is 0 and none of its tasks enter the",
+    f"  pool. Only the verdict category is published, never reasoning or answers: `{GENERATOR_SIDELINED_URL}`.",
+    f"  Categories in `contract.generator_task_check.broken_categories`. Guide: `{GENERATOR_GUIDE_URL}`.",
+)
+
+GENERATOR_TASK_CHECK_CHANGELOG = (
+    "- 2026-11-27 / Generator task check / unpublished → every scored Generator task gets deterministic checks and every task passing the 2-6/8 king rule gets an LLM judge; any task judged broken sets that miner's Generator score for the epoch to 0 and keeps all its tasks out of the pool; only the verdict category is published (`contract.generator_task_check`); params and params hashes are unchanged.",
+)
+RULE_CHANGELOG += GENERATOR_TASK_CHECK_CHANGELOG
 
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
@@ -433,6 +462,7 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "confirmation_fields": ["parent_version_id", "pending_round_id", "pending_uid", "new_version_id", "delta", "se", "z", "new_pass_rate", "old_pass_rate", "new_head_pass_rate", "old_head_pass_rate", "n_tasks", "excluded_training_prompts", "confirmed", "paid", "payout_status", "reason"],
         } if params.confirm_next_round else {"enabled": False, "payout": "historical immediate apply-and-pay; no parent slot or training-prompt exclusion"},
         "null_model": NULL_MODEL,
+        "generator_task_check": copy.deepcopy(GENERATOR_TASK_CHECK),
         "public_url": public_url,
         "links_url": links_url,
         "upload": upload_entry(links_url) if links_url else None,
@@ -1417,6 +1447,7 @@ def _onboarding_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"  and each `{base}/public/pool/reserve/shards/<name>.<sha>.jsonl` named by its manifest row. Reserve rows include `id`,",
         "  `problem`, `answer` and optional `prior_p`. Verify manifest and shard SHAs; the helper refreshes pointers every time and",
         "  caches only immutable, SHA-addressed shards. Every HTTP request needs a `User-Agent` and cache-busting/no-cache headers.",
+        *GENERATOR_TASK_CHECK_LINES,
         "- **Rotation-v2:** sufficiently measured tasks use IRT-predicted head pass rate `p`. Otherwise an available reserve `prior_p`",
         "  is used, then `rotation_prior_p`. An active task with an IRT row but too few rounds uses the configured fallback, not that",
         "  reserve prior. Non-dead candidates score `p(1-p)`; dead tasks with enough head rollouts and zero passes score zero.",

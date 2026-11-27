@@ -854,7 +854,7 @@ def test_the_irt_snapshot_is_named_by_id_and_key_and_never_embedded(tmp_path):
         doc, text, _ = published(snap)
         key = layout.irt_snapshot(found)
         assert made.store.exists(key) and f"- Snapshot of {name}: id `{found}`, object `{key}`" in " ".join(text.split())
-        assert "tasks" not in doc and "tasks" not in json.dumps(doc["contract"])  # the table stays in its own object
+        assert "tasks" not in doc and '"tasks":' not in json.dumps(doc["contract"])  # the table stays in its own object
     store = MemStore({layout.head_manifest(idle["head"]["head"]["version_id"]): b"{}"})
     publisher.StorePublisher(store, "https://files.example/").publish(idle)
     assert f"https://files.example/{layout.irt_snapshot(idle['irt_snapshot_id'])}" in store.get(layout.LLMS_TXT).decode()
