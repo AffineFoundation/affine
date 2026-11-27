@@ -8,7 +8,7 @@ from statistics import NormalDist
 import pytest
 
 from sn120_v2.errors import ContractError, HeadMismatchError
-from sn120_v2.judging import check_result, decide, drop_at_look, estimate, pick_winner, score_entry, scored_prefix, upper_final_z
+from sn120_v2.judging import check_result, decide, drop_at_look, estimate, pick_winner, score_confirmation, score_entry, scored_prefix, upper_final_z
 from sn120_v2.types import LOST, NO_DECISION, SKIP, WINNER, EntryResult, Score
 
 
@@ -108,6 +108,20 @@ def test_cap_hit_on_the_head_relative_limit_passes_and_only_above_it_is_rejected
     assert score.null_cap_rate == pytest.approx(0.40), "limit is max(0.33, 0.40 + 0.02) = 0.42"
     assert score.eligible is ok
     assert ok or any("cap-hit rate 0.4300 is above 0.4200" in reason for reason in score.reasons)
+
+
+def test_crown_bar_is_separate_from_confirmation_z_bar(build):
+    settings = dict(crown_gate="argmax_symmetric", z_bar=0.5, min_scored_tasks=2)
+    null, lora = "F" * 12, "PP" + "F" * 10  # z is about 1.48
+    ordinary = one_score(build, null, lora, **settings)
+    assert 1.0 < ordinary.z < 1.5 and ordinary.eligible
+    gated = one_score(build, null, lora, z_crown=1.5, **settings)
+    assert not gated.eligible and gated.reasons == (f"z {ordinary.z:.3f} is not above 1.5",)
+    # This API retains z_bar as the confirmation bar; z_crown is not a parameter.
+    weights, new, old = (1.0,) * 12, (lora,), (null,)
+    assert score_confirmation(weights, new, old)["confirmed"]
+    with pytest.raises(TypeError):
+        score_confirmation(weights, new, old, z_crown=1.5)
 
 
 # ---------------------------------------------------------------- winner and decision

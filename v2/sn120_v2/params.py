@@ -121,7 +121,7 @@ class Recipe(Record):
     # ``minibatches`` and ``adam_eps`` came after the first rounds. While at their defaults they are not written
     # (``canonical.to_jsonable``): a stored recipe keeps its JSON form and ``recipe_id``, and code from before the
     # fields can read it.
-    LEFT_OUT_AT_DEFAULT = ("minibatches", "adam_eps")
+    LEFT_OUT_AT_DEFAULT = ("minibatches", "adam_eps", "sft_weight")
 
     method: str = "grpo-lora"
     steps: int = 1  # passes over the whole file
@@ -132,6 +132,7 @@ class Recipe(Record):
     global_norm_cap: float | None = 6.0  # cap on the norm of the whole adapter update; None = no cap
     group_size: int = 0  # PLACEHOLDER: rollouts per GRPO group; 0 = use each prompt's rollouts as the file groups them
     sample_temperature: float = 1.0  # temperature the batch's rollouts were sampled at
+    sft_weight: float = 1.0  # multiplier of each supervised trace's token-mean cross-entropy
     rank: int = 16
     alpha: float = 32.0
     dropout: float = 0.0
@@ -150,12 +151,18 @@ class Recipe(Record):
     code_digest: str = ""  # sha256 of the training code, set by the train/eval workstream
     image_digests: tuple[str, ...] = ()  # worker images allowed to produce LoRAs and scores
 
+    @property
+    def settable_fields(self) -> frozenset[str]:
+        """Fields a bound may name; also the public compatibility filter's allowlist."""
+        return frozenset(f.name for f in dataclasses.fields(self)) - {"miner_bounds", "code_digest", "image_digests", "method"}
+
     def __post_init__(self) -> None:
         _need(self.steps >= 1, "recipe.steps must be at least 1")
         _need(self.minibatches >= 1, "recipe.minibatches must be at least 1")
         _need(self.rank >= 1, "recipe.rank must be at least 1")
         _need(math.isfinite(self.lora_lr) and self.lora_lr > 0, "recipe.lora_lr must be a positive number")
         _need(math.isfinite(self.adam_eps) and self.adam_eps > 0, "recipe.adam_eps must be a finite positive number")
+        _need(_unit(self.sft_weight), "recipe.sft_weight must be in [0, 1]")
         _need(math.isfinite(self.max_grad_norm) and self.max_grad_norm > 0, "recipe.max_grad_norm must be positive")
         cap = self.global_norm_cap
         _need(cap is None or (math.isfinite(cap) and cap > 0), "recipe.global_norm_cap must be positive, or null for no cap")
@@ -205,8 +212,9 @@ class Params(Record):
         "rotation_enabled", "rotation_k", "rotation_retire_p", "rotation_n_min",
         "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
-        "eval_merged", "null_prune_from_round", "min_kl_seq", "kl_rollouts",
+        "eval_merged", "null_prune_from_round", "min_kl_seq", "min_kl_tok", "kl_rollouts",
         "kl_max_tokens", "kl_time_limit_s", "confirm_next_round",
+        "z_crown", "recite_max_share", "max_kl_tok",
     )
 
     netuid: int = 120
@@ -265,6 +273,9 @@ class Params(Record):
     # Judging. The field-median gate adds a second, final-look z test against
     # the per-task median of the post-dedup candidates plus the king.
     z_bar: float = 1.0  # the paired king bar; a winner needs z strictly above this
+    # None = the crown bar is z_bar. Set, it is the crown/accept bar only (argmax_symmetric); the confirmation
+    # test always uses z_bar. Omitted from JSON while None, so existing params_hash values do not change.
+    z_crown: float | None = None
     crown_gate: str = "field_median"
     z_field_bar: float = 1.0  # finite; calibrated values may be negative
     cap_hit_floor: float = 0.33  # reject only when cap rate > max(cap_hit_floor, null cap rate + cap_hit_margin)
@@ -274,9 +285,12 @@ class Params(Record):
     calibration_tol: float = 0.003  # multi-box guard on the null-M rate
     confirm_next_round: bool = False  # apply a crown now; pay it only after a fresh paired win in the next round
     min_kl_seq: float = 0.0  # minimum mean KL(new||head) per sampled rollout; 0 = off
+    min_kl_tok: float = 0.0  # minimum summed KL divided by measured completion tokens; 0 = off
     kl_rollouts: int = 128  # deterministic sample-0 subsample; capped completions included
     kl_max_tokens: int = 0  # first N completion tokens per rollout; 0 = the full completion
     kl_time_limit_s: int = 1200  # independent hard cap, also bounded by the promotion deadline
+    max_kl_tok: float = 0.0  # behaviour KL ceiling: kl_tok above it cannot crown or confirm; 0 = off
+    recite_max_share: float = 0.0  # anti-recitation: share of target 10-grams found in active-pool task text; 0 = off
 
     recipe: Recipe = field(default_factory=Recipe)
 
@@ -373,6 +387,12 @@ class Params(Record):
                 args = [arg for arg in typing.get_args(tp) if arg is not type(None)]
                 tp = args[0] if len(args) == 1 else Any
             if dataclasses.is_dataclass(tp) and isinstance(value, Mapping):
+                if tp is Recipe and isinstance(value.get("miner_bounds"), list):
+                    # A future bound is not a local training permission. Drop it only on this public-read path;
+                    # canonical journals, tickets and stored Params keep the strict Recipe constructor.
+                    known_keys = Recipe().settable_fields
+                    value = value | {"miner_bounds": [bound for bound in value["miner_bounds"]
+                                                       if not isinstance(bound, Mapping) or bound.get("key") in known_keys]}
                 return {key: known(hint, value[key]) for key, hint in _hints(tp).items()
                         if not key.startswith("_") and key in value}
             origin, args = typing.get_origin(tp), typing.get_args(tp)
@@ -406,6 +426,8 @@ class Params(Record):
         _need(bool(self.looks) and self.looks[-1] == 1.0, "looks must end at 1.0")
         _need(all(0 < a < b for a, b in zip(self.looks, self.looks[1:])) and self.looks[0] > 0, "looks must rise from above 0")
         _need(math.isfinite(self.z_bar) and self.z_bar >= 0, "z_bar must be zero or more")
+        _need(self.z_crown is None or (math.isfinite(self.z_crown) and self.z_crown >= 0), "z_crown must be None or zero or more")
+        _need(self.z_crown is None or self.crown_gate == "argmax_symmetric", "z_crown applies only to crown_gate argmax_symmetric")
         _need(self.crown_gate in ("king", "field_median", "argmax_symmetric"), "crown_gate must be 'king', 'field_median' or 'argmax_symmetric'")
         _need(math.isfinite(self.z_field_bar), "z_field_bar must be finite")
         _need(self.train_seed_scope in SEED_SCOPES, "train_seed_scope must be 'round' or 'batch'")
@@ -415,6 +437,12 @@ class Params(Record):
         _need(self.min_signal_rollouts >= 1, "min_signal_rollouts must be at least 1")
         _need(math.isfinite(self.min_step_norm) and self.min_step_norm >= 0, "min_step_norm must be finite and nonnegative")
         _need(math.isfinite(self.min_kl_seq) and self.min_kl_seq >= 0, "min_kl_seq must be finite and nonnegative")
+        _need(math.isfinite(self.min_kl_tok) and self.min_kl_tok >= 0, "min_kl_tok must be finite and nonnegative")
+        _need(math.isfinite(self.max_kl_tok) and self.max_kl_tok >= 0, "max_kl_tok must be finite and nonnegative")
+        _need(self.max_kl_tok <= 0 or self.max_kl_tok > self.min_kl_tok, "max_kl_tok must be above min_kl_tok")
+        _need(self.max_kl_tok <= 0 or self.kl_floor_on, "max_kl_tok needs the KL measurement")
+        _need(isinstance(self.recite_max_share, (int, float)) and not isinstance(self.recite_max_share, bool)
+              and 0 <= self.recite_max_share < 1, "recite_max_share must be in [0, 1)")
         _need(type(self.kl_rollouts) is int and self.kl_rollouts >= 8, "kl_rollouts must be an integer of at least 8")
         _need(type(self.kl_max_tokens) is int and self.kl_max_tokens >= 0, "kl_max_tokens must be a nonnegative integer")
         _need(type(self.kl_time_limit_s) is int and self.kl_time_limit_s > 0, "kl_time_limit_s must be a positive integer")
@@ -452,8 +480,18 @@ class Params(Record):
         _need(math.isfinite(self.budget_usd_per_hour) and self.budget_usd_per_hour > 0, "budget must be positive")
 
     @property
+    def crown_bar(self) -> float:
+        """The bar a crown needs (strict z above it). Confirmation never uses this; it uses ``z_bar``."""
+        return self.z_bar if self.z_crown is None else self.z_crown
+
+    @property
     def null_samples(self) -> int:
         return self.samples_per_task if self.null_samples_per_task is None else self.null_samples_per_task
+
+    @property
+    def kl_floor_on(self) -> bool:
+        """KL is measured: a floor or the ``max_kl_tok`` ceiling is on."""
+        return self.min_kl_seq > 0 or self.min_kl_tok > 0 or self.max_kl_tok > 0
 
     @property
     def params_hash(self) -> str:
