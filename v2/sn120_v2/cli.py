@@ -54,9 +54,9 @@ from .public import phase, public_text, round_text
 from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
 from .dedup import dryrun
-from .state import SEATS_FRONTED, State, load
+from .state import SEATS_FRONTED, State, load, revert_refusal
 from .stopafter import SAID, StopRequest, say, stamp
-from .store import timed, verify_files
+from .store import publish_head, timed, verify_files
 from .types import ChainSnapshot, V1Import, Verdict
 
 
@@ -326,12 +326,63 @@ def cmd_publish(args: argparse.Namespace) -> int:
         raise ConfigError("this stack has no publisher")
     checked = now()  # this reads the file of every waiting seat
     verdicts = stack.admission.verdicts([seat.reg.hotkey for seat in waiting(state.queue)])
+    if state.round is None and state.manifest is not None:
+        # Idle (for example after revert-head): the store pointer follows the journal before the public files.
+        current = stack.store.get(layout.CURRENT) if stack.store.exists(layout.CURRENT) else b""
+        if current != state.manifest.to_json():
+            publish_head(stack.store, state.manifest)
     stack.publisher.publish(public_snapshot(
         stack.head, state, params, now(), verdicts, checked,
         waiting_for_seats=sum(verdict.valid for verdict in verdicts.values()) < params.n_min_start,
     ))
     valid = sum(verdict.valid for verdict in verdicts.values())
     print(json.dumps({"published": True, "head": state.head.version_id, "queue": len(state.queue), "valid_files": valid}))
+    return 0
+
+
+def resolve_head(state: State, given: str) -> str:
+    """A head version id from its full 64-hex form or a unique prefix of at least 12 hex characters."""
+    given = given.strip().lower()
+    if len(given) < 12 or any(c not in "0123456789abcdef" for c in given):
+        raise V2Error("--to must be a version id or a unique prefix of at least 12 hex characters")
+    found = sorted({head.version_id for head in state.heads if head.version_id.startswith(given)})
+    if len(found) != 1:
+        raise V2Error(f"--to {given} names {len(found)} heads; give a longer prefix" if found else f"no head starts with {given}")
+    return found[0]
+
+
+def cmd_revert_head(args: argparse.Namespace) -> int:
+    """Operator: make an earlier folded ancestor the head again. Idle only; paid kings are untouched."""
+    if not args.reason.strip():
+        raise V2Error("--reason must not be empty")
+    state, _, stack = read_state(args, "revert-head")  # refusals never take over the journal
+    target = resolve_head(state, args.to)
+    refusal = revert_refusal(state, target)
+    if refusal:
+        raise V2Error(refusal)
+    if not args.dry_run:
+        controller, stack = open_controller(args, "revert-head")
+        state = controller.state
+    current = state.head
+    keep = next(index for index, head in enumerate(state.heads) if head.version_id == target) + 1
+    target_head = state.heads[keep - 1]
+    report = {
+        "dry_run": bool(args.dry_run),
+        "from_version_id": current.version_id,
+        "to_version_id": target,
+        "reason": args.reason,
+        "reverted_away": [head.version_id for head in state.heads[keep:]],
+        "base_hash": target_head.base_hash,
+        "base_fp32_master_digest": target_head.base_fp32_master_digest,
+        "kings_untouched": len(state.kings),
+    }
+    if stack is not None:
+        report["target_checkpoint_marker"] = stack.store.exists(layout.head_checkpoint(target))
+    if not args.dry_run:
+        manifest = controller.revert_head(target, args.reason, now())
+        report["head_version_id"] = manifest.head.version_id
+        report["store_pointer"] = (stack.store.exists(layout.CURRENT) and stack.store.get(layout.CURRENT) == manifest.to_json())
+    print(json.dumps(report, indent=2))
     return 0
 
 
@@ -630,6 +681,10 @@ def main(argv: list[str] | None = None) -> int:
     front.add_argument("--hotkey", action="append", required=True, help="the hotkey (SS58 address) of a waiting seat; give the flag again for more hotkeys")
     front.add_argument("--reason", required=True, help="why these seats go to the front; the journal record keeps this text")
     front.add_argument("--dryrun", "--dry-run", dest="dry_run", action="store_true", help="print what would change; write nothing")
+    back = command("revert-head", cmd_revert_head, stack=True)
+    back.add_argument("--to", required=True, help="version id of a folded ancestor head (64 hex, or a unique prefix of at least 12)")
+    back.add_argument("--reason", required=True, help="why the head goes back; the journal record and the head chain keep this text")
+    back.add_argument("--dry-run", "--dryrun", dest="dry_run", action="store_true", help="print what would change; write nothing")
     force = command("force-sync", cmd_force_sync, stack=True)
     force.add_argument("--confirm-remove", type=int, metavar="N", help="apply the changes, when exactly N seats leave; without it the changes are only shown")
     args = parser.parse_args(argv)

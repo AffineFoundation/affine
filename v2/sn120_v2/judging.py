@@ -55,7 +55,7 @@ import dataclasses
 import math
 from fractions import Fraction
 from statistics import NormalDist, median
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from .errors import ContractError, HeadMismatchError
 from .params import Params
@@ -430,8 +430,12 @@ def decide(
     leases: Sequence[tuple[RoundTicket, BoxResult]],
     duplicate_evidence: Sequence[EntryDecision] = (),
     duplicate_clusters: Sequence[dict] = (),
+    gates: Mapping[int, str] | None = None,
 ) -> RoundDecision:
     """Settle a round from sealed results and replayable duplicate evidence.
+
+    ``gates`` maps a queue position to a reason it cannot crown (computed by the controller, e.g. the
+    anti-recitation check). Such a scored entry, like one above ``max_kl_tok``, stays a charged ``lost``.
 
     Null updates are terminal before duplicate keepers or scoring candidates are selected. Stage-B
     ``duplicate_evidence`` is an input, not a post-hoc rewrite, so a duplicate can never win.
@@ -464,6 +468,7 @@ def decide(
     field_scores: list[tuple[int, Score, Sequence[str]]] = []
     seats = {seat.queue_pos: seat for ticket, _ in leases for seat in ticket.entries}
     _need(len(seats) == sum(len(ticket.entries) for ticket, _ in leases), "a queue position occurs twice")
+    blocked = dict(gates or {})
     copies = {}
     for row in duplicate_evidence:
         seat = seats.get(row.queue_pos)
@@ -486,7 +491,7 @@ def decide(
                 continue
             if params.kl_floor_on:
                 if entry.kl_seq is None:
-                    enabled = "min_kl_seq" if params.min_kl_seq > 0 else "min_kl_tok"
+                    enabled = "min_kl_seq" if params.min_kl_seq > 0 else "min_kl_tok" if params.min_kl_tok > 0 else "max_kl_tok"
                     rows.append((seat, entry, NO_DECISION,
                                  f"KL measurement is missing while {enabled} is enabled", None))
                     continue
@@ -498,6 +503,9 @@ def decide(
                     rows.append((seat, entry, NULL_UPDATE,
                                  f"measured KL {entry.kl_tok:.3g} nats/token is below min_kl_tok {params.min_kl_tok:g}", None))
                     continue
+                if params.max_kl_tok > 0 and entry.kl_tok > params.max_kl_tok and seat.queue_pos not in blocked:
+                    blocked[seat.queue_pos] = (f"behaviour KL {entry.kl_tok:.3g} nats/token is above "
+                                               f"max_kl_tok {params.max_kl_tok:g}")
             if seat.queue_pos in copies:
                 copy = copies[seat.queue_pos]
                 rows.append((seat, entry, DUPLICATE, copy.reason, None))
@@ -537,10 +545,12 @@ def decide(
         rows = [(seat, entry, status, reason, gated[seat.queue_pos] if status == LOST else score)
                 for seat, entry, status, reason, score in rows]
 
-    winner = pick_winner(candidates)
+    winner = pick_winner([(position, score) for position, score in candidates if position not in blocked])
     entries = []
     for seat, entry, status, reason, score in sorted(rows, key=lambda row: row[0].queue_pos):
-        if status == LOST:
+        if status == LOST and seat.queue_pos in blocked:
+            reason = blocked[seat.queue_pos]
+        elif status == LOST:
             status = WINNER if seat.queue_pos == winner else LOST
             reason = "" if status == WINNER else "; ".join(score.reasons) or "another LoRA had a higher delta"
         entries.append(_entry_decision(seat, entry, status, reason, score))

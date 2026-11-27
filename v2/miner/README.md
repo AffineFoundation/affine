@@ -229,6 +229,8 @@ python v2/miner/affine_miner.py check \
 
 Use `--active FILE` for an offline saved active-list diagnostic, or `--no-live-pool` to skip only that diagnostic. The live-pool check cannot make an otherwise valid file invalid merely because a prompt is outside the current scoring pool. A passing file check also does **not** mean that KL, training, cap-hit, scoring, crown or confirmation gates pass. To train and score the actual merged candidate at home, use the `fetch`, `compare` and `run` commands in [`v2/REPLICATE.md`](../REPLICATE.md).
 
+Training targets must not reproduce other pool tasks' text or reference answers: more than `recite_max_share` of target 10-grams matching active-pool task text (own prompt excluded) blocks a crown. Per-token KL vs the head is capped at `max_kl_tok` nats/token. The configured values are in `mining.json` (`contract.duplicate_policy.recite_max_share` and `.max_kl_tok`, and the `params` block; 0 is off).
+
 ## Sealed upload, verdicts, and privacy
 
 The current publisher exposes these commands in `mining.json.contract.upload`:

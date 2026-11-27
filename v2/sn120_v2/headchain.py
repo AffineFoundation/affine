@@ -177,16 +177,17 @@ def chain_doc(state: State, marked: Iterable[str], kernel_of: Callable[[str], st
         )
         last = head.version_id
     current = state.head
-    return with_start(
-        {
-            "schema": SCHEMA,
-            "head_version_id": current.version_id,
-            "recipe": RECIPE,
-            "genesis": _ids(genesis) | {"checkpoint": True},
-            "steps": steps,
-            "stacked": None if current.folded else {"version_id": current.version_id, "loras": _loras(state.manifests[current.version_id])},
-        }
-    )
+    doc = {
+        "schema": SCHEMA,
+        "head_version_id": current.version_id,
+        "recipe": RECIPE,
+        "genesis": _ids(genesis) | {"checkpoint": True},
+        "steps": steps,
+        "stacked": None if current.folded else {"version_id": current.version_id, "loras": _loras(state.manifests[current.version_id])},
+    }
+    if state.reverts:  # operator head reverts: the steps end at the target; the reverted-away heads are named here
+        doc["reverts"] = [dict(revert) for revert in state.reverts]
+    return with_start(doc)
 
 
 def tail(doc: Mapping[str, Any]) -> dict[str, Any]:

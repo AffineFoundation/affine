@@ -216,6 +216,38 @@ GENERATOR_TASK_CHECK_CHANGELOG = (
 )
 RULE_CHANGELOG += GENERATOR_TASK_CHECK_CHANGELOG
 
+RECITE_RULE = (
+    "Anti-recitation: a batch whose training targets reproduce pool task text or reference answers (more than "
+    "recite_max_share of target 10-grams found in active-pool task text, excluding the row's own prompt) cannot crown, "
+    "and a pending crown whose batch fails this at confirmation fails confirmation unpaid."
+)
+MAX_KL_RULE = (
+    "Behaviour KL ceiling: an entry whose measured KL vs head exceeds max_kl_tok nats/token cannot crown; "
+    "a pending crown above it fails confirmation unpaid."
+)
+HEAD_REVERT_NOTE = (
+    "Head reverts: the operator can make an earlier folded head the head again. `head_version_id` is then that "
+    "head's own id; `reverts` in the head chain names each revert with its `reason` and the reverted-away heads. "
+    "Paid kings are unchanged."
+)
+ANTI_RECITE_CHANGELOG = (
+    "- 2026-11-27 / `recite_max_share` + `max_kl_tok` / no recitation check, no KL ceiling → " + RECITE_RULE + " "
+    + MAX_KL_RULE + " Both are 0 (off) by default, so existing params hashes are unchanged. " + HEAD_REVERT_NOTE,
+)
+RULE_CHANGELOG += ANTI_RECITE_CHANGELOG
+
+
+def crown_check_rules(params: Params) -> list[str]:
+    """The one miner rule line for the anti-recitation check and the KL ceiling, with the configured values."""
+    if params.recite_max_share <= 0 and params.max_kl_tok <= 0:
+        return []
+    value = lambda number: show(number) if number > 0 else "0, off"
+    return [
+        "Training targets must not reproduce other pool tasks' text or reference answers: more than recite_max_share "
+        f"({value(params.recite_max_share)}) of target 10-grams matching active-pool task text (own prompt excluded) "
+        f"blocks a crown. Per-token KL vs the head is capped at max_kl_tok ({value(params.max_kl_tok)}) nats/token."
+    ]
+
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
     "steps": "epochs (full passes) over the batch or each v4 stage; each pass makes `minibatches` updates",
@@ -362,6 +394,8 @@ def kl_rule(params: Params) -> str:
             f"KL(new||head) summed over {scope} of each of the kl_k sampled rollouts, divided by the total number of those tokens "
             f"(the published kl_tok), must be at least {show(params.min_kl_tok)} nats per token, else the entry is a charged null_update."
         )
+    if not rules:
+        rules.append("KL(new||head) per token (the published kl_tok) is measured for the max_kl_tok ceiling.")
     return " ".join(rules) + " The public round output publishes every entry's kl_seq, kl_seq_se, kl_tok, kl_k and kl_tokens."
 
 
@@ -431,6 +465,10 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "kl_max_tokens": params.kl_max_tokens,
             "kl_time_limit_s": params.kl_time_limit_s,
             "min_kl_seq_rule": kl_rule(params),
+            "max_kl_tok": params.max_kl_tok,
+            "max_kl_tok_rule": MAX_KL_RULE if params.max_kl_tok > 0 else "behaviour KL ceiling off",
+            "recite_max_share": params.recite_max_share,
+            "recite_rule": RECITE_RULE if params.recite_max_share > 0 else "anti-recitation check off",
             "kl_public_round_entry_fields": ["kl_seq", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens"],
             "min_step_norm_rule": (
                 "static global_norm_cap and stored step_norm must be at least min_step_norm"
@@ -939,6 +977,7 @@ def _duplicate_lines(params: Params) -> list[str]:
         "  cannot win or be paid, and is not a candidate or keeper in Stage B. There is no minimum norm.",
     ]
     subfloor = [f"- {kl_rule(params)}"] if params.kl_floor_on else []
+    subfloor += [f"- {rule}" for rule in crown_check_rules(params)]
     subfloor += [
         "- Why a sub-floor update cannot beat M except by luck: the trainer's first-order step changes the head by at most",
         "  its small stored norm. The scoring noise and a favorable task sample can then produce a positive result even",
@@ -2132,6 +2171,7 @@ def _weight_lines(doc: Mapping[str, Any], where: str) -> list[str]:
         "  it: the LoRAs of the fold, its `kernel`, and the ids of the base and the fp32 master after it. The whole chain",
         f"  from the launch model is `{chain['file']}`.",
         f"- The newest checkpoint is head `{start['version_id']}`. {behind}",
+        f"- {HEAD_REVERT_NOTE}",
         f"- Signed download links are in {where}/{READ_LINKS}. Each link works until `expires_at`; fetch the file again",
         "  for new links. Check each file against its `sha256` and `size`. `head_version_id` in that file names the head",
         "  of the links. `loras` has the LoRAs that are stacked on the head. `checkpoints` has the base and the fp32",
@@ -2169,7 +2209,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
     numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params)
-               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "z_crown") and getattr(params, f.name) == f.default)]
+               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "z_crown" or f.name in ("recite_max_share", "max_kl_tok")) and getattr(params, f.name) == f.default)]
     url = doc["contract"]["public_url"]
     where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
@@ -2291,7 +2331,7 @@ def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_tex
         problems.append(f"llms.txt and mining.json are not a pair: llms.txt names snapshot {found and found.group(1)}, mining.json {doc['snapshot_digest']}")
     stated = stated_params(text)
     values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params)
-              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "z_crown") and getattr(params, f.name) == f.default)}
+              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "z_crown" or f.name in ("recite_max_share", "max_kl_tok")) and getattr(params, f.name) == f.default)}
     for name in sorted(values.keys() | stated.keys()):
         if stated.get(name) != values.get(name):
             problems.append(f"`{name}`: llms.txt states {stated.get(name, 'no value')}, mining.json has {values.get(name, 'no such parameter')}")

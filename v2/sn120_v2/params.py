@@ -215,7 +215,7 @@ class Params(Record):
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
         "eval_merged", "null_prune_from_round", "min_kl_seq", "min_kl_tok", "kl_rollouts",
         "kl_max_tokens", "kl_time_limit_s", "confirm_next_round", "max_stages", "train_tokens_per_s_floor",
-        "z_crown",
+        "z_crown", "recite_max_share", "max_kl_tok",
     )
 
     netuid: int = 120
@@ -289,6 +289,8 @@ class Params(Record):
     kl_rollouts: int = 128  # deterministic sample-0 subsample; capped completions included
     kl_max_tokens: int = 0  # first N completion tokens per rollout; 0 = the full completion
     kl_time_limit_s: int = 1200  # independent hard cap, also bounded by the promotion deadline
+    max_kl_tok: float = 0.0  # behaviour KL ceiling: kl_tok above it cannot crown or confirm; 0 = off
+    recite_max_share: float = 0.0  # anti-recitation: share of target 10-grams found in active-pool task text; 0 = off
 
     recipe: Recipe = field(default_factory=Recipe)
 
@@ -440,6 +442,11 @@ class Params(Record):
         _need(math.isfinite(self.min_step_norm) and self.min_step_norm >= 0, "min_step_norm must be finite and nonnegative")
         _need(math.isfinite(self.min_kl_seq) and self.min_kl_seq >= 0, "min_kl_seq must be finite and nonnegative")
         _need(math.isfinite(self.min_kl_tok) and self.min_kl_tok >= 0, "min_kl_tok must be finite and nonnegative")
+        _need(math.isfinite(self.max_kl_tok) and self.max_kl_tok >= 0, "max_kl_tok must be finite and nonnegative")
+        _need(self.max_kl_tok <= 0 or self.max_kl_tok > self.min_kl_tok, "max_kl_tok must be above min_kl_tok")
+        _need(self.max_kl_tok <= 0 or self.kl_floor_on, "max_kl_tok needs the KL measurement")
+        _need(isinstance(self.recite_max_share, (int, float)) and not isinstance(self.recite_max_share, bool)
+              and 0 <= self.recite_max_share < 1, "recite_max_share must be in [0, 1)")
         _need(type(self.kl_rollouts) is int and self.kl_rollouts >= 8, "kl_rollouts must be an integer of at least 8")
         _need(type(self.kl_max_tokens) is int and self.kl_max_tokens >= 0, "kl_max_tokens must be a nonnegative integer")
         _need(type(self.kl_time_limit_s) is int and self.kl_time_limit_s > 0, "kl_time_limit_s must be a positive integer")
@@ -491,7 +498,8 @@ class Params(Record):
 
     @property
     def kl_floor_on(self) -> bool:
-        return self.min_kl_seq > 0 or self.min_kl_tok > 0
+        """KL is measured: a floor or the ``max_kl_tok`` ceiling is on."""
+        return self.min_kl_seq > 0 or self.min_kl_tok > 0 or self.max_kl_tok > 0
 
     @property
     def params_hash(self) -> str:

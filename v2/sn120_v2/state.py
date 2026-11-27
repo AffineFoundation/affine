@@ -42,6 +42,7 @@ HEAD_APPLIED = "head_applied"
 CONFIRMATION_RESOLVED = "confirmation_resolved"
 HEAD_FOLDED = "head_folded"
 ROUND_CLOSED = "round_closed"
+HEAD_REVERTED = "head_reverted"  # operator: an earlier folded head is the head again; history is kept
 
 # How a round ended.
 APPLIED = "applied"  # a winner was applied to the head
@@ -124,6 +125,10 @@ class State:
     front_on_arrival: set[RegKey] = field(default_factory=set)
     leader: str = ""
     last_seq: int = -1
+    # Operator head reverts, oldest first: {"at", "from_version_id", "to_version_id", "reason", "reverted_version_ids"}.
+    # The reverted-away heads leave ``heads`` (the head is the target again) and are kept in ``reverted_heads``.
+    reverts: list[dict[str, Any]] = field(default_factory=list)
+    reverted_heads: list[HeadVersion] = field(default_factory=list)
 
     @property
     def head(self) -> HeadVersion:
@@ -295,8 +300,9 @@ def _confirmation_resolved(state: State, data: dict, at: int) -> None:
     _need(pending is not None and record.confirmation is None and
           (record.parent is None or record.parent.pending == pending),
           "a confirmation does not answer the open round's pending king")
-    _need(record.parent is not None or (not confirmation.confirmed and confirmation.reason.startswith("no_decision")),
-          "a confirmation without a pinned parent must be an unpaid no_decision")
+    _need(record.parent is not None or (not confirmation.confirmed and confirmation.reason.startswith(("no_decision", "failed: "))),
+          "a confirmation without a pinned parent must be an unpaid no_decision or check failure")
+    _need(not (confirmation.confirmed and confirmation.reason.startswith("failed: ")), "a failed confirmation cannot pay")
     _need((confirmation.pending_round_id, confirmation.pending_uid, confirmation.parent_version_id, confirmation.new_version_id) ==
           (pending.crown_round_id, pending.uid, pending.parent_version_id, pending.new_version_id),
           "confirmation identity does not match the pending king")
@@ -313,6 +319,47 @@ def _head_folded(state: State, data: dict, at: int) -> None:
     parent = state.head
     head = _new_head(state, data)
     _need(head.parent_version_id == parent.version_id and head.folded, "a folded head does not follow the current head")
+
+
+def ancestors(state: State, version_id: str) -> list[str]:
+    """Version ids from ``version_id``'s parent back to genesis."""
+    parents = {head.version_id: head.parent_version_id for head in state.heads}
+    out, at = [], parents.get(version_id)
+    while at is not None:
+        out.append(at)
+        at = parents.get(at)
+    return out
+
+
+def revert_refusal(state: State, to_version_id: str) -> str:
+    """Why a revert to ``to_version_id`` is refused now, or an empty text."""
+    if state.round is not None:
+        return f"round {state.round.round_id} is open; a head revert needs an idle controller"
+    if state.pending_king is not None:
+        return "a pending crown awaits confirmation; resolve it first"
+    target = state.manifests.get(to_version_id)
+    if target is None or not any(head.version_id == to_version_id for head in state.heads):
+        return f"head {to_version_id[:12]} is not a head with a manifest in the journal"
+    if not target.head.folded:
+        return f"head {to_version_id[:12]} is not a folded head"
+    if to_version_id == state.head.version_id or to_version_id not in ancestors(state, state.head.version_id):
+        return f"head {to_version_id[:12]} is not an ancestor of the current head"
+    return ""
+
+
+def _head_reverted(state: State, data: dict, at: int) -> None:
+    current, target = data["from_version_id"], data["to_version_id"]
+    _need(current == state.head.version_id, "a head revert does not start at the current head")
+    refusal = revert_refusal(state, target)
+    _need(not refusal, f"a head revert is invalid: {refusal}")
+    _need(isinstance(data["reason"], str) and data["reason"].strip() != "", "a head revert needs a reason")
+    keep = next(index for index, head in enumerate(state.heads) if head.version_id == target) + 1
+    dropped = state.heads[keep:]
+    del state.heads[keep:]
+    state.reverted_heads.extend(dropped)
+    state.manifest = state.manifests[target]  # manifests of the reverted-away heads stay, by id
+    state.reverts.append({"at": at, "from_version_id": current, "to_version_id": target, "reason": data["reason"],
+                          "reverted_version_ids": [head.version_id for head in dropped]})
 
 
 def _round_closed(state: State, data: dict, at: int) -> None:
@@ -359,6 +406,7 @@ HANDLERS: dict[str, Callable[[State, dict, int], None]] = {
     CONFIRMATION_RESOLVED: _confirmation_resolved,
     HEAD_FOLDED: _head_folded,
     ROUND_CLOSED: _round_closed,
+    HEAD_REVERTED: _head_reverted,
 }
 
 

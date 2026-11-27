@@ -469,7 +469,7 @@ def winner_stats(state: State, now: int, public_url: str = "") -> dict[str, Any]
     and ``train`` knobs come from that winner's already-frozen batch, never from a waiting or losing
     entry. URLs are public object paths only.
     """
-    return _winner_stats(state.rounds[-HISTORY_PREVIEW:], state.kings, state.heads, now, public_url,
+    return _winner_stats(state.rounds[-HISTORY_PREVIEW:], state.kings, [*state.reverted_heads, *state.heads], now, public_url,
                          pending=state.pending_king,
                          paid_rounds={king.round_id for king in paid_set(state.kings, state.null_rounds, state.params)})
 

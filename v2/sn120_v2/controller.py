@@ -49,6 +49,7 @@ from .params import GenesisSpec, Params
 from .payout import payees
 from .public import phase as public_phase
 from .public import public_text, round_report, snapshot, winner_stats
+from .recite import PoolIndex, fail_reason as recite_fail_reason, measure_batch
 from .queue import SyncPlan, plan_sync, select_round, split_among_boxes, squat_trim, waiting
 from .sampling import make_round_seed, train_seed
 from .seams import Admission, Folder, ObjectStore, Publisher, RoundRunner, TaskSampler
@@ -60,6 +61,7 @@ from .state import (
     GENESIS,
     HEAD_APPLIED,
     HEAD_FOLDED,
+    HEAD_REVERTED,
     LEASE_FAILED,
     NO_DECISION,
     NULL,
@@ -78,6 +80,7 @@ from .state import (
     apply,
     load,
     replay,
+    revert_refusal,
 )
 from .store import delete_pending, get_record, log_time, promote_fold, promote_lora, publish_head, put_record, timed
 from .types import NO_DECISION as ENTRY_NO_DECISION
@@ -219,6 +222,7 @@ class Controller:
         self.state: State = replay(journal.records)
         self.pool, self.prompt_pool = pool, prompt_pool
         self.rollout_publisher = rollout_publisher
+        self._recite_cache: tuple[tuple[str, ...], PoolIndex] | None = None
         self._rotation: Any = None
         if pool is not None:
             if self.state.round is not None and pool.active_rotation is not None:
@@ -810,7 +814,8 @@ class Controller:
                 self._log(ROUND_SETTLED, {"round_id": record.round_id, "decision": decision.to_dict(), "results": {}}, now)
                 return self._close(NULL, [], now, self._lease_failures())
             return self._close(NO_DECISION, [], now, self._lease_failures())
-        decision = decide(pairs)
+        gates = self._crown_gates(pairs)
+        decision = decide(pairs, gates=gates)
         # The null-only first pass supplies exclusions. The second pass consumes stage-B evidence before
         # creating any candidate or choosing a winner. It is deterministic and replays from the journal.
         seats = {entry.queue_pos: entry for ticket, _ in pairs for entry in ticket.entries}
@@ -827,11 +832,11 @@ class Controller:
                 with timed(f"dedup stage B of {record.round_id}"):
                     drops, clusters = stage_b(list(seats.values()), artifacts, first, pairs[0][0].params,
                                               self.store.get, expected, excluded, self._dedup_note)
-                decision = decide(pairs, drops, clusters)
+                decision = decide(pairs, drops, clusters, gates=gates)
         except Exception as exc:  # a whole-stage error must never block or crash the round
             self._dedup_note(f"dedup stage B failed open with no drops: {type(exc).__name__}: {exc}")
             drops, clusters = [], []
-            decision = decide(pairs)
+            decision = decide(pairs, gates=gates)
         decision = dataclasses.replace(
             decision,
             entries=tuple(sorted((*decision.entries, *record.duplicate_decisions), key=lambda row: row.queue_pos)),
@@ -840,6 +845,83 @@ class Controller:
         results = {ticket.lease_id: result.digest() for ticket, result in pairs}
         self._log(ROUND_SETTLED, {"round_id": record.round_id, "decision": decision.to_dict(), "results": results}, now)
         self._finish(now)
+
+    # ------------------------------------------------------------ anti-recitation and the KL ceiling
+
+    def _recite_index(self) -> PoolIndex | None:
+        """The index of the active pool the round draws from (cached per active set), or ``None``."""
+        pool = self.pool if self.pool is not None else self.prompt_pool
+        if pool is None or not hasattr(pool, "task"):
+            return None
+        ids = tuple(getattr(pool, "active_ids", None) or getattr(pool, "task_ids", ()))
+        if not ids:
+            return None
+        cached = self._recite_cache
+        if cached is not None and cached[0] == ids:
+            return cached[1]
+        tasks = []
+        for task_id in ids:
+            task = pool.task(task_id)
+            tasks.append((task.task_id, task.problem, task.answer))
+        index = PoolIndex(tasks)
+        self._recite_cache = (ids, index)
+        return index
+
+    def _recite_check(self, raw: bytes, index: PoolIndex | None = None) -> str:
+        """The anti-recitation failure text of one batch file, or ``""``. Raises on internal error."""
+        index = index if index is not None else self._recite_index()
+        if index is None:
+            raise ConfigError("no active pool is loaded for the anti-recitation check")
+        report = measure_batch(raw, index)
+        print(f"anti-recitation: batch {sha256_hex(raw)[:SHA_SHOWN]}: {json.dumps(report.to_dict(), sort_keys=True)}",
+              file=sys.stderr, flush=True)
+        return recite_fail_reason(report, self.params.recite_max_share)
+
+    def _crown_gates(self, pairs: Leases) -> dict[int, str]:
+        """Queue positions whose frozen batch fails anti-recitation. Fails open (no gate) on an internal error."""
+        params = pairs[0][0].params
+        if params.recite_max_share <= 0:
+            return {}
+        gates: dict[int, str] = {}
+        for ticket, result in pairs:
+            scored = {entry.queue_pos for entry in result.entries if entry.status == "scored"}
+            for seat in ticket.entries:
+                if seat.queue_pos not in scored:
+                    continue
+                try:
+                    raw = self.store.get(seat.batch.uri)
+                    if sha256_hex(raw) != seat.batch.batch_sha256:
+                        raise VerifyError("frozen batch does not match its sha256")
+                    reason = self._recite_check(raw)
+                except Exception as exc:  # the check fails open; the rest of the decision is unchanged
+                    print(f"anti-recitation: check of entry {seat.queue_pos} failed open ({type(exc).__name__}: {exc})",
+                          file=sys.stderr, flush=True)
+                    continue
+                if reason:
+                    gates[seat.queue_pos] = reason
+        return gates
+
+    def _pending_fails_checks(self, pending: Any) -> str:
+        """``failed: ...`` when the pending crown's own batch or recorded KL fails the current checks, else ``""``."""
+        params = self.params
+        if params.max_kl_tok > 0:
+            crowned = next((record for record in reversed(self.state.rounds) if record.round_id == pending.crown_round_id), None)
+            winner = crowned.decision.winner if crowned is not None and crowned.decision is not None else None
+            kl_tok = getattr(winner, "kl_tok", None) if winner is not None else None
+            if kl_tok is not None and kl_tok > params.max_kl_tok:
+                return f"failed: behaviour KL {kl_tok:.3g} nats/token is above max_kl_tok {params.max_kl_tok:g}"
+        if params.recite_max_share > 0:
+            try:
+                raw = self.store.get(layout.winner_batch(pending.crown_round_id))
+                if sha256_hex(raw) != pending.batch_sha256:
+                    raise VerifyError("the pending crown's winner batch does not match its batch sha256")
+                reason = self._recite_check(raw)
+            except Exception as exc:  # fails open: the ordinary confirmation runs
+                print(f"anti-recitation: confirmation check failed open ({type(exc).__name__}: {exc})", file=sys.stderr, flush=True)
+                reason = ""
+            if reason:
+                return "failed: " + reason
+        return ""
 
     # ------------------------------------------------------------ apply, fold, close
 
@@ -856,6 +938,18 @@ class Controller:
         if pending.crown_round_id == record.round_id:
             return  # the crown's own close installs its pending slot; only the next round can settle it
         request = record.parent
+        failed = self._pending_fails_checks(pending)
+        if failed:
+            confirmation = Confirmation(
+                parent_version_id=pending.parent_version_id,
+                pending_round_id=pending.crown_round_id,
+                pending_uid=pending.uid,
+                new_version_id=pending.new_version_id,
+                excluded_training_prompts=record.excluded_training_prompts,
+                reason=failed,
+            )
+            self._log(CONFIRMATION_RESOLVED, {"round_id": record.round_id, "confirmation": confirmation.to_dict()}, now)
+            return
         # No clean parent slot means no usable comparison: expire the old crown before any immediate new crown.
         if request is None or request.pending != pending:
             confirmation = Confirmation(
@@ -1149,6 +1243,20 @@ class Controller:
     def _store_snapshot(self, snapshot_id: str) -> None:
         """Publish the sampler's snapshot. The sampler does no I/O, so a restart reads the table back from here."""
         self.store.put(layout.irt_snapshot(snapshot_id), canonical_json(to_jsonable(self.sampler.public_snapshot())))
+
+    # ------------------------------------------------------------ operator: head revert
+
+    def revert_head(self, to_version_id: str, reason: str, now: int) -> HeadManifest:
+        """Journal HEAD_REVERTED (idle only): the target is the head again. Then move the store pointer and the public files."""
+        refusal = revert_refusal(self.state, to_version_id)
+        if refusal:
+            raise V2Error(refusal)
+        if not reason.strip():
+            raise V2Error("a head revert needs a reason")
+        self._log(HEAD_REVERTED, {"from_version_id": self.state.head.version_id, "to_version_id": to_version_id, "reason": reason}, now)
+        self._sync_pointer()
+        self._publish(now)
+        return self.state.manifest
 
     # ------------------------------------------------------------ publish
 
