@@ -65,11 +65,13 @@ Use the `v2` source, Python 3.12 and a clean virtual environment. From the repos
 ```bash
 git clone https://github.com/AffineFoundation/affine
 cd affine
-git checkout v2
+git switch v2
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e './v2[miner,envs,links,chain]'
 ```
+
+`git checkout v2` is ambiguous because the repository contains a `v2/` directory; use `git switch v2` (or `git checkout v2 --`) to select the branch.
 
 Inspect the live miner bounds and command interfaces rather than copying caps or training knobs from old guides:
 

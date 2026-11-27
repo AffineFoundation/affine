@@ -101,6 +101,7 @@ LOCAL_INSTALL = (
     "In a clean Python 3.12 venv, `python -m pip install -e './v2[gpu,envs,r2]'`. "
     "If an old torch pin conflicts, use a clean venv: `vllm==0.32.0` requires torch 2.13."
 )
+LOCAL_MINER_BOUNDS = "**Current bounds (2026-11-27 UTC):** `train.rank` 8–64, `train.alpha` 8–128, `train.lora_lr` 1e-06–0.01, `train.steps` 1–64, `recite_max_share=0.05`, and `max_kl_tok=0.25`. KL rises with rank, alpha, lr and steps. Measure `kl_tok` locally with `python -m sn120_v2.replicate run` before submitting; an SFT-only r64/a128 lr3e-4 run measured about 0.5, double the cap."
 LOCAL_KL_DEFAULTS = "the first scored sample of each task (default `kl_rollouts` 128 and, with `kl_max_tokens=0`, the full completion)"
 LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt does not print: the local address of the box
 # Two texts of modules that the publisher may not import: the training job needs torch and the grader needs sympy,
@@ -1394,6 +1395,9 @@ def _onboarding_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         "### Live task bodies and rotation",
         "",
+        "- " + LOCAL_MINER_BOUNDS,
+        f"  The live contract at {base}/llms.txt and {mining} is the authority.",
+        "",
         f"- **Base `dapo:` / `math:` IDs:** bodies come from the checked-in `sn120_v2/envs/{POOL_FILE.name}` catalog, but only the live",
         "  active object selects which IDs score. It is not the current active set.",
         f"- **`gen:` / reserve IDs:** `gen:` tasks are Generator-produced public reserve tasks. Read `{base}/{layout.RESERVE_MANIFEST}`",
@@ -1987,8 +1991,9 @@ def _replicate_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "every argument, the fields of the report, and the complete list of what differs from the box.",
         "",
         "- Fresh clone, from the repository root: `git clone https://github.com/AffineFoundation/affine`, then",
-        "  `cd affine && git checkout v2`. " + LOCAL_INSTALL,
-        "  Run each command below at that repository root; the editable install makes `sn120_v2` importable.",
+        "  `cd affine && git switch v2`. " + LOCAL_INSTALL,
+        "  `git checkout v2` is ambiguous because the repository contains a `v2/` directory; use `git switch v2`",
+        "  (or `git checkout v2 --`) to select the branch. Run each command below at that repository root;",
         "  No secrets are needed for these public reads. N is the number of your GPUs.",
         f"- `{tool} compare --mining-json {mining} --gpus <N>` prints what differs between your machine and the box.",
         "  It starts nothing and needs no GPU.",
