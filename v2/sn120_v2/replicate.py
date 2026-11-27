@@ -30,7 +30,7 @@ from typing import Any, Callable, Mapping, Sequence
 from transformers import AutoTokenizer
 
 from . import judging, layout
-from .admission import Grader, HFTokens, Invalid, LazyPool, Tokens, check_batch, pool_grader
+from .admission import Grader, HFTokens, Invalid, LazyPool, Tokens, check_batch, frozen_batch, pool_grader
 from .canonical import file_sha256, manifest_digest, sha256_hex, to_jsonable
 from .envs.math_grader import GradePool
 from .envs.math_pool import ENV_ID, POOL_SHA256, MathPool, load_pool, pool_for_draw
@@ -548,7 +548,7 @@ def run_round(
     }
     key, now = layout.frozen_batch(ROUND_ID, hotkey), int(clock())
     built.store.put(key, raw)
-    frozen = FrozenBatch(hotkey, batch.sha256, key, batch.format, batch.n_prompts, batch.n_rollouts, dict(batch.train), batch.stage_recipes(params.recipe))
+    frozen = frozen_batch(batch, Registration(0, hotkey, 0), key, local)
     ticket = RoundTicket(ROUND_ID, LEASE_ID, BOX_ID, head, local, draw, (Entry(0, Registration(0, hotkey, 0), frozen),), now, now + local.lease_timeout_s)
     runner = (
         SoloRunner(built.trainer, built.evaluator, lambda: int(clock()), built.image)

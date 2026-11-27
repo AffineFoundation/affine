@@ -749,6 +749,30 @@ def test_merged_cli_constructs_fold_inputs_after_verifying_the_real_master(world
     assert seen["fold_input"].root == world.work.resolve() / "fold-inputs"
 
 
+def test_v4_local_stage_recipes_use_the_local_recipe(build, world, monkeypatch):
+    from sn120_v2.admission import FORMAT_V4
+    from sn120_v2.gpu.trainer import LoraTrainer
+
+    params = build.params(n_gpus=1)
+    local = dataclasses.replace(params, recipe=dataclasses.replace(params.recipe, image_digests=("local-image",), code_digest="c" * 64))
+    assert local.recipe.to_dict() != params.recipe.to_dict()
+    raw = json.dumps({"version": FORMAT_V4, "hotkey": HOTKEY, "stages": [{"train": {"steps": 2}, "groups": [{"prompt": POOL.task(TASKS[0]).batch_prompt(), "rollouts": [{"output": OUTPUT, "reward": 1.0}, {"output": OUTPUT + " again", "reward": 0.0}]}]}]}).encode()
+    ticket = build.ticket(n_entries=1, params=params)
+    built = SimpleNamespace(store=LocalStore(world.work / "store"), trainer=None, evaluator=None, image="local-image")
+
+    def check_stages(self, actual):
+        batch = actual.entries[0].batch
+        LoraTrainer._v4_stages(batch, json.loads(raw)["stages"], actual.params)
+        assert batch.stages[0]["train"]["steps"] == 2
+        assert batch.stages[0]["train"]["image_digests"] == ["local-image"]
+        assert batch.stages[0]["train"]["code_digest"] == "c" * 64
+        raise VerifyError("stage recipes checked")
+
+    monkeypatch.setattr(replicate.LocalRunner, "run", check_stages)
+    with pytest.raises(VerifyError, match="stage recipes checked"):
+        replicate.run_round(raw, HOTKEY, params, local, ticket.head, ticket.draw, built, tokens=WordTokens())
+
+
 def test_replicate_applies_recitation_and_kl_ceiling_and_fails_open(build, world, capsys, monkeypatch):
     from sn120_v2.envs.math_pool import Task
     from sn120_v2.recite import PoolIndex
