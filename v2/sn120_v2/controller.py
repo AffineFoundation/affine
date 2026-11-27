@@ -170,13 +170,17 @@ class Stack:
 
 def public_snapshot(head: HeadPublish, state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None,
                     checked_at: int | None = None, chain: ChainSnapshot | None = None, *, stop_asked: bool = False,
-                    close_publish_pending: bool = False, waiting_for_seats: bool | None = None) -> dict[str, Any]:
+                    close_publish_pending: bool = False, waiting_for_seats: bool | None = None,
+                    irt_snapshot: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """The public snapshot. ``chain`` is an existing validated read; no chain I/O or journal lock happens here."""
     shown = snapshot(state, params, now, verdicts, checked_at, chain, stop_asked=stop_asked,
                      close_publish_pending=close_publish_pending, waiting_for_seats=waiting_for_seats)
     # In-memory input for StorePublisher, removed before mining.json is rendered. It carries only the crowned
     # winner's already-public facts, never a private lease or batch location. No State reaches the publisher.
     shown["winner_stats"] = winner_stats(state, now)
+    if irt_snapshot is not None and state.round is None:
+        shown["irt_snapshot_id"] = irt_snapshot["snapshot_id"]
+        shown["irt_head_ability"] = irt_snapshot.get("head_ability", 0.0)
     if head.chain is not None and state.heads:
         shown["head_chain"] = head.chain(state)
     return shown
@@ -240,6 +244,9 @@ class Controller:
                     raise VerifyError("stored rotation does not recompute from its public inputs")
                 self.sampler = IRTSampler(pool.active_rotation.active_ids, self.params, snapshot=stored,
                                          rotation=stored.get("rotation"))
+        # HEAD_REVERTED is sufficient replay input: an old journal heals its stale IRT tag on load.
+        if self.state.round is None and self.state.reverts:
+            self._retag_irt(self.state.head.version_id, known_only=True)
         self.last_error = ""
         self._retry_at = 0
         self._verdicts: dict[str, Verdict] = {}  # admission's last check of the waiting files, for the public snapshot
@@ -699,12 +706,18 @@ class Controller:
         if clock is not None:
             now = clock()  # the lease starts here
         head = state.head
+        # A reverted head must own the masses before the draw or its journal record exists.
+        retagged = self._retag_irt(head.version_id, known_only=True) if state.reverts else False
+        # Replay may already have healed the table; rotation must not fall back to its stale stored source.
+        from .irt import IRTSampler
+        live = self.sampler.public_snapshot() if isinstance(self.sampler, IRTSampler) else {}
+        retagged_source = state.reverts and live.get("head_version_id") == head.version_id and live.get("snapshot_id") != state.snapshot_id
         rotation = None
         if self.pool is not None:
-            snapshot = stored_irt_snapshot(self.store, state)
+            snapshot = live if retagged_source else stored_irt_snapshot(self.store, state)
             if snapshot is None:
                 snapshot = self.sampler.public_snapshot()
-            self._rotation, self.sampler, rotation = self.pool.open_and_publish(round_id, snapshot, state)
+            self._rotation, self.sampler, rotation = self.pool.open_and_publish(round_id, snapshot, state, retagged_source=retagged_source)
             if snapshot.get("snapshot_id"):
                 self.store.put(layout.irt_snapshot(snapshot["snapshot_id"]), canonical_json(to_jsonable(snapshot)))
         round_seed = make_round_seed(round_id, head.version_id, entropy)
@@ -1244,6 +1257,28 @@ class Controller:
         """Publish the sampler's snapshot. The sampler does no I/O, so a restart reads the table back from here."""
         self.store.put(layout.irt_snapshot(snapshot_id), canonical_json(to_jsonable(self.sampler.public_snapshot())))
 
+    def _retag_irt(self, to_version_id: str, *, known_only: bool = False) -> bool:
+        """Idle-only table retag. No journal record: HEAD_REVERTED already supplies replay."""
+        from .irt import IRTSampler
+
+        if not isinstance(self.sampler, IRTSampler):
+            return False
+        if known_only and to_version_id not in self.sampler.public_snapshot()["heads"]:
+            return False
+        before = self.sampler.snapshot_id()
+        snapshot_id = self.sampler.retag(to_version_id)
+        if snapshot_id == before:
+            return False
+        self._store_snapshot(snapshot_id)
+        return True
+
+    def retag_irt(self, to_version_id: str, now: int) -> None:
+        """Operator: retag an idle table, store it, then publish it."""
+        if self.state.round is not None:
+            raise V2Error(f"round {self.state.round.round_id} is open; retag IRT only between rounds")
+        self._retag_irt(to_version_id)
+        self._publish(now)
+
     # ------------------------------------------------------------ operator: head revert
 
     def revert_head(self, to_version_id: str, reason: str, now: int) -> HeadManifest:
@@ -1254,6 +1289,7 @@ class Controller:
         if not reason.strip():
             raise V2Error("a head revert needs a reason")
         self._log(HEAD_REVERTED, {"from_version_id": self.state.head.version_id, "to_version_id": to_version_id, "reason": reason}, now)
+        self._retag_irt(to_version_id)
         self._sync_pointer()
         self._publish(now)
         return self.state.manifest
@@ -1285,9 +1321,12 @@ class Controller:
             return
         shown, records = self._shown(), len(self.journal.records)
         try:
+            from .irt import IRTSampler
+
             self.publisher.publish(public_snapshot(
                 self.head, self.state, self.params, now, self._verdicts, self._verdicts_at, self._registrations,
                 stop_asked=self._stop_asked, close_publish_pending=self._close_publish_pending, waiting_for_seats=self._waiting_for_seats,
+                irt_snapshot=self.sampler.public_snapshot() if isinstance(self.sampler, IRTSampler) else None,
             ))
             self._published, self._published_at = shown, records
         except Exception as exc:

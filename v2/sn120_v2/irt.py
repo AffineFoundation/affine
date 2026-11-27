@@ -297,6 +297,13 @@ class IRTSampler:
     def snapshot_id(self) -> str:
         return self._id
 
+    def retag(self, head_version_id: str) -> str:
+        """Aim the existing table at a known head; keep every head's history."""
+        _need(head_version_id in self._body["heads"], "IRT cannot retag to an unknown head version")
+        if self._body["head_version_id"] != head_version_id:
+            self._commit({**copy.deepcopy(self._body), "head_version_id": head_version_id})
+        return self._id
+
     def draw(self, head: HeadVersion, round_seed: str, n_tasks: int, exclude: frozenset[str] = frozenset()) -> Draw:
         """A pure function of the snapshot and the seed. It never changes the table.
 

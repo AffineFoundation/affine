@@ -21,6 +21,7 @@ from sn120_v2.irt import (
     SAME_SEED_CORRELATION,
     IRTSampler,
     draw_from_masses,
+    sampling_masses,
     draw_from_snapshot,
     fisher_masses,
     predicted_pass,
@@ -100,6 +101,30 @@ def test_the_draw_can_be_rebuilt_from_the_published_snapshot_with_sha256_and_who
     assert list(draw.weights) == [float(Fraction(total, n * mass[task])) for task in chosen]
     assert draw_from_snapshot(snapshot, seed, n) == draw
     assert snapshot["draw"] is None and published(sampler)["draw"]["round_seed"] == seed and published(sampler)["draw"]["n_tasks"] == n
+
+
+def test_retag_uses_target_ability_changes_masses_and_keeps_history(build):
+    sampler = trained(build.head(), rounds=3)
+    stale, target = build.head(), head_after(build.head(), "target")
+    seeded = sampler.draw(stale, "seed-retag", 20)
+    sampler.update(stale, seeded, {"null": ("P" * 20,), "winner": ("P" * 20,)},
+                   winner_lora_hash="winner", new_head_version_id=target.version_id)
+    stale_id = sampler.retag(stale.version_id)
+    before = published(sampler)
+    after_id = sampler.retag(target.version_id)
+    after = published(sampler)
+    assert after_id != stale_id and after["head_version_id"] == target.version_id
+    assert after["head_ability"] == after["heads"][target.version_id]["ability"]
+    assert stale.version_id in after["heads"] and after["heads"] == before["heads"]
+    masses = {task: row[3] for task, row in after["tasks"].items()}
+    assert masses == sampling_masses(after["tasks"], after["head_ability"], after["config"])
+    assert masses != {task: row[3] for task, row in before["tasks"].items()}
+    assert sampler.retag(target.version_id) == after_id, "a repeated retag is idempotent"
+    with pytest.raises(ContractError, match="unknown head"):
+        sampler.retag("0" * 64)
+    draw = sampler.draw(target, "seed-retag", 20)
+    assert draw.snapshot_id == after_id and published(sampler)["draw"]["for_head_version_id"] == target.version_id
+    assert draw == draw_from_snapshot(after, "seed-retag", 20)
 
 
 def test_each_task_is_drawn_as_often_as_its_published_weight_says():

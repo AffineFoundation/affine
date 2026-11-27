@@ -646,19 +646,20 @@ class PoolRuntime:
         # v1->v2 transition carries the complete archive of the previous state.
         return previous.retired_archive if previous else ()
 
-    def open_and_publish(self, round_id: str, snapshot: Mapping[str, Any], state: State | None = None) -> tuple[Rotation, IRTSampler, dict[str, Any]]:
+    def open_and_publish(self, round_id: str, snapshot: Mapping[str, Any], state: State | None = None, *, retagged_source: bool = False) -> tuple[Rotation, IRTSampler, dict[str, Any]]:
         """Controller boundary: one lock for reload, decision and publication."""
         with self._publication():
-            decision, sampler = self.open(round_id, snapshot, state, reload_reserve=False)
+            decision, sampler = self.open(round_id, snapshot, state, reload_reserve=False, retagged_source=retagged_source)
             return decision, sampler, self.publish_open(decision)
 
-    def open(self, round_id: str, snapshot: Mapping[str, Any], state: State | None = None, *, reload_reserve: bool = True) -> tuple[Rotation, IRTSampler]:
+    def open(self, round_id: str, snapshot: Mapping[str, Any], state: State | None = None, *, reload_reserve: bool = True, retagged_source: bool = False) -> tuple[Rotation, IRTSampler]:
         # startup State by replay. Always take the controller's current state.
         state = self.state if state is None else state
         if self.active_rotation is not None:
             raise ConfigError("cannot rotate while a rotated round is open")
-        if snapshot.get("snapshot_id") and state.snapshot_id and snapshot.get("snapshot_id") != state.snapshot_id:
-            raise VerifyError("rotation source snapshot is not the last closed round's snapshot")
+        source_ok = snapshot.get("head_version_id") == state.head.version_id if retagged_source else snapshot.get("snapshot_id") == state.snapshot_id
+        if snapshot.get("snapshot_id") and state.snapshot_id and not source_ok:
+            raise VerifyError("rotation source snapshot is not the last closed round's snapshot or its live-head retag")
         previous = self.previous
         a_prev = previous.active_ids if previous else self.initial_ids
         unscored = unscored_rotation(previous, snapshot, state.rounds[-1] if state.rounds else None)
