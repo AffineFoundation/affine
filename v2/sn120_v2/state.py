@@ -84,7 +84,8 @@ class RoundRecord(Record):
     apply_attempts: int = 0
     outcome: str = ""  # empty while the round is open
     closed_at: int = 0
-    LEFT_OUT_AT_DEFAULT = ("rotation", "duplicate_decisions", "duplicate_clusters", "first_seen", "parent", "confirmation", "excluded_training_prompts")
+    LEFT_OUT_AT_DEFAULT = ("rotation", "duplicate_decisions", "duplicate_clusters", "first_seen", "parent", "confirmation", "excluded_training_prompts",
+                           "anchor_ids", "anchor_p")
     OMIT_EMPTY_FACTORY_DEFAULTS = ("first_seen",)
     rotation: dict[str, Any] | None = None
     # Stage-A evidence and charged seats are fixed at open. This snapshot also drives stage-B priority at settlement.
@@ -94,6 +95,10 @@ class RoundRecord(Record):
     parent: ParentEval | None = None  # pinned at open; exactly the previous pending crown, when confirmation is enabled
     confirmation: Confirmation | None = None  # one settlement, journaled before this round's new winner is applied
     excluded_training_prompts: int = 0
+    # The round's anchors and their measured head record pass rates at open (``Draw.anchor_ids``); empty when off.
+    # ``n_tasks`` counts the gate draw only.
+    anchor_ids: tuple[str, ...] = ()
+    anchor_p: tuple[float, ...] = ()
 
     def lease(self, lease_id: str) -> Lease:
         return next(lease for lease in self.leases if lease.lease_id == lease_id)

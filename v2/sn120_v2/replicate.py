@@ -463,11 +463,17 @@ def against_box(box_file: Mapping[str, Any], head: HeadVersion, draw: Draw, null
     Null M is compared only when the head and the draw are the same and one box scored the round.
     """
     theirs, n = box_file.get("draw") or {}, len(draw.task_ids)
-    same_draw = list(theirs.get("task_ids") or [])[:n] == list(draw.task_ids) and list(theirs.get("weights") or [])[:n] == list(draw.weights)
+    # A round with anchors (``draw.anchor_ids``) scores them beside the gate draw; this run reproduces only the gate draw.
+    anchors = set(theirs.get("anchor_ids") or ())
+    keep = [index for index, task in enumerate(theirs.get("task_ids") or []) if task not in anchors]
+    their_ids = [theirs["task_ids"][index] for index in keep]
+    their_weights = [(theirs.get("weights") or [])[index] for index in keep if index < len(theirs.get("weights") or [])]
+    same_draw = their_ids[:n] == list(draw.task_ids) and their_weights[:n] == list(draw.weights)
     report: dict[str, Any] = {"round_id": box_file.get("round_id"), "same_head": box_file.get("head_version_id") == head.version_id, "same_draw": same_draw}
     boxes = list((box_file.get("null_outcomes") or {}).values())
     if report["same_head"] and same_draw and null and len(boxes) == 1:
-        pairs = [(a, b) for here, there in zip(null, boxes[0]) for a, b in zip(here, there) if NOT_RUN not in (a, b)]
+        box_null = ["".join(text[index] for index in keep if index < len(text)) for text in boxes[0]] if anchors else boxes[0]
+        pairs = [(a, b) for here, there in zip(null, box_null) for a, b in zip(here, there) if NOT_RUN not in (a, b)]
         report["null_m"] = {
             "rollouts_compared": len(pairs),
             "same_outcome": sum(a == b for a, b in pairs),

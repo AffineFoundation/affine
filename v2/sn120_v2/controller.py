@@ -39,6 +39,7 @@ from typing import Any, Callable, Mapping, Sequence
 from . import layout
 from .admission import FORMATS, SHA_SHOWN, freeze_log, verdict_log, verdict_note
 from .afterking import PUBLISH, Beside, Overlap
+from .anchors import eligible_records, gate_draw, gate_outcomes, interleave, select
 from .canonical import canonical_json, is_sha256, sha256_hex, to_jsonable
 from .dedup import cluster_entries, cluster_past_kings, normalized_rollouts, stage_b
 from .errors import BatchRejected, ConfigError, HeadMismatchError, InfraError, LeaseError, V2Error, VerifyError
@@ -95,6 +96,7 @@ from .types import (
     SKIP,
     BoxResult,
     ChainSnapshot,
+    Draw,
     FoldArtifact,
     FrozenBatch,
     HeadManifest,
@@ -711,6 +713,8 @@ class Controller:
         # No pending crown: retain the original three-argument call and byte-for-byte draw behavior.
         draw = (self.sampler.draw(head, round_seed, params.n_tasks, excluded) if parent is not None
                 else self.sampler.draw(head, round_seed, params.n_tasks))
+        # The gate draw above is unchanged. Anchors are additional tasks, chosen from the same round seed.
+        draw = self._with_anchors(draw, excluded)
         self._store_snapshot(draw.snapshot_id)
         tickets, leases = [], []
         for index, block in enumerate(split_among_boxes(picked.entries, len(boxes))):
@@ -720,8 +724,8 @@ class Controller:
             leases.append(Lease(ticket.lease_id, ticket.box_id, now, ticket.expires_at, ticket.digest(), block))
         record = RoundRecord(
             round_id, head.version_id, params.params_hash, params.recipe_id, draw.round_seed, draw.snapshot_id,
-            len(draw.task_ids), now, tuple(leases), picked.skipped,
-            rotation=rotation, duplicate_decisions=tuple(duplicate_rows), duplicate_clusters=tuple(duplicate_clusters),
+            len(draw.task_ids) - len(draw.anchor_ids), now, tuple(leases), picked.skipped,
+            rotation=rotation, anchor_ids=draw.anchor_ids, anchor_p=draw.anchor_p, duplicate_decisions=tuple(duplicate_rows), duplicate_clusters=tuple(duplicate_clusters),
             first_seen=first_seen, parent=parent, excluded_training_prompts=len(excluded),
         )
         data = {"round": record.to_dict()}
@@ -731,6 +735,31 @@ class Controller:
         log_time(f"open: round {round_id} is open, {len(picked.entries)} seats. From the file check to here", started)
         self._after(f"open: the public files of round {round_id}", self._publish, now, PUBLISH)
         return tickets
+
+    def _with_anchors(self, draw: Draw, excluded: frozenset[str]) -> Draw:
+        """Add the round's anchors (``sn120_v2.anchors``) to the gate draw. Off, or without a pool: the draw itself."""
+        params = self.params
+        if params.anchor_n <= 0 or self.pool is None or self._rotation is None:
+            return draw
+        rotation = self._rotation
+        history = rotation.reserve_history or {}
+        guard = getattr(self.pool, "guard", None)
+
+        def resolvable(task_id: str) -> bool:
+            try:
+                self.pool.task(task_id)
+            except Exception:  # noqa: BLE001 - a body the catalog cannot resolve is never an anchor
+                return False
+            return True
+
+        records = eligible_records(
+            rotation.retired_archive, rotation.retired_ledger, rotation.active_ids, params,
+            withdrawn=[str(row.get("id")) for row in history.get("withdrawn", ())],
+            rejected=tuple(guard.rejects) if guard is not None else (),
+            reserve=history.get("queue", ()), exclude=set(excluded) | set(draw.task_ids), resolvable=resolvable,
+        )
+        chosen = select(records, draw.round_seed, params)
+        return interleave(draw, chosen, [records[task] for task in chosen])
 
     def _ticket(self, record: RoundRecord, lease: Lease) -> RoundTicket:
         ticket = get_record(self.store, layout.ticket(record.round_id, lease.lease_id), RoundTicket)
@@ -973,7 +1002,9 @@ class Controller:
                 ticket, result = usable[0]
                 try:
                     new_outcomes = result.null_outcomes[:1] if legacy_parent_one_sample(ticket.params, len(result.parent_outcomes)) else result.null_outcomes
-                    fields = score_confirmation(ticket.draw.weights, new_outcomes, result.parent_outcomes,
+                    # Confirmation uses the gate tasks only; anchors are cut out of both sides.
+                    fields = score_confirmation(gate_draw(ticket.draw).weights, gate_outcomes(ticket.draw, new_outcomes),
+                                                gate_outcomes(ticket.draw, result.parent_outcomes),
                                                 z_bar=ticket.params.z_bar if ticket.params.crown_gate == "argmax_symmetric" else 0.0,
                                                 crown_z=pending.z)
                 except Exception as exc:  # malformed/unavailable parent evidence can never silently confirm
@@ -1167,7 +1198,8 @@ class Controller:
         if self.pool is not None and self._rotation is not None and outcome in (APPLIED, NULL) and pairs:
             closed_rotation = self._rotation
             for index, (ticket, result) in enumerate(pairs):
-                closed_rotation = self.pool.close(closed_rotation, ticket.draw.task_ids, result.null_outcomes,
+                closed_rotation = self.pool.close(closed_rotation, gate_draw(ticket.draw).task_ids,
+                                                  gate_outcomes(ticket.draw, result.null_outcomes),
                                                   publish=index == len(pairs) - 1)
             data["rotation_state_sha"] = closed_rotation.digest()
             self._rotation = closed_rotation
@@ -1222,14 +1254,15 @@ class Controller:
     def _update_sampler(self, pairs: Leases, outcome: str) -> str:
         """Fold the round's outcomes into the task table and store the new public snapshot."""
         ticket, result = pairs[0]
-        outcomes = {NULL_MODEL: result.null_outcomes}
-        outcomes |= {e.lora.lora_hash: e.outcomes for _, r in pairs for e in r.entries if e.lora is not None}
+        # The task table learns from the gate tasks only; anchors are retired tasks and stay out of IRT.
+        outcomes = {NULL_MODEL: gate_outcomes(ticket.draw, result.null_outcomes)}
+        outcomes |= {e.lora.lora_hash: gate_outcomes(ticket.draw, e.outcomes) for _, r in pairs for e in r.entries if e.lora is not None}
         winner = self.state.round.decision.winner
         applied = outcome == APPLIED
         try:
             snapshot_id = self.sampler.update(
                 ticket.head,
-                ticket.draw,
+                gate_draw(ticket.draw),
                 outcomes,
                 winner_lora_hash=winner.lora_hash if applied else "",
                 new_head_version_id=self.state.head.version_id if applied else "",

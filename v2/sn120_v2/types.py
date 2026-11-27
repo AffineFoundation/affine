@@ -230,12 +230,23 @@ class Draw(Record):
     round_seed: str  # public seed of the round
     task_ids: tuple[str, ...]  # in evaluation order
     weights: tuple[float, ...]  # sampling weight of each task (1 / inclusion probability)
+    # Anchors (``sn120_v2.anchors``): retired easy tasks interleaved into ``task_ids`` with weight 1.0. They are
+    # evaluated like any task but never enter delta, IRT, rotation or confirmation. ``anchor_p`` is the measured
+    # head record pass rate of each anchor at open. Omitted while empty: every earlier draw keeps its JSON and digest.
+    LEFT_OUT_AT_DEFAULT = ("anchor_ids", "anchor_p")
+    anchor_ids: tuple[str, ...] = ()
+    anchor_p: tuple[float, ...] = ()
 
     def __post_init__(self) -> None:
         _need(len(self.task_ids) >= 1, "a draw needs at least one task")
         _need(len(self.task_ids) == len(self.weights), "a draw needs one weight per task")
         _need(len(set(self.task_ids)) == len(self.task_ids), "a draw must not repeat a task")
         _need(all(math.isfinite(w) and w > 0 for w in self.weights), "sampling weights must be positive numbers")
+        _need(len(self.anchor_ids) == len(self.anchor_p), "a draw needs one record pass rate per anchor")
+        _need(len(set(self.anchor_ids)) == len(self.anchor_ids) and set(self.anchor_ids) <= set(self.task_ids),
+              "anchors must be distinct tasks of the draw")
+        _need(len(self.anchor_ids) < len(self.task_ids), "a draw needs at least one gate task besides its anchors")
+        _need(all(math.isfinite(p) and 0.0 <= p <= 1.0 for p in self.anchor_p), "anchor record pass rates must be in [0, 1]")
 
 
 @dataclass(frozen=True)
@@ -528,7 +539,8 @@ class BoxResult(Record):
 class Score(Record):
     """One LoRA against the king, with optional field-relative final-look measurements."""
 
-    LEFT_OUT_AT_DEFAULT = ("field_delta", "field_se", "field_z")
+    LEFT_OUT_AT_DEFAULT = ("field_delta", "field_se", "field_z", "anchor_delta", "anchor_se", "anchor_z",
+                           "anchor_n_scored", "anchor_king_pass", "anchor_entry_pass", "anchor_check")
 
     n_tasks: int  # tasks this LoRA was scored on
     delta: float  # weighted mean of (LoRA pass rate - null M pass rate) per task
@@ -544,6 +556,14 @@ class Score(Record):
     field_delta: float | None = None
     field_se: float | None = None
     field_z: float | None = None
+    # Paired estimate over the scored anchors only (never part of delta); None when the round has no anchors.
+    anchor_delta: float | None = None
+    anchor_se: float | None = None
+    anchor_z: float | None = None
+    anchor_n_scored: int | None = None
+    anchor_king_pass: float | None = None
+    anchor_entry_pass: float | None = None
+    anchor_check: str = ""  # "passed", "vetoed" or "not evaluated: ..." (fail-open)
 
 
 @dataclass(frozen=True)

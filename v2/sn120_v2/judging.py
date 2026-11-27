@@ -57,6 +57,7 @@ from fractions import Fraction
 from statistics import NormalDist, median
 from typing import Mapping, Sequence
 
+from .anchors import anchor_positions, gate_draw, gate_outcomes
 from .errors import ContractError, HeadMismatchError
 from .params import Params
 from .sampling import train_seed
@@ -288,6 +289,39 @@ def score_entry(
     )
 
 
+def with_anchor_check(score: Score, draw_anchor_positions: Sequence[int], null_outcomes: Sequence[str],
+                      lora_outcomes: Sequence[str], params: Params) -> Score:
+    """Add the paired anchor estimate and, on the argmax path, the one-sided easy-task veto.
+
+    The estimator is ``estimate`` with weight 1.0 per anchor, over the anchors inside the entry's scored prefix of the
+    full evaluation order. The veto removes eligibility only when at least ``anchor_min_scored`` anchors were scored,
+    their se is positive and anchor z < -anchor_z_veto. Fewer scored anchors: not evaluated, never a veto (fail-open).
+    """
+    prefix = scored_prefix(lora_outcomes)
+    positions = [index for index in draw_anchor_positions if index < prefix]
+    k = len(positions)
+    if k:
+        entry = [sum(text[i] == PASS for text in lora_outcomes) / len(lora_outcomes) for i in positions]
+        king = [sum(text[i] == PASS for text in null_outcomes) / len(null_outcomes) for i in positions]
+        delta, se = estimate([1.0] * k, [a - b for a, b in zip(entry, king)])
+        entry_pass, king_pass = math.fsum(entry) / k, math.fsum(king) / k
+    else:
+        delta = se = entry_pass = king_pass = 0.0
+    z = delta / se if se > 0 else 0.0
+    eligible, reasons = score.eligible, list(score.reasons)
+    if k < params.anchor_min_scored:
+        check = f"not evaluated: {k} anchors scored; the check needs {params.anchor_min_scored}"
+    elif se > 0 and z < -params.anchor_z_veto:
+        check = "vetoed"
+        reasons.append(f"anchor z {z:.2f} is below -{params.anchor_z_veto:g} (easy-task regression)")
+        eligible = False
+    else:
+        check = "passed"
+    return dataclasses.replace(score, anchor_delta=delta, anchor_se=se, anchor_z=z, anchor_n_scored=k,
+                               anchor_king_pass=king_pass, anchor_entry_pass=entry_pass, anchor_check=check,
+                               eligible=eligible, reasons=tuple(reasons))
+
+
 def spent_alpha(share: float, alpha: float) -> float:
     """Error that early drops may have spent once ``share`` of the draw is scored (Lan-DeMets, Pocock type)."""
     return alpha * math.log(1.0 + (math.e - 1.0) * share)
@@ -451,15 +485,20 @@ def decide(
         )
         check_result(ticket, result)
 
+    # Everything below judges the gate draw only. Anchors are cut out of every outcome string here; they come back
+    # only in ``with_anchor_check``. Without anchors the views are the sealed strings themselves.
+    draw = gate_draw(first.draw)
+    n = len(draw.task_ids)
+    null_views = [gate_outcomes(first.draw, result.null_outcomes) for _, result in leases]
     null_rates, null_caps, problems = [], [], []
-    for ticket, result in leases:
+    for (ticket, result), null_view in zip(leases, null_views):
         if not any(e.status == SCORED for e in result.entries):
             continue
-        run = scored_prefix(result.null_outcomes)  # null M stops early only when every LoRA was dropped
-        null_rates.append(weighted_mean(first.draw.weights[:run], pass_rates(result.null_outcomes, run)))
-        null_caps.append(code_share(result.null_outcomes, CAP, run))
-        if not cover_ok(result.null_outcomes, run, params):
-            cover = 1.0 - code_share(result.null_outcomes, ERROR, run)
+        run = scored_prefix(null_view)  # null M stops early only when every LoRA was dropped
+        null_rates.append(weighted_mean(draw.weights[:run], pass_rates(null_view, run)))
+        null_caps.append(code_share(null_view, CAP, run))
+        if not cover_ok(null_view, run, params):
+            cover = 1.0 - code_share(null_view, ERROR, run)
             problems.append(f"null M on {ticket.box_id}: only {cover:.3f} of rollouts resolved")
     if len(null_rates) > 1 and max(null_rates) - min(null_rates) > params.calibration_tol:
         problems.append("null-M pass rates differ between boxes by more than calibration_tol")
@@ -478,7 +517,8 @@ def decide(
               (seat.reg.uid, seat.reg.hotkey, seat.reg.registration_block, seat.batch.batch_sha256),
               "duplicate evidence does not match its frozen seat")
         copies[row.queue_pos] = row
-    for ticket, result in leases:
+    anchor_inputs: dict[int, tuple[Sequence[str], Sequence[str]]] = {}
+    for (ticket, result), null_view in zip(leases, null_views):
         for seat, entry in zip(ticket.entries, result.entries):
             if entry.status != SCORED:
                 rows.append((seat, entry, entry.status, entry.reason, None))
@@ -511,26 +551,29 @@ def decide(
                 rows.append((seat, entry, DUPLICATE, copy.reason, None))
                 continue
             # At the round's time limit the box stops early. What it scored is then the whole test, by the same final rule.
-            full = scored_prefix(result.null_outcomes) if result.stopped_at_limit else n
-            score = score_entry(first.draw.weights, result.null_outcomes, entry.outcomes, params, n_total=full)
+            outcomes = gate_outcomes(first.draw, entry.outcomes)
+            full = scored_prefix(null_view) if result.stopped_at_limit else n
+            score = score_entry(draw.weights, null_view, outcomes, params, n_total=full)
             first_look = params.look_sizes(n)[0]
+            if params.anchor_n > 0:
+                anchor_inputs[seat.queue_pos] = (result.null_outcomes, entry.outcomes)
             if problems:
                 rows.append((seat, entry, NO_DECISION, problems[0], score))
             elif result.stopped_at_limit and full < first_look:
                 rows.append((seat, entry, NOT_SCORED, f"the round's time limit ended the scoring after {full} tasks, before the first look of {first_look}", score))
-            elif not cover_ok(entry.outcomes, score.n_tasks, params):
+            elif not cover_ok(outcomes, score.n_tasks, params):
                 rows.append((seat, entry, NO_DECISION, f"only {score.cover:.3f} of this LoRA's rollouts resolved", score))
             else:
                 rows.append((seat, entry, LOST, "", score))
                 # A dropped entry helps set the field only on its scored tasks;
                 # its final eligibility keeps the unchanged king/full-draw test.
-                field_scores.append((seat.queue_pos, score, entry.outcomes))
+                field_scores.append((seat.queue_pos, score, outcomes))
 
     candidates = [(position, score) for position, score, _ in field_scores]
     if params.crown_gate == "field_median" and field_scores:
         king_rates = [
-            pass_rates(result.null_outcomes, scored_prefix(result.null_outcomes))
-            for ticket, result in leases
+            pass_rates(null_view, scored_prefix(null_view))
+            for (ticket, result), null_view in zip(leases, null_views)
             if any(e.status == SCORED for e in result.entries)
         ]
         king_n = max(len(rates) for rates in king_rates)
@@ -538,12 +581,20 @@ def decide(
                 sum(t < len(rates) for rates in king_rates) for t in range(king_n)]
         members = [pass_rates(outcomes, score.n_tasks) for _, score, outcomes in field_scores] + [king]
         candidates = [
-            (position, _with_field_gate(score, first.draw.weights, members, index, params))
+            (position, _with_field_gate(score, draw.weights, members, index, params))
             for index, (position, score, _) in enumerate(field_scores)
         ]
         gated = {position: score for position, score in candidates}
         rows = [(seat, entry, status, reason, gated[seat.queue_pos] if status == LOST else score)
                 for seat, entry, status, reason, score in rows]
+
+    if anchor_inputs:
+        # The anchor check is a veto only: it can remove an entry's eligibility, never add it or change its delta.
+        positions = anchor_positions(first.draw)
+        anchored = {pos: with_anchor_check(score, positions, *anchor_inputs[pos], params)
+                    for seat, _, _, _, score in rows if (pos := seat.queue_pos) in anchor_inputs and score is not None}
+        candidates = [(position, anchored[position]) for position, _ in candidates]
+        rows = [(seat, entry, status, reason, anchored.get(seat.queue_pos, score)) for seat, entry, status, reason, score in rows]
 
     winner = pick_winner([(position, score) for position, score in candidates if position not in blocked])
     entries = []
