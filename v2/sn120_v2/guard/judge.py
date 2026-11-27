@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..errors import ConfigError
-from .checks import CHECK_VERSION
+from .version import CHECK_VERSION
 
 DEFAULT_BASE_URL = "https://api.engy.ai"
 DEFAULT_MODEL = "kimi-k3.1-pro"

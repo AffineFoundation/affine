@@ -19,7 +19,7 @@ from ..envs.math_grader import _reference_parses, grade_answer
 from ..envs.math_pool import Task
 from ..types import PASS
 
-CHECK_VERSION = "guard-checks-v1"  # bump with any change to a check's meaning; it is part of guard_version
+from .version import CHECK_VERSION  # noqa: F401  (re-exported; part of guard_version)
 
 MAX_PROBLEM_CHARS = 6000
 MAX_KEY_CHARS = 200

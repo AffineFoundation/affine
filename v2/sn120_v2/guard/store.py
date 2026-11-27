@@ -20,13 +20,16 @@ import datetime as dt
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..canonical import canonical_json
 from ..envs.reserve import GUARD, ingest_lock
 from ..errors import ConfigError
 from ..rotation import GUARD_PASS, GUARD_REJECT, GUARD_ROW_FIELDS, parse_guard_ledger
-from .checks import CheckResult
 from .judge import Verdict
+
+if TYPE_CHECKING:  # checks.py needs the math grader; the store must not
+    from .checks import CheckResult
 
 VERDICTS = "verdicts.jsonl"  # private; beside the guard ledger but never published
 
