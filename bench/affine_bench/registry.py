@@ -39,8 +39,12 @@ def model_settings():
 
 
 def resolve_settings(model_id, kind=None):
-    """Sampling + max_model_len for one model. Kings / Genesis use the qwen3.5-family profile.
-    max_tokens is capped at global_max_tokens_ceiling; max_model_len = min(budget + headroom, native_context)."""
+    """Sampling + max_model_len for one model.
+
+    Affine kings use ``king_profile`` (qwen3.5-family-pp0, presence_penalty 0).
+    Genesis / comparison Qwen3.5 models keep ``qwen3.5-family`` (presence_penalty 1.5).
+    max_tokens is capped at global_max_tokens_ceiling; max_model_len = min(budget + headroom, native_context).
+    """
     ms = model_settings()
     profiles = ms["profiles"]
     mmap = ms.get("models", {})

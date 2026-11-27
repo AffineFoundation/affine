@@ -77,6 +77,9 @@ def pre_probe(head, gather_start):
 
 def entry(e):
     d = EP / str(e); dec = rj(d / 'DECISION.json')
+    # PIT terminal blocked (blocked_no_candidate / blocked_incomplete_master /
+    # settlement=pending_operator) is not a ledger promote/reject row — skip
+    # without crashing so last-10 GREEN payees never count it.
     if not dec or dec.get('decision') not in ('green', 'red'):
         return None
     life = LIFE / 'epochs' / str(e)

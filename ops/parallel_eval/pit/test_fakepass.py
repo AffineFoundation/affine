@@ -1,0 +1,845 @@
+#!/usr/bin/env python3
+"""Forced-GREEN fakepass harness: isolation, deny-list, simulate, sever, restart.
+
+REAL-path tests drive the production code (live-source resolution, rent
+policy, LiveApplicator → pe_apply/pe_live → lifecycle → record_applied,
+hash-sync, promoted-index checks) against sandbox state and moto R2. The
+rented-box end-to-end run needs Lium + R2 credentials and an explicit opt-in.
+"""
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import types
+import unittest
+from pathlib import Path
+from typing import Dict, Iterator
+from unittest import mock
+
+try:
+    import boto3
+    from moto import mock_aws
+except ImportError:  # pragma: no cover
+    boto3 = None  # type: ignore
+    mock_aws = None  # type: ignore
+
+from ops.parallel_eval.live import pe_artifact_upload as AU
+from ops.parallel_eval.live import pe_box
+from ops.parallel_eval.pit import fakepass as FP
+from ops.parallel_eval.pit import fakepass_real as R
+from ops.parallel_eval.pit.fakepass_sandbox import SANDBOX_REBIND
+from ops.parallel_eval.pit.pe_rent import PREFIX_FAKEPASS, RentError, is_fakepass_name
+
+
+C = 'f' * 64
+HEAD = 'a' * 64
+HEAD_BF16 = 'b' * 64
+HEAD_MASTER = 'c' * 64
+BUCKET = 'affine-fakepass-moto'
+_SKIP_NO_MOTO = unittest.skipIf(mock_aws is None, 'moto not installed')
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _wj(path: Path, doc) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, sort_keys=True) + '\n')
+    return path
+
+
+def _epoch(life: Path, n: int, *, head: str = HEAD, signed: bool = True, finalized: bool = True) -> Path:
+    ep = life / 'epochs' / str(n)
+    _wj(ep / 'TRAINING-JOB.json', {'payload': {
+        'manifest': {'payload': {'checkpoint': {'id': head, 'files': {'model.safetensors': '1' * 64}}}},
+        'training': {'config': {'lr': 1e-6}, 'optimizer_step': 40 + n},
+    }})
+    _wj(ep / 'TRAIN-DISPATCH-FF.json', {
+        'signature': 'sig' if signed else '',
+        'signer': 'ROOT' if signed else 'SHADOW-UNSIGNED',
+    })
+    if finalized:
+        _wj(ep / 'FINALIZED.json', {'payload': {'input_checkpoint': head}})
+    return ep
+
+
+def _live_fixture(root: Path) -> Dict[str, str]:
+    """Read-only stand-in for the host live tree (CURRENT, epochs, M(H) index, BUNDLE)."""
+    life = root / 'live-life'
+    pe = root / 'live-pe'
+    idx = root / 'live-fp32-master'
+    _wj(life / 'CURRENT.json', {
+        'epoch_index': 13,
+        'checkpoint': {'id': HEAD},
+        'optimizer_step': 52,
+        'checkpoint_authorization': {'input': 'genesis', 'id': HEAD},
+    })
+    _epoch(life, 10)
+    _epoch(life, 11, signed=False)
+    _epoch(life, 12, finalized=False)
+    _epoch(life, 9, head='9' * 64)
+    _wj(idx / ('%s.json' % HEAD), {
+        'bf16_sha256': HEAD_BF16,
+        'master_digest': HEAD_MASTER,
+        'files': {
+            'model-00001-of-00001.safetensors': {'sha256': '1' * 64, 'bytes': 1, 'r2_key': 'fp32-master/h/s'},
+            'meta.json': {'sha256': '2' * 64, 'bytes': 1, 'r2_key': 'fp32-master/h/meta.json'},
+        },
+        'meta_json': {'r2_key': 'fp32-master/h/meta.json'},
+    })
+    _wj(pe / 'BUNDLE.json', {'bundle': 'probe'})
+    return {'PE_LIFE': str(life), 'PE_STATE': str(pe), 'PIT_FP32_MASTER_INDEX': str(idx)}
+
+
+@contextlib.contextmanager
+def _fresh_live_modules() -> Iterator[None]:
+    """Stub the host-only Lium library and restore sys.modules afterwards."""
+    rp = types.ModuleType('replace_pod')
+
+    class _Pod:
+        pass
+
+    rp.Pod = _Pod
+    names = R.LIVE_BOUND_MODULES + ('replace_pod',)
+    prev = {n: sys.modules.get(n) for n in names}
+    for n in names:
+        sys.modules.pop(n, None)
+    sys.modules['replace_pod'] = rp
+    try:
+        yield
+    finally:
+        for n, mod in prev.items():
+            if mod is None:
+                sys.modules.pop(n, None)
+            else:
+                sys.modules[n] = mod
+
+
+class TestFakepassIsolation(unittest.TestCase):
+    def test_refuses_live_root_collision(self):
+        with self.assertRaises(FP.FakepassError):
+            FP.assert_isolated(
+                state_root=Path('/home/const/subnet120/fakepass'),
+                live_roots=[Path('/home/const/subnet120')],
+            )
+
+    def test_refuses_sandbox_path_under_live(self):
+        with tempfile.TemporaryDirectory(dir='/tmp') as td:
+            root = Path(td)
+            paths = {'root': root, 'pit': root / 'pit'}
+            paths['pit'].mkdir()
+            with self.assertRaises(FP.FakepassError):
+                FP.assert_paths_outside_live(
+                    paths,
+                    live_roots=[root],  # sandbox path resolves under "live"
+                )
+
+    def test_sandbox_under_tmp_and_cleaned(self):
+        paths = FP.make_sandbox('testisol')
+        root = paths['root']
+        try:
+            self.assertTrue(str(root).startswith('/tmp') or str(root).startswith(tempfile.gettempdir()))
+            self.assertTrue((root / 'FAKEPASS-ISOLATION.json').is_file())
+            doc = json.loads((root / 'FAKEPASS-ISOLATION.json').read_text())
+            self.assertFalse(doc['opens_live_ledger'])
+            self.assertFalse(doc.get('promote_live', True))
+        finally:
+            FP.cleanup_sandbox(paths)
+        self.assertFalse(root.exists())
+
+
+class TestFakepassDenyList(unittest.TestCase):
+    def test_env_denylist_scrubs_live_keys(self):
+        with tempfile.TemporaryDirectory(dir='/tmp') as td:
+            root = Path(td)
+            paths = {
+                'root': root,
+                'pit': root / 'pit',
+                'pe': root / 'pe',
+                'life': root / 'life',
+                'uploads': root / 'uploads',
+                'fp32_pending': root / 'fp32-pending',
+                'fp32_public': root / 'fp32-master',
+                'r2_mirror': root / 'r2-mirror',
+                'bench': root / 'bench',
+                'logs': root / 'logs',
+            }
+            for p in paths.values():
+                p.mkdir(parents=True, exist_ok=True)
+            with mock.patch.dict(os.environ, {
+                'PE_FLAG': '/live/flag.json',
+                'PE_HELDOUT': '/live/heldout',
+                'PE_SYNC_EXPECTED_HASH': '/live/sync.py',
+                'PE_SYNC_EXPECTED_HASH_PYTHON': '/usr/bin/python',
+                'PE_SYNC_EXPECTED_HASH_LOG': '/live/sync.log',
+                'HG_GATE_STATE': '/live/gate',
+            }, clear=False):
+                env = FP.env_for_sandbox(paths, 'deny1')
+            for key in (
+                'PE_FLAG', 'PE_HELDOUT', 'PE_SYNC_EXPECTED_HASH',
+                'PE_SYNC_EXPECTED_HASH_PYTHON', 'PE_SYNC_EXPECTED_HASH_LOG',
+                'HG_GATE_STATE',
+            ):
+                self.assertNotIn(key, env)
+            self.assertEqual(env['PIT_R2_PENDING_PREFIX'], 'pit-fakepass/deny1')
+            self.assertTrue(env['PIT_FAKEPASS'])
+
+    def test_dry_isolation_check_cli(self):
+        rc = FP.main(['--dry-isolation-check', '--run-id', 'drycli'])
+        self.assertEqual(rc, 0)
+
+
+class TestFakepassSimulateLocal(unittest.TestCase):
+    def test_simulate_local_happy_path_no_tmp_leak(self):
+        self.assertTrue(is_fakepass_name(PREFIX_FAKEPASS + '0-a0'))
+        # Capture root via a hook before cleanup.
+        roots: list[Path] = []
+        real_make = FP.make_sandbox
+
+        def tracking_make(run_id, **kwargs):
+            paths = real_make(run_id, **kwargs)
+            roots.append(paths['root'])
+            return paths
+
+        with mock.patch.object(FP, 'make_sandbox', side_effect=tracking_make):
+            rc = FP.main([
+                '--simulate-local',
+                '--run-id', 'simhappy',
+                '--hold-vllm-s', '0',
+                '--liveness-interval-s', '0.05',
+                '--candidate-id', C,
+            ])
+        self.assertEqual(rc, 0)
+        self.assertTrue(roots)
+        self.assertFalse(roots[0].exists(), 'sandbox /tmp must be cleaned')
+
+    def test_fake_result_never_promotes(self):
+        doc = FP.fake_result_doc(candidate_id=C)
+        self.assertTrue(doc['FAKE'])
+        self.assertEqual(doc['z'], FP.FAKE_Z)
+        stamp = FP.fake_green_fresh_stamp(candidate_id=C)
+        self.assertFalse(stamp['promote_live'])
+        self.assertTrue(stamp['sandbox_only'])
+
+
+class TestFakepassSeverAfterGreen(unittest.TestCase):
+    def test_sever_after_green_apply_from_upload(self):
+        run_id = 'sever1'
+        live_roots = FP.live_roots_from_env()
+        paths = FP.make_sandbox(run_id, live_roots=live_roots)
+        env = FP.env_for_sandbox(paths, run_id)
+        run = FP.FakepassRun(
+            run_id=run_id,
+            mode=FP.FakepassMode.SIMULATE,
+            paths=paths,
+            env=env,
+            live_roots=live_roots,
+            hold_vllm_s=0,
+            sever_after_green=True,
+            candidate_id=C,
+            liveness_interval_s=0.05,
+        )
+        try:
+            out = run.run()
+            self.assertTrue(out['ok'])
+            self.assertTrue(out['sever_after_green'])
+            self.assertTrue(out['apply_result']['apply_from_upload'])
+            self.assertFalse(out['promote_live'])
+            self.assertFalse(out['green_stamp']['promote_live'])
+            # Sever model returns rc 255.
+            sev = FP.simulate_sever_ssh()
+            self.assertEqual(sev['ssh_rc'], 255)
+            self.assertTrue(sev['apply_from_upload'])
+            # Prove Pod.run is severed after green.
+            self.assertIsInstance(run.pod, FP.SeveredPod)
+            self.assertTrue(run.pod.severed)
+            with self.assertRaises(FP.FakepassError):
+                run.pod.run('true', check=False)
+        finally:
+            if not run.cleaned:
+                FP.cleanup_sandbox(paths)
+        self.assertFalse(paths['root'].exists())
+
+
+class TestFakepassRestartHostMidEval(unittest.TestCase):
+    def test_restart_host_mid_eval_pid_invariant(self):
+        run_id = 'rehost1'
+        live_roots = FP.live_roots_from_env()
+        paths = FP.make_sandbox(run_id, live_roots=live_roots)
+        env = FP.env_for_sandbox(paths, run_id)
+        run = FP.FakepassRun(
+            run_id=run_id,
+            mode=FP.FakepassMode.SIMULATE,
+            paths=paths,
+            env=env,
+            live_roots=live_roots,
+            hold_vllm_s=0,
+            restart_host_mid_eval=True,
+            candidate_id=C,
+            liveness_interval_s=0.05,
+        )
+        try:
+            out = run.run()
+            self.assertTrue(out['ok'])
+            rst = out['restart_result']
+            self.assertIsNotNone(rst)
+            self.assertTrue(rst['no_free_gpus'])
+            self.assertTrue(rst['no_place_cand'])
+            self.assertTrue(rst['eval_alive'])
+            self.assertIsInstance(rst['eval_pid_unchanged'], int)
+            self.assertNotEqual(rst['eval_pid_unchanged'], rst['killed_host_pid'])
+            self.assertFalse(run.called_free_gpus)
+            self.assertFalse(run.called_place_cand)
+            with self.assertRaises(FP.FakepassError):
+                FP.simulate_restart_host_mid_eval(eval_pid=5, host_pid=5)
+        finally:
+            if not run.cleaned:
+                FP.cleanup_sandbox(paths)
+        self.assertFalse(paths['root'].exists())
+
+
+class TestFakepassPrefix(unittest.TestCase):
+    def test_box_prefix_matches_pe_rent(self):
+        self.assertEqual(FP.BOX_NAME_PREFIX, PREFIX_FAKEPASS)
+        self.assertTrue(is_fakepass_name(FP.BOX_NAME_PREFIX + 'x'))
+
+
+class TestRealModeIsReal(unittest.TestCase):
+    def test_fakepassrun_refuses_real(self):
+        with self.assertRaises(FP.FakepassError):
+            FP.FakepassRun(
+                run_id='x', mode=FP.FakepassMode.REAL, paths={}, env={}, live_roots=[],
+            )
+
+    def test_real_cli_without_creds_refuses_before_sandbox(self):
+        with tempfile.TemporaryDirectory() as home:
+            env = {'HOME': home, 'PATH': os.environ.get('PATH', '')}
+            with mock.patch.dict(os.environ, env, clear=True):
+                self.assertEqual(FP.main(['--real', '--run-id', 'nocreds']), 2)
+        self.assertEqual(list(Path(tempfile.gettempdir()).glob('pit-fakepass-nocreds-*')), [])
+
+    def test_real_does_not_use_scripted_box_io(self):
+        src = Path(R.__file__).read_text()
+        self.assertNotIn('ScriptedBoxIO', src)
+        self.assertIn('HostBoxIO().train_v834e', src)
+        self.assertIn('pe_box._early_upload_artifacts', src)
+
+
+class TestRealLiveSources(unittest.TestCase):
+    def test_newest_finalized_signed_epoch_bound_to_head(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = _live_fixture(Path(td))
+            src = R.resolve_live_sources(env)
+            self.assertEqual(src.head, HEAD)
+            self.assertEqual(src.epoch, 10)
+            self.assertEqual(src.master_digest, HEAD_MASTER)
+            self.assertEqual(src.head_bf16, HEAD_BF16)
+            self.assertTrue(src.master_index_origin.endswith('%s.json' % HEAD))
+            self.assertEqual(len(src.provenance), 4)
+
+    def test_explicit_epoch_must_be_signed_and_bound(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = _live_fixture(Path(td))
+            for bad in (11, 9):
+                with self.assertRaises(FP.FakepassError):
+                    R.resolve_live_sources(env, epoch=bad)
+            self.assertEqual(R.resolve_live_sources(env, epoch=12).epoch, 12)
+
+    def test_index_falls_back_to_public_url(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = _live_fixture(Path(td))
+            doc = json.loads((Path(env['PIT_FP32_MASTER_INDEX']) / ('%s.json' % HEAD)).read_text())
+            env.pop('PIT_FP32_MASTER_INDEX')
+            seen = []
+
+            def fetch(url):
+                seen.append(url)
+                return json.dumps(doc).encode()
+
+            src = R.resolve_live_sources(env, fetch=fetch)
+            self.assertEqual(seen, [R.PUBLIC_MASTER_URL % HEAD])
+            self.assertEqual(src.master_index_origin, seen[0])
+
+    def test_missing_bundle_or_index_refuses(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = _live_fixture(Path(td))
+            (Path(env['PE_STATE']) / 'BUNDLE.json').unlink()
+            with self.assertRaises(FP.FakepassError):
+                R.resolve_live_sources(env)
+        with tempfile.TemporaryDirectory() as td:
+            env = _live_fixture(Path(td))
+            env.pop('PIT_FP32_MASTER_INDEX')
+
+            def unpublished(_url):
+                raise OSError('404')
+
+            with self.assertRaises(FP.FakepassError):
+                R.resolve_live_sources(env, fetch=unpublished)
+
+    def test_stage_copies_inputs_without_touching_live(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = _live_fixture(Path(td))
+            before = {p: p.read_bytes() for p in Path(td).rglob('*') if p.is_file()}
+            src = R.resolve_live_sources(env)
+            paths = FP.make_sandbox('stage1', live_roots=FP.live_roots_from_env(env))
+            try:
+                staged = R.stage_live_sources(src, paths)
+                cur = json.loads((paths['life'] / 'CURRENT.json').read_text())
+                self.assertEqual(cur['checkpoint']['id'], HEAD)
+                self.assertEqual(cur['epoch_index'], 10)
+                self.assertEqual(cur['optimizer_step'], 50)
+                chain = json.loads((paths['pe'] / 'HEAD-CHAIN.json').read_text())
+                self.assertEqual(chain, {'genesis': HEAD, 'applied': []})
+                flag = json.loads(staged['flag'].read_text())
+                self.assertFalse(flag['parallel_eval']['pit']['allow_sharded_gpus'])
+                self.assertTrue((paths['fp32_public'] / ('%s.json' % HEAD)).is_file())
+                self.assertTrue(staged['hash_sync'].is_file())
+            finally:
+                FP.cleanup_sandbox(paths)
+            after = {p: p.read_bytes() for p in Path(td).rglob('*') if p.is_file()}
+            self.assertEqual(before, after)
+
+
+class TestRealEnvAndPreflight(unittest.TestCase):
+    def _sandbox(self, run_id):
+        paths = FP.make_sandbox(run_id)
+        self.addCleanup(FP.cleanup_sandbox, paths)
+        return paths
+
+    def test_real_env_rebinds_deny_keys_into_sandbox(self):
+        paths = self._sandbox('renv1')
+        live = {
+            'PE_FLAG': '/live/flag.json', 'PE_HELDOUT': '/live/heldout',
+            'PE_SYNC_EXPECTED_HASH': '/live/sync.py', 'HG_GATE_STATE': '/live/gate',
+            'PIT_SYNC_EXPECTED_HASH': '/live/pit-sync.py',
+            'PIT_PRESIGN_PUT_JSON': '/tmp/inject.json',
+        }
+        with mock.patch.dict(os.environ, live, clear=False):
+            env = R.real_env_for_sandbox(FP.env_for_sandbox(paths, 'renv1'), paths)
+        root = paths['root']
+        for key in SANDBOX_REBIND:
+            self.assertTrue(env[key].startswith(str(root)), key)
+        self.assertNotIn('PE_HELDOUT', env)
+        self.assertNotIn('PIT_SYNC_EXPECTED_HASH', env)
+        self.assertNotIn('PIT_R2_LOCAL_MIRROR', env)
+        self.assertNotIn('PIT_PRESIGN_PUT_JSON', env)
+        self.assertEqual(env['PIT_FAKEPASS_MODE'], 'real')
+        self.assertEqual(env['PIT_R2_PENDING_PREFIX'], 'pit-fakepass/renv1')
+
+    def test_assert_env_sandboxed_refuses_live_paths(self):
+        paths = self._sandbox('renv2')
+        env = R.real_env_for_sandbox(FP.env_for_sandbox(paths, 'renv2'), paths)
+        for key, value in (
+            ('PE_FLAG', '/home/const/subnet120/flag.json'),
+            ('PE_SYNC_EXPECTED_HASH_LOG', '/var/log/sync.log'),
+            ('PIT_FP32_MASTER_INDEX', '/srv/website/k1/fp32-master'),
+            ('PE_HELDOUT', str(paths['root']) + '/../escape'),
+        ):
+            with self.assertRaises(FP.FakepassError, msg=key):
+                R.assert_env_sandboxed(dict(env, **{key: value}), paths['root'])
+
+    def test_preflight_refuses_injection_and_overlay(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = _wj(Path(td) / 'life.json', {'bucket': {}})
+            base = {'LIUM_API_KEY': 'x', 'PIT_LIFE_CFG': str(cfg), 'PIT_BUNDLE_JSON': str(cfg)}
+            for key in R.INJECTION_ENV + R.OVERLAY_ENV:
+                with self.assertRaises(FP.FakepassError, msg=key):
+                    R.preflight_real(dict(base, **{key: '1'}))
+            with self.assertRaises(FP.FakepassError):
+                R.preflight_real({k: v for k, v in base.items() if k != 'LIUM_API_KEY'})
+            with self.assertRaises(FP.FakepassError):
+                R.preflight_real(dict(base, PIT_BUNDLE_JSON=str(Path(td) / 'missing')))
+
+    def test_import_live_modules_binds_sandbox_roots(self):
+        paths = self._sandbox('renv3')
+        with tempfile.TemporaryDirectory() as td:
+            src = R.resolve_live_sources(_live_fixture(Path(td)))
+            R.stage_live_sources(src, paths)
+        env = R.real_env_for_sandbox(FP.env_for_sandbox(paths, 'renv3'), paths)
+        with _fresh_live_modules(), R.swapped_environ(env):
+            mods = R.import_live_modules()
+            bound = R.assert_live_modules_sandboxed(mods, paths['root'])
+            self.assertTrue(all(v.startswith(str(paths['root'])) for v in bound.values()), bound)
+            with self.assertRaises(FP.FakepassError):
+                R.import_live_modules()
+        self.assertNotEqual(os.environ.get('PIT_FAKEPASS_MODE'), 'real')
+
+
+class TestRealAdmittedHost(unittest.TestCase):
+    def _host(self, td: Path):
+        host = td / 'host-v834e'
+        files = {'v83_dp.py': b'dp\n', 'patched/mimo_grpo.service.py': b'svc\n', 'math_levels.json': b'{}\n'}
+        for rel, data in files.items():
+            (host / rel).parent.mkdir(parents=True, exist_ok=True)
+            (host / rel).write_bytes(data)
+        (host / R.ROOT_ADMISSION).write_text('{}\n')
+        manifest = _wj(td / 'admitted.json', {'host_files': {k: _sha(v) for k, v in files.items()}})
+        return host, manifest
+
+    def test_byte_identical_host_passes(self):
+        with tempfile.TemporaryDirectory() as td:
+            host, manifest = self._host(Path(td))
+            out = R.check_admitted_trainer_host(host, manifest)
+            self.assertFalse(out['overlay'])
+            self.assertEqual(out['admitted_files'], 3)
+
+    def test_drift_overlay_or_missing_root_admission_refuses(self):
+        for mutate in (
+            lambda h: (h / 'v83_dp.py').write_bytes(b'dp-patched\n'),
+            lambda h: (h / 'v835_zero3.py').write_text('# overlay\n'),
+            lambda h: (h / R.ROOT_ADMISSION).unlink(),
+            lambda h: (h / 'patched/mimo_grpo.service.py').unlink(),
+        ):
+            with tempfile.TemporaryDirectory() as td:
+                host, manifest = self._host(Path(td))
+                mutate(host)
+                with self.assertRaises(FP.FakepassError):
+                    R.check_admitted_trainer_host(host, manifest)
+
+    def test_committed_manifest_matches_admitted_inventory(self):
+        doc = json.loads(R.ADMITTED_MANIFEST.read_text())
+        self.assertIn('v83_dp.py', doc['host_files'])
+        self.assertFalse(any('zero3' in k for k in doc['host_files']))
+
+
+class _FakeRent:
+    __name__ = 'fake_pe_rent'
+
+    def __init__(self, offers, rented=None):
+        self.offers = offers
+        self.rented = rented or {}
+        self.calls = []
+
+    def pick_node(self, gpus, fallback=True, price_ceiling=None):
+        self.calls.append(('pick', tuple(gpus), fallback, price_ceiling))
+        g = gpus[0]
+        price = self.offers.get(g)
+        if price is None or price > price_ceiling:
+            return None, None
+        return g, {'price_per_hour': price}
+
+    def rent(self, name, ttl, gpu=None):
+        self.calls.append(('rent', name, ttl, gpu))
+        return self.rented.get(gpu, {'id': 'pod-%s' % gpu, 'name': name, 'gpu': gpu,
+                                     'price_h': self.offers[gpu], 'port': 40022, 'host': '1.2.3.4'})
+
+    def release(self, pod, reason=None):
+        self.calls.append(('release', pod, reason))
+
+
+class TestRealRentPolicy(unittest.TestCase):
+    NAME = PREFIX_FAKEPASS + 'run1'
+
+    def test_order_is_b300_b200_h200_never_sharded(self):
+        self.assertEqual(R.FAKEPASS_GPU_ORDER, ('B300', 'B200', 'H200'))
+        with self.assertRaises(FP.FakepassError):
+            R.make_fakepass_host_rent(_FakeRent({}), order=('B300', 'H100'))
+
+    def test_falls_through_to_b200_under_ceiling(self):
+        fake = _FakeRent({'B300': 80.0, 'B200': 40.0, 'H200': 20.0})
+        out = R.make_fakepass_host_rent(fake)(self.NAME, gpu='B300')
+        self.assertEqual(out['gpu'], 'B200')
+        self.assertTrue(out['fakepass'])
+        picks = [c for c in fake.calls if c[0] == 'pick']
+        self.assertEqual([c[1] for c in picks], [('B300',), ('B200',)])
+        self.assertTrue(all(c[2] is False and c[3] == float(R.PRICE_CEILING_USD_H) for c in picks))
+        self.assertEqual([c for c in fake.calls if c[0] == 'rent'], [('rent', self.NAME, R.RENT_TTL, 'B200')])
+
+    def test_overpriced_or_wrong_gpu_rental_is_released(self):
+        fake = _FakeRent({'B300': 30.0}, rented={'B300': {
+            'id': 'pod-x', 'name': self.NAME, 'gpu': 'H100', 'price_h': 30.0, 'port': 1,
+        }})
+        with self.assertRaises(RentError):
+            R.make_fakepass_host_rent(fake)(self.NAME)
+        self.assertIn(('release', 'pod-x', 'fakepass-rent-mismatch'), fake.calls)
+
+    def test_no_offer_and_bad_name_refuse(self):
+        with self.assertRaises(RentError):
+            R.make_fakepass_host_rent(_FakeRent({'B300': 99.0}))(self.NAME)
+        with self.assertRaises(RentError):
+            R.make_fakepass_host_rent(_FakeRent({'B300': 1.0}))('affine-pe-live-1')
+
+
+class _CapturePod:
+    def __init__(self, out='OK'):
+        self.cmds = []
+        self.out = out
+
+    def run(self, cmd, *a, **k):
+        self.cmds.append(cmd)
+        return self.out
+
+
+class TestRealBoxCommandTags(unittest.TestCase):
+    def test_real_free_gpus_and_place_cand_commands_are_tagged(self):
+        pod = _CapturePod()
+        with contextlib.suppress(Exception):
+            pe_box.free_gpus(pod, also_vllm=True)
+        with contextlib.suppress(Exception):
+            pe_box.place_cand(pod, candidate_id=C)
+        tags = [R.classify_box_command(c) for c in pod.cmds]
+        self.assertIn('free_gpus', tags)
+        self.assertIn('place_cand', tags)
+
+    def test_hold_and_serve_like_commands_are_untagged(self):
+        cmd = R.hold_command(job_dir='/workspace/pst/pit-jobs/x', candidate_id=C, hold_s=10)
+        self.assertIsNone(R.classify_box_command(cmd))
+        self.assertIsNone(R.classify_box_command('nvidia-smi --query-gpu=memory.used'))
+
+    def test_recording_pod_logs_and_reads_forbidden_rows(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / 'pod.jsonl'
+            pod = R.RecordingPod(_CapturePod(), log)
+            pod.run('true')
+            mark = len(pod.records)
+            pod.run("pgrep -f 'train_pit.py|v83_dp.py' || true")
+            self.assertEqual(pod.tags_since(mark), ['free_gpus'])
+            FP.append_timeline(log, {'event': 'forbidden-call', 'tag': 'place_cand'})
+            self.assertEqual(R.read_command_tags(log), ['free_gpus', 'place_cand'])
+
+
+class TestRealIndexValidation(unittest.TestCase):
+    def _pending(self, prefix='pit-fakepass/r1'):
+        files = {
+            'model-00001-of-00001.safetensors': {'sha256': '1' * 64, 'r2_key': prefix + '/%s/s' % C},
+            'meta.json': {'sha256': '2' * 64, 'r2_key': prefix + '/%s/meta.json' % C},
+        }
+        return {'bf16_sha256': 'e' * 64, 'master_digest': 'd' * 64, 'files': files,
+                'meta_json': {'r2_key': files['meta.json']['r2_key']}, 'pending': True}
+
+    def test_pending_index_contract(self):
+        R.validate_pending_index(self._pending(), candidate_id=C, run_prefix='pit-fakepass/r1', store_entry='e' * 64)
+        for mutate in (
+            lambda d: d['files'].pop('meta.json'),
+            lambda d: d.update(meta_json={'version': 'v833f-fp32-head-master-v1', 'bf16': C}),
+            lambda d: d.update(bf16_sha256=C),
+            lambda d: d['files']['model-00001-of-00001.safetensors'].update(r2_key='pit-pending/x/s'),
+        ):
+            doc = self._pending()
+            mutate(doc)
+            with self.assertRaises(FP.FakepassError):
+                R.validate_pending_index(doc, candidate_id=C, run_prefix='pit-fakepass/r1', store_entry='e' * 64)
+
+    def test_promoted_index_rejects_synthetic_meta_json(self):
+        live = 'pit-fakepass/r1/fp32-master/%s' % C
+        doc = self._pending()
+        doc.update(pending=False)
+        for f in doc['files'].values():
+            f['r2_key'] = live + '/' + f['r2_key'].rsplit('/', 1)[-1]
+        doc['meta_json'] = {'r2_key': doc['files']['meta.json']['r2_key']}
+        R.validate_promoted_index(doc, candidate_id=C, live_prefix=live, master_digest='d' * 64)
+        for bad in (
+            {'version': 'v833f-fp32-head-master-v1', 'bf16': C, 'master_digest': 'd' * 64},
+            {'r2_key': doc['meta_json']['r2_key'], 'version': 'x'},
+            {'r2_key': live + '/other.json'},
+        ):
+            with self.assertRaises(FP.FakepassError):
+                R.validate_promoted_index(dict(doc, meta_json=bad), candidate_id=C,
+                                          live_prefix=live, master_digest='d' * 64)
+        with self.assertRaises(FP.FakepassError):
+            R.validate_promoted_index(dict(doc, pending=True), candidate_id=C, live_prefix=live, master_digest='d' * 64)
+
+    def test_sweep_refuses_outside_run_prefix(self):
+        for bad in ('pit-pending/x', 'pit-fakepass', 'pit-fakepass/', 'fp32-master/a', 'pit-fakepass/../k1'):
+            with self.assertRaises(FP.FakepassError, msg=bad):
+                R.sweep_r2_prefix(bad, bucket=object())
+
+
+class TestRealHashSyncScript(unittest.TestCase):
+    def _run(self, idx_doc, *, head=C):
+        paths = FP.make_sandbox('hsync')
+        self.addCleanup(FP.cleanup_sandbox, paths)
+        idx = paths['fp32_public']
+        if idx_doc is not None:
+            _wj(idx / ('%s.json' % head), idx_doc)
+        script = paths['hash_sync'] / 'sync_expected_hash.py'
+        script.write_bytes(R.HASH_SYNC_SRC.read_bytes())
+        env = {'PATH': os.environ.get('PATH', ''), 'PIT_FP32_MASTER_INDEX': str(idx)}
+        proc = subprocess.run([sys.executable, str(script), '--head=%s' % head],
+                              env=env, capture_output=True, text=True, timeout=60)
+        return proc, paths['hash_sync']
+
+    def _doc(self, **kw):
+        key = 'pit-fakepass/h/fp32-master/%s/meta.json' % C
+        doc = {
+            'bf16_sha256': 'e' * 64, 'master_digest': 'd' * 64, 'pending': False,
+            'files': {'model-00001-of-00001.safetensors': {'sha256': '1' * 64, 'r2_key': 'k'},
+                      'meta.json': {'sha256': '2' * 64, 'r2_key': key}},
+            'meta_json': {'r2_key': key},
+        }
+        doc.update(kw)
+        return doc
+
+    def test_writes_expected_hash_for_promoted_index(self):
+        proc, out = self._run(self._doc())
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual((out / 'fp32-expected-master.hash').read_text().strip(), 'd' * 64)
+        self.assertTrue((out / 'LAST-SYNC.json').is_file())
+
+    def test_alerts_on_synthetic_meta_json_or_pending(self):
+        for doc in (
+            self._doc(meta_json={'version': 'v833f-fp32-head-master-v1', 'bf16': C}),
+            self._doc(pending=True),
+            None,
+        ):
+            proc, out = self._run(doc)
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertFalse((out / 'fp32-expected-master.hash').exists())
+            self.assertTrue((out / 'ALERT.json').is_file())
+
+    def test_refuses_outside_fakepass_sandbox(self):
+        with tempfile.TemporaryDirectory() as td:
+            script = Path(td) / 'sync_expected_hash.py'
+            script.write_bytes(R.HASH_SYNC_SRC.read_bytes())
+            proc = subprocess.run([sys.executable, str(script), '--head=%s' % C],
+                                  env={'PATH': os.environ.get('PATH', '')},
+                                  capture_output=True, text=True, timeout=60)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertFalse((Path(td) / 'fp32-expected-master.hash').exists())
+
+
+@_SKIP_NO_MOTO
+class TestRealApplyChainHermetic(unittest.TestCase):
+    """REAL LiveApplicator → pe_apply/pe_live → lifecycle → record_applied on sandbox + moto R2."""
+
+    RUN = 'applyhm'
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
+        root = Path(self.td.name)
+        self.live_env = _live_fixture(root)
+        creds = root / 'r2.env'
+        creds.write_text('R2_ACCESS_KEY_ID=testing\nR2_SECRET_ACCESS_KEY=testing\n')
+        self.life_cfg = _wj(root / 'life.json', {'bucket': {
+            'bucket': BUCKET, 'endpoint': 'https://s3.amazonaws.com', 'credentials_file': str(creds),
+        }})
+        self.aws = mock_aws()
+        self.aws.start()
+        self.addCleanup(self.aws.stop)
+        self.s3 = boto3.client('s3', region_name='us-east-1',
+                               aws_access_key_id='testing', aws_secret_access_key='testing')
+        self.s3.create_bucket(Bucket=BUCKET)
+        self.live_roots = FP.live_roots_from_env(self.live_env)
+        self.paths = FP.make_sandbox(self.RUN, live_roots=self.live_roots)
+        self.addCleanup(lambda: FP.cleanup_sandbox(self.paths) if self.paths['root'].exists() else None)
+        self.src = R.resolve_live_sources(self.live_env)
+        staged = R.stage_live_sources(self.src, self.paths)
+        base = FP.env_for_sandbox(self.paths, self.RUN)
+        base.update(PIT_LIFE_CFG=str(self.life_cfg), AFFINE_LIFE_CFG=str(self.life_cfg))
+        self.env = R.real_env_for_sandbox(base, self.paths)
+        self.run_ = R.RealFakepass(
+            run_id=self.RUN, paths=self.paths, env=self.env, live_roots=self.live_roots,
+            sources=self.src, staged=staged, sever_after_green=True,
+        )
+
+    def _seed_early_upload(self):
+        """State _early_upload_artifacts leaves: pending R2 objects, pending index, UPLOAD receipt."""
+        shard = b'fp32-shard-bytes'
+        meta = json.dumps({'version': 'v833f-fp32-head-master-v1', 'bf16': C,
+                           'master_digest': 'd' * 64, 'tensor_file': 'master.safetensors'}).encode()
+        bf16 = b'bf16-weights'
+        store_entry = _sha(b'store-entry')
+        prefix = AU.pending_r2_prefix(C)
+        inv = {'model-00001-of-00001.safetensors': shard, 'meta.json': meta}
+        for name, data in inv.items():
+            self.s3.put_object(Bucket=BUCKET, Key='%s/%s' % (prefix, name), Body=data)
+        self.s3.put_object(Bucket=BUCKET, Key='%s/model/model.safetensors' % prefix, Body=bf16)
+        idx = AU.write_pending_master_index(
+            candidate_id=C, bf16=store_entry, digest='d' * 64,
+            inv={n: {'sha256': _sha(d), 'bytes': len(d)} for n, d in inv.items()},
+        )
+        R.validate_pending_index(json.loads(idx.read_text()), candidate_id=C,
+                                 run_prefix=R.run_r2_prefix(self.RUN), store_entry=store_entry)
+        files = {'model.safetensors': _sha(bf16)}
+        _wj(self.paths['uploads'] / C / 'UPLOAD.json', {
+            'id': C, 'sha256': C, 'files': files, 'verified_files': files, 'pending': True,
+        })
+        _wj(self.paths['uploads'] / C / 'CHECKPOINT.json', {'id': C, 'files': files})
+        self.run_.candidate_id = C
+        self.run_.store_entry = store_entry
+        self.run_.receipt = {
+            'candidate_id': C, 'candidate_sha256': C, 'candidate_files': files,
+            'candidate_master_digest': 'd' * 64, 'artifacts_uploaded': True,
+            'live_apply_seed': {'candidate_verified': True, 'master_verified': True,
+                                'master_complete': True, 'pending': True},
+        }
+
+    def _keys(self, prefix):
+        page = self.s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
+        return sorted(o['Key'] for o in page.get('Contents') or [])
+
+    def test_green_reaches_sandbox_head_chain_and_hash_sync_with_box_severed(self):
+        with _fresh_live_modules(), R.swapped_environ(self.env):
+            self.run_.phase_isolate()
+            self._seed_early_upload()
+            self.run_.pod = FP.SeveredPod(_CapturePod())
+            self.run_.pod.arm()
+            self.run_.phase_apply_tail()
+            out = self.run_.apply_result
+            self.assertTrue(out['head_advanced'])
+            self.assertEqual(out['new_head'], C)
+            self.assertEqual(out['hash_sync'], 'd' * 64)
+            self.assertEqual(out['ssh_attempts'], 0)
+            chain = json.loads((self.paths['head_chain'] / 'HEAD-CHAIN.json').read_text())
+            self.assertEqual(chain['genesis'], HEAD)
+            self.assertTrue(any(a.get('new_head') == C for a in chain['applied']))
+            promoted = json.loads(Path(out['promoted_index']).read_text())
+            live_prefix = AU.live_fp32_r2_prefix(C)
+            R.validate_promoted_index(promoted, candidate_id=C, live_prefix=live_prefix, master_digest='d' * 64)
+            self.assertIn('%s/meta.json' % live_prefix, self._keys(live_prefix))
+            cur = json.loads((self.paths['life'] / 'CURRENT.json').read_text())
+            self.assertEqual(cur['checkpoint']['id'], C)
+            self.run_.gc_r2()
+            self.assertEqual(self._keys(R.run_r2_prefix(self.RUN) + '/'), [])
+        live_life = Path(self.live_env['PE_LIFE'])
+        self.assertEqual(json.loads((live_life / 'CURRENT.json').read_text())['checkpoint']['id'], HEAD)
+
+    def test_missing_pending_meta_json_object_blocks_promote_and_head(self):
+        with _fresh_live_modules(), R.swapped_environ(self.env):
+            self.run_.phase_isolate()
+            self._seed_early_upload()
+            self.s3.delete_object(Bucket=BUCKET, Key='%s/meta.json' % AU.pending_r2_prefix(C))
+            self.run_.pod = _CapturePod()
+            with self.assertRaisesRegex(Exception, 'promote failed'):
+                self.run_.phase_apply_tail()
+            self.assertFalse((self.paths['fp32_public'] / ('%s.json' % C)).exists())
+            chain = json.loads((self.paths['pe'] / 'HEAD-CHAIN.json').read_text())
+            self.assertEqual(chain['applied'], [])
+            self.assertFalse((self.paths['hash_sync'] / 'fp32-expected-master.hash').exists())
+
+
+_REAL_E2E = os.environ.get('PIT_FAKEPASS_REAL_E2E') == '1'
+
+
+@unittest.skipUnless(
+    _REAL_E2E and FP.has_lium_credentials() and os.environ.get('PIT_LIFE_CFG'),
+    'REAL fakepass rents a paid box: needs Lium + R2 creds and PIT_FAKEPASS_REAL_E2E=1',
+)
+class TestRealFakepassEndToEnd(unittest.TestCase):
+    def test_real_restart_host_mid_eval(self):
+        evidence = Path(tempfile.mkdtemp(prefix='fakepass-evidence-'))
+        self.addCleanup(lambda: subprocess.run(['rm', '-rf', str(evidence)], check=False))
+        proc = subprocess.run(
+            [sys.executable, '-m', 'ops.parallel_eval.pit.fakepass', '--real',
+             '--run-id', 'e2e%d' % os.getpid(), '--restart-host-mid-eval',
+             '--evidence-out', str(evidence)],
+            cwd=str(R.REPO), capture_output=True, text=True, timeout=6 * 3600,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout[-4000:] + proc.stderr[-4000:])
+        report = json.loads(proc.stdout)
+        self.assertTrue(report['ok'])
+        self.assertTrue(report['restart_result']['no_free_gpus'])
+        self.assertTrue(report['restart_result']['no_place_cand'])
+        self.assertTrue(report['apply_result']['head_advanced'])
+        self.assertEqual(report['second_step']['fp32_prepared']['source'], 'disk')
+
+
+if __name__ == '__main__':
+    unittest.main()

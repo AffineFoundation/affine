@@ -1,0 +1,3 @@
+# Test deps for ops/parallel_eval (env -i / CI).
+pytest>=8
+moto[s3]>=5

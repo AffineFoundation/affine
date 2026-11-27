@@ -1,0 +1,2673 @@
+"""PIT host controller (BRIEF §1.8, SPEC §3–§4).
+
+On-demand rent only: rent when a BOUND item needs a box; release as soon as the
+result is stored or the item fails. Empty queue ⇒ zero item rentals.
+B queued with max_boxes N ⇒ at most min(B, N) concurrent item rentals.
+
+Live mode (Jacob 2026-11-09): batches dispatch from the host PIT queue (cap N);
+each box binds current head at spawn. First GREEN_FRESH uploads C+M(C) and becomes
+HEAD; later old-head GREEN is paid + stranded/merge_blocked; RED earns nothing;
+non-GREEN destroys box state. Full redo with the same binding if a box is lost
+after SEALED (SPEC D3). Lifecycle never waits on these decisions.
+"""
+from __future__ import annotations
+
+import json
+import os
+import threading
+import time
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Mapping, Optional
+
+from . import PREFIX_LIVE, PREFIX_SHADOW
+from .apply_live import ApplyLiveError, LiveApplicator, PromoteRefused
+from .binding import dequeue_and_bind, mark_scored_decision, select_next_queued
+from .box import BoxIO, BoxRunner, Fp32MasterError, ProbeBundle, ScriptedBoxIO
+from .config import PitConfig, load_pit_config
+from .cutover import plan_cutover
+from .cutover_apply import (
+    confirm_head_advanced,
+    cutover_apply_alert,
+    drive_cutover_apply,
+    master_index_is_complete,
+)
+from .decisions import DecisionLog
+from .durable import item_from_dict, item_to_dict, pit_state_root
+from .pe_lane import LaneService, bind_host_lane_service
+from .pe_rent import RentError, RentService, bind_host_rent_service
+from .pe_score import is_live_pending_exc
+from .pe_score import score as pit_score
+from .pe_score import score_epoch_shadow
+from .queue_ingest import training_job_checkpoint
+from .shadow import ShadowGuard, ShadowWriteError
+from .signer import (
+    RootSigner,
+    build_admission_envelope,
+    generate_ephemeral_box_key,
+    request_real_root_signature,
+)
+from .state import (
+    RENTED_STATES,
+    ItemRecord,
+    ItemState,
+    TransitionError,
+    apply_transition,
+    can_transition,
+    holds_rental,
+)
+
+
+def _new_id() -> str:
+    return uuid.uuid4().hex
+
+
+# SSH/transport re-adopt after restart: retry before releasing a still-listed box.
+READOPT_MAX_ATTEMPTS = 3
+# GPU-busy during re-adopt: keep the box briefly, then kill job PIDs and retry once.
+# Unbounded keep would bill forever (e1065 class). Cap → kill+retry → alert+release.
+GPU_BUSY_KEEP_S = 15 * 60
+GPU_BUSY_KILL_RETRY_MAX = 1
+# GREEN apply (upload/verify) failure: keep the box and retry with backoff.
+GREEN_APPLY_BACKOFF_S = 30.0
+GREEN_APPLY_BACKOFF_CAP_S = 300.0
+# After 30m of failed apply without a verified uploaded master (or Lium gone),
+# declare lost_infra: stays paid, no HEAD, releases first-GREEN slot.
+try:
+    from .lost_infra import GREEN_APPLY_LOST_INFRA_S as GREEN_APPLY_LOST_INFRA_S
+except Exception:  # pragma: no cover
+    GREEN_APPLY_LOST_INFRA_S = 30 * 60
+BOX_PING_INTERVAL_S = 60.0
+# Live baseline Pending: keep box + candidate; retry score with backoff; alert after 2h.
+BASELINE_WAIT_BACKOFF_S = 30.0
+BASELINE_WAIT_BACKOFF_CAP_S = 300.0
+BASELINE_WAIT_ALERT_S = 2 * 3600
+# Cap billing: after 45m waiting on baseline, upload C if needed then release the box
+# (score later from the saved result). Never release an unuploaded candidate.
+BASELINE_WAIT_RELEASE_S = 45 * 60
+# Missing SAMPLE.private.json: skip bind and continue FIFO; after 30m (or once the
+# lifecycle has moved ≥2 epochs past the item) terminate as no_sample.
+NO_SAMPLE_WAIT_S = 30 * 60
+
+
+@dataclass
+class Controller:
+    config: PitConfig
+    rent: RentService
+    lane: LaneService
+    box_io_factory: Callable[[], BoxIO]
+    decisions: DecisionLog = field(default_factory=DecisionLog)
+    items: List[ItemRecord] = field(default_factory=list)
+    current_head: Optional[str] = None
+    current_head_epoch: int = 0
+    current_master_digest: Optional[str] = None
+    # Prod: never default to a fixture round_id. Bind from SAMPLE.private.json
+    # via round_id_fn (host-side only; never sent to the box).
+    current_round_id: str = ''
+    round_seed_commitment: str = ''
+    shadow: Optional[ShadowGuard] = None
+    now_fn: Callable[[], float] = time.time
+    score_fn: Optional[Callable[..., Mapping[str, Any]]] = None
+    live_decision_lookup: Optional[Callable[[int], Optional[Mapping[str, Any]]]] = None
+    apply_hook: Optional[Callable[[ItemRecord], Any]] = None
+    live_applicator: Optional[LiveApplicator] = None
+    root_signer: Optional[RootSigner] = None
+    on_green_fresh: Optional[Callable[[ItemRecord], Any]] = None  # bench/prior/baseline hooks
+    destroy_box_state_fn: Optional[Callable[..., Mapping[str, Any]]] = None
+    plan_seed_fn: Optional[Callable[[int], str]] = None
+    indices_fn: Optional[Callable[[int], Any]] = None  # epoch → secret-draw indices (host-private)
+    round_id_fn: Optional[Callable[[int], str]] = None  # epoch → SAMPLE.private.json round_id
+    # Optional: CURRENT.json epoch_index (lifecycle). Used to terminalize no_sample
+    # when item.epoch < lifecycle_epoch - 1 (gate will never sample that epoch).
+    lifecycle_epoch_fn: Optional[Callable[[], int]] = None
+    durable_save_fn: Optional[Callable[[ItemRecord], None]] = None
+    _workers: Dict[str, threading.Thread] = field(default_factory=dict, init=False, repr=False)
+    _worker_out: Dict[str, Any] = field(default_factory=dict, init=False, repr=False)
+    _worker_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.shadow = self.shadow or ShadowGuard(self.config)
+        if self.config.enabled and not self.config.may_run():
+            raise ValueError('PIT enabled but mode is not runnable')
+        if self.config.is_live() and self.live_applicator is None:
+            self.live_applicator = LiveApplicator(
+                config=self.config,
+                accept_pit_decision=None,
+                destroy_state=self.destroy_box_state_fn,
+            )
+
+    @classmethod
+    def from_flag(
+        cls,
+        parallel_eval: Mapping[str, Any],
+        *,
+        box_io_factory: Optional[Callable[[], BoxIO]] = None,
+        **kwargs: Any,
+    ) -> 'Controller':
+        cfg = load_pit_config(parallel_eval)
+        shadow = bool(cfg.is_shadow())
+        rent = RentService(
+            max_boxes=cfg.max_boxes,
+            gpu_order=tuple(cfg.effective_gpu_order()),
+            price_ceiling_usd_h=float(cfg.price_ceiling_usd_h),
+            disable_auto_backup=bool(cfg.disable_lium_auto_backup),
+            shadow=shadow,
+            name_prefix=PREFIX_SHADOW if shadow else PREFIX_LIVE,
+            share_pe_cap=not shadow,
+        )
+        bind_host_rent_service(rent, module_path=cfg.pe_rent_module)
+        lane = LaneService()
+        bind_host_lane_service(lane, module_path=cfg.pe_lane_module)
+        if cfg.is_live():
+            rent.require_host = True
+            lane.require_host = True
+            if box_io_factory is None:
+                raise ValueError('live mode requires explicit box_io_factory (refuse ScriptedBoxIO default)')
+            if box_io_factory is ScriptedBoxIO:
+                raise ValueError('live mode refuses ScriptedBoxIO')
+            if rent.host_rent is None:
+                raise ValueError('live mode requires host pe_rent (bind failed)')
+        else:
+            box_io_factory = box_io_factory or ScriptedBoxIO
+        return cls(
+            config=cfg,
+            rent=rent,
+            lane=lane,
+            box_io_factory=box_io_factory,
+            **kwargs,
+        )
+
+    def enqueue(
+        self,
+        *,
+        epoch: int,
+        registration_index: int,
+        uid: int = 0,
+        hotkey_prefix: str = '',
+        item_id: Optional[str] = None,
+        attempt: int = 0,
+        priority: int = 0,
+        rerun_of: Optional[str] = None,
+        meta: Optional[Mapping[str, Any]] = None,
+    ) -> ItemRecord:
+        rec = ItemRecord(
+            item_id=item_id or _new_id(),
+            registration_index=registration_index,
+            epoch=int(epoch),
+            uid=int(uid),
+            hotkey_prefix=(hotkey_prefix or '')[:16],
+            attempt=int(attempt or 0),
+            priority=int(priority or 0),
+            rerun_of=rerun_of,
+            shadow=self.config.is_shadow(),
+            meta=dict(meta or {}),
+        )
+        self.items.append(rec)
+        return rec
+
+    def set_head(self, head: str, *, epoch: int, master_digest: str, round_id: Optional[str] = None) -> None:
+        if len(head) != 64 or len(master_digest) != 64:
+            raise ValueError('head/master_digest must be hex64')
+        self.current_head = head
+        self.current_head_epoch = int(epoch)
+        self.current_master_digest = master_digest
+        if round_id:
+            self.current_round_id = round_id
+
+    def _round_id_for_item(self, item: ItemRecord) -> str:
+        """Host-side SAMPLE.private.json round_id for the item's epoch.
+
+        Never invent a fixture. Never send the raw SAMPLE/ROUND to the box —
+        only the round_id string is bound onto the item for pe_score.
+        """
+        rid = ''
+        if self.round_id_fn is not None:
+            try:
+                rid = str(self.round_id_fn(int(item.epoch)) or '')
+            except Exception as exc:
+                raise ValueError(
+                    'round_id_fn failed for epoch %s: %s' % (item.epoch, str(exc)[:200])
+                ) from exc
+        if not rid:
+            rid = str(self.current_round_id or '')
+        if not rid or rid in ('round-fixture', 'fixture', 'seed-commitment-fixture'):
+            raise ValueError(
+                'refuse bind: SAMPLE.private.json round_id missing for epoch %s '
+                '(no fixture default on prod paths)' % item.epoch
+            )
+        return rid
+
+    def _lifecycle_epoch(self) -> Optional[int]:
+        """CURRENT.json epoch_index, or None when unavailable."""
+        if self.lifecycle_epoch_fn is not None:
+            try:
+                return int(self.lifecycle_epoch_fn())
+            except Exception:
+                return None
+        for key in ('LIFE_ROOT', 'PE_LIFE'):
+            root = os.environ.get(key)
+            if not root:
+                continue
+            cur_path = Path(root) / 'CURRENT.json'
+            if not cur_path.is_file():
+                continue
+            try:
+                cur = json.loads(cur_path.read_text())
+            except Exception:
+                continue
+            if isinstance(cur, Mapping) and cur.get('epoch_index') is not None:
+                try:
+                    return int(cur['epoch_index'])
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    def _note_sample_missing(self, item: ItemRecord, *, reason: str) -> ItemRecord:
+        """Stamp first-seen SAMPLE-miss clock; keep QUEUED for later skip/terminal."""
+        meta = dict(item.meta or {})
+        now = float(self.now_fn())
+        if meta.get('sample_wait_since') is None:
+            meta['sample_wait_since'] = now
+        meta['sample_wait_note'] = (reason or '')[:300]
+        meta['sample_wait_last_at'] = now
+        item.meta = meta
+        item.last_error = 'refuse-bind-round-id:%s' % (reason or '')[:200]
+        self._persist(item)
+        return item
+
+    def _maybe_terminal_no_sample(self, item: ItemRecord) -> Optional[ItemRecord]:
+        """QUEUED + no SAMPLE forever → terminal no_sample (frees pending).
+
+        Triggers when ``epoch < lifecycle_epoch - 1`` (gate will never sample it)
+        or after ``NO_SAMPLE_WAIT_S`` (30m) waiting for SAMPLE.
+        """
+        if item.state is not ItemState.QUEUED:
+            return None
+        if item.decision:
+            return None
+        meta = dict(item.meta or {})
+        since = meta.get('sample_wait_since')
+        if since is None:
+            return None
+        now = float(self.now_fn())
+        waited = now - float(since)
+        life_ep = self._lifecycle_epoch()
+        stale_vs_life = (
+            life_ep is not None and int(item.epoch) < int(life_ep) - 1
+        )
+        timed_out = waited >= float(NO_SAMPLE_WAIT_S)
+        if not stale_vs_life and not timed_out:
+            return None
+        if stale_vs_life:
+            why = 'epoch %d < lifecycle_epoch %d - 1 (gate will not sample)' % (
+                int(item.epoch), int(life_ep),
+            )
+        else:
+            why = 'no SAMPLE.private.json after %.0fs' % waited
+        return self._terminal_no_sample(item, reason=why)
+
+    def _terminal_no_sample(self, item: ItemRecord, *, reason: str) -> ItemRecord:
+        """Move QUEUED → NO_DECISION with decision=no_sample; emit-ready; alert once."""
+        meta = dict(item.meta or {})
+        meta['gate_emit_ready'] = True
+        meta['settlement'] = 'pending_operator'
+        meta['no_sample_reason'] = (reason or '')[:400]
+        meta['scored'] = dict(
+            decision='no_sample',
+            evaluated={'z': None},
+            reasons=['no_sample', reason[:200]],
+            heldout={},
+            probe={},
+        )
+        updated = apply_transition(
+            item, ItemState.NO_DECISION, reason='no-sample',
+            updates={
+                'decision': 'no_sample',
+                'paid': False,
+                'fresh': False,
+                'merge_blocked': False,
+                'result_stored': True,
+                'meta': meta,
+            },
+        )
+        if not meta.get('no_sample_alerted'):
+            self._alert_no_sample(updated, reason=reason)
+            updated.meta = dict(updated.meta or {}, no_sample_alerted=True)
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'no_sample',
+                'item_id': updated.item_id,
+                'epoch': updated.epoch,
+                'reason': reason[:300],
+                'note': 'terminal no_sample — emit DECISION/PIT-RESULT, free pending',
+            }, default=str),
+            flush=True,
+        )
+        self._persist(updated)
+        return updated
+
+    def _alert_no_sample(self, item: ItemRecord, *, reason: str) -> None:
+        doc = {
+            'ok': False,
+            'event': 'no_sample',
+            'at_unix': self.now_fn(),
+            'item_id': item.item_id,
+            'epoch': item.epoch,
+            'reason': (reason or '')[:800],
+            'settlement': 'pending_operator',
+        }
+        try:
+            root = pit_state_root()
+            root.mkdir(parents=True, exist_ok=True)
+            alert = root / 'NO-SAMPLE-ALERT.json'
+            tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, alert)
+            doc['alert'] = str(alert)
+        except Exception as exc:
+            doc['alert_write_error'] = str(exc)[:200]
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'no_sample_alert',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'alert': doc.get('alert'),
+            }, default=str),
+            flush=True,
+        )
+
+    def rented_count(self) -> int:
+        return self.rent.active_count()
+
+    def demand_for_rent(self) -> int:
+        return sum(1 for i in self.items if i.state is ItemState.BOUND and not i.box_id)
+
+    def queued_count(self) -> int:
+        return sum(1 for i in self.items if i.state is ItemState.QUEUED)
+
+    def expected_rentals(self) -> int:
+        return sum(1 for i in self.items if i.state in RENTED_STATES)
+
+    def cutover_plan(self) -> dict:
+        return plan_cutover(self.config).as_dict()
+
+    def _replace(self, record: ItemRecord) -> None:
+        for i, old in enumerate(self.items):
+            if old.item_id == record.item_id:
+                self.items[i] = record
+                return
+        raise KeyError(record.item_id)
+
+    def tick(self) -> Dict[str, Any]:
+        if self.config.is_shadow():
+            self.shadow.assert_shadow()
+        if not self.config.enabled or self.config.revert:
+            return {
+                'ok': True, 'enabled': False, 'rentals': self.rented_count(),
+                'actions': [], 'cutover': self.cutover_plan(),
+            }
+
+        actions: List[dict] = []
+        # Item ids refused for missing SAMPLE this tick — skip so newer bindable
+        # epochs (e1069…) can bind without the oldest (e1068) blocking forever.
+        skip_bind_ids: set[str] = set()
+
+        while True:
+            # Free box slots only: count every item that still needs or holds a
+            # slot (BOUND / in-rental / retryable FAILED / RETRY_WAIT). Price
+            # failures stay waiting so they do not free a slot for a newer bind.
+            occupied = sum(1 for i in self.items if self._occupies_box_slot(i))
+            nxt = select_next_queued(
+                self.items,
+                rented=occupied,
+                max_boxes=self.config.max_boxes,
+                skip_ids=skip_bind_ids,
+            )
+            if nxt is None:
+                break
+            if not self.current_head or not self.current_master_digest:
+                actions.append({'op': 'wait-head', 'item_id': nxt.item_id})
+                break
+            try:
+                round_id = self._round_id_for_item(nxt)
+            except ValueError as exc:
+                actions.append({
+                    'op': 'refuse-bind-round-id',
+                    'item_id': nxt.item_id,
+                    'epoch': nxt.epoch,
+                    'error': str(exc)[:200],
+                })
+                # Stamp wait clock; maybe terminalize; never break the bind loop.
+                stamped = self._note_sample_missing(nxt, reason=str(exc)[:200])
+                self._replace(stamped)
+                terminal = self._maybe_terminal_no_sample(stamped)
+                if terminal is not None:
+                    self._replace(terminal)
+                    actions.append({
+                        'op': 'no_sample',
+                        'item_id': terminal.item_id,
+                        'epoch': terminal.epoch,
+                        'note': (terminal.meta or {}).get('no_sample_reason'),
+                    })
+                else:
+                    skip_bind_ids.add(nxt.item_id)
+                continue
+            bound = dequeue_and_bind(
+                nxt,
+                head=self.current_head,
+                head_epoch=self.current_head_epoch,
+                round_id=round_id,
+                round_seed_commitment=(
+                    self.round_seed_commitment if self.plan_seed_fn is None else None
+                ),
+                plan_seed_fn=self.plan_seed_fn,
+                master_digest=self.current_master_digest,
+                dequeued_at_mono=self.now_fn(),
+            )
+            if bound is None:
+                actions.append({'op': 'pause-unpublished-master', 'item_id': nxt.item_id})
+                break
+            self._replace(bound)
+            actions.append({
+                'op': 'bound',
+                'item_id': bound.item_id,
+                'head': bound.bound_head[:12],
+                'round_id': bound.bound_round_id,
+            })
+
+        # Revisit previously skipped QUEUED items that may now be past the
+        # no_sample deadline even if they were not selected this tick.
+        for item in list(self.items):
+            if item.state is not ItemState.QUEUED:
+                continue
+            if not (item.meta or {}).get('sample_wait_since'):
+                continue
+            terminal = self._maybe_terminal_no_sample(item)
+            if terminal is not None:
+                self._replace(terminal)
+                actions.append({
+                    'op': 'no_sample',
+                    'item_id': terminal.item_id,
+                    'epoch': terminal.epoch,
+                    'note': (terminal.meta or {}).get('no_sample_reason'),
+                })
+
+        for item in list(self.items):
+            if item.state is ItemState.RELEASED:
+                continue
+            try:
+                advanced, note = self._advance(item)
+                if advanced is not item or note != 'noop':
+                    self._replace(advanced)
+                    actions.append({
+                        'op': 'advance', 'item_id': item.item_id,
+                        'to': advanced.state.value, 'note': note,
+                        'box_id': advanced.box_id,
+                    })
+            except PromoteRefused as exc:
+                failed = self._fail_and_release(
+                    item, 'promote-refused:%s' % str(exc)[:200],
+                )
+                self._replace(failed)
+                actions.append({
+                    'op': 'no_decision', 'item_id': item.item_id,
+                    'error': str(exc)[:200],
+                })
+            except Exception as exc:
+                # Isolate per item: one failure must never abort the tick for peers
+                # (e.g. e1056 still evaluating while e1055 post-decision retries).
+                # After a probe result exists, never release a box whose candidate
+                # is not uploaded — keep + alert (Pending / other post-result errors).
+                if self._must_keep_unuploaded_candidate(item) or is_live_pending_exc(exc):
+                    kept = self._keep_after_result_error(item, exc)
+                    self._replace(kept)
+                    actions.append({
+                        'op': 'keep-after-result',
+                        'item_id': item.item_id,
+                        'to': kept.state.value,
+                        'note': (kept.meta or {}).get('post_result_keep_note') or 'keep',
+                        'error': str(exc)[:200],
+                        'exc_type': type(exc).__name__,
+                        'box_id': kept.box_id,
+                    })
+                    continue
+                failed = self._fail_and_release(item, str(exc)[:300])
+                self._replace(failed)
+                actions.append({
+                    'op': 'fail', 'item_id': item.item_id,
+                    'error': str(exc)[:200], 'rentals': self.rented_count(),
+                    'exc_type': type(exc).__name__,
+                })
+
+        return {
+            'ok': True,
+            'enabled': True,
+            'mode': self.config.mode,
+            'shadow': self.config.is_shadow(),
+            'live': self.config.is_live(),
+            'rentals': self.rented_count(),
+            'queued': self.queued_count(),
+            'max_boxes': self.config.max_boxes,
+            'on_demand_rent_only': True,
+            'price_ceiling_usd_h': self.config.price_ceiling_usd_h,
+            'gpu_pinned': list(self.config.effective_gpu_order()),
+            'cutover': self.cutover_plan(),
+            'actions': actions,
+        }
+
+    def _advance(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        if item.state is ItemState.BOUND:
+            return self._rent_on_demand(item)
+        if item.state is ItemState.RENTING:
+            if item.box_id:
+                return apply_transition(
+                    item, ItemState.PROVISIONING, reason='already-rented',
+                ), 'provision'
+            return self._rent_on_demand(item)
+        if item.state is ItemState.PROVISIONING:
+            return self._run_box_async(item)
+        if item.state in (ItemState.TRAINING, ItemState.SEALED, ItemState.SERVING, ItemState.PROBING):
+            # Worker in flight or re-adopted after restart — wait / resume.
+            if item.box_id:
+                try:
+                    self.ping_box_liveness(item)
+                except Exception:
+                    pass
+            return self._poll_box_worker(item)
+        if item.state is ItemState.RESULT:
+            return apply_transition(item, ItemState.SCORED, reason='result-stored', updates={'result_stored': True}), 'scored'
+        if item.state is ItemState.SCORED:
+            return self._decide(item)
+        if item.state is ItemState.DECIDED:
+            return self._finish_decision(item)
+        if item.state is ItemState.NO_DECISION:
+            return self._destroy_and_release(item, reason='no_decision')
+        if item.state is ItemState.RETRY_WAIT:
+            # Full redo keeps binding after SEALED (SPEC D3); rebind only if unsealed.
+            if item.sealed and self.config.full_redo_after_sealed:
+                item.meta = dict(item.meta or {}, full_redo=True)
+            return apply_transition(item, ItemState.RENTING, reason='retry'), 'retry'
+        if item.state is ItemState.FAILED:
+            if item.attempt > self.config.max_attempts:
+                return self._destroy_and_release(
+                    apply_transition(item, ItemState.ABORTED, reason='exhausted'),
+                    reason='exhausted',
+                )
+            return apply_transition(item, ItemState.RETRY_WAIT, reason=item.last_error or 'retry'), 'retry-wait'
+        if item.state is ItemState.ABORTED:
+            return self._destroy_and_release(item, reason='aborted')
+        return item, 'noop'
+
+    def _occupies_box_slot(self, item: ItemRecord) -> bool:
+        """True when this item still consumes a max_boxes slot (blocks new binds).
+
+        Only live rented boxes count for in-pipeline states: SCORED/wait-baseline
+        with ``box_id is None`` (box released after upload, still waiting to score)
+        must not block e1067/e1068 from renting. BOUND / retry waiters still occupy
+        so oldest-first bind capping stays intact.
+        """
+        if item.state is ItemState.BOUND:
+            return True
+        if item.state in RENTED_STATES:
+            return bool(item.box_id)
+        if item.state is ItemState.RETRY_WAIT:
+            return True
+        if item.state is ItemState.FAILED and item.attempt <= self.config.max_attempts:
+            return True
+        return False
+
+    def _is_rent_waiter(self, item: ItemRecord) -> bool:
+        """Oldest-first rent queue: bound / renting-without-box / retryable waiters."""
+        if item.state is ItemState.BOUND:
+            return True
+        if item.state is ItemState.RENTING and not item.box_id:
+            return True
+        if item.state is ItemState.RETRY_WAIT:
+            return True
+        if item.state is ItemState.FAILED and item.attempt <= self.config.max_attempts:
+            return True
+        return False
+
+    def _has_older_rent_waiter(self, item: ItemRecord) -> bool:
+        waiters = [i for i in self.items if self._is_rent_waiter(i)]
+        waiters.sort(key=lambda i: (i.registration_index, i.epoch, i.item_id))
+        for w in waiters:
+            if w.item_id == item.item_id:
+                return False
+            return True
+        return False
+
+    @staticmethod
+    def _is_price_rent_error(exc: BaseException) -> bool:
+        msg = str(exc).lower()
+        return (
+            'ceiling' in msg
+            or 'above ceiling' in msg
+            or 'no eligible b300' in msg
+            or 'no b300 offer' in msg
+        )
+
+    def _rent_on_demand(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        if item.state is ItemState.BOUND:
+            # Stale-head: TRAINING-JOB checkpoint must equal current head — else
+            # skip with no rental (item trained against an obsolete head).
+            if self.current_head:
+                job_ck = training_job_checkpoint(int(item.epoch))
+                if job_ck and job_ck != self.current_head:
+                    meta = dict(item.meta or {}, stale_head_skip=True,
+                                job_checkpoint=job_ck, current_head=self.current_head)
+                    skipped = apply_transition(
+                        item, ItemState.NO_DECISION, reason='stale-head-skip',
+                        updates={
+                            'decision': 'no_decision', 'paid': False,
+                            'result_stored': False, 'meta': meta,
+                        },
+                    )
+                    return skipped, 'stale-head-skip'
+            if self._has_older_rent_waiter(item):
+                return item, 'rent-wait-older'
+            if not self.rent.can_rent(queued_bound_waiting=1):
+                return item, 'cap-wait'
+            renting = apply_transition(item, ItemState.RENTING, reason='rent-start')
+        elif item.state is ItemState.RENTING and not item.box_id:
+            if self._has_older_rent_waiter(item):
+                return item, 'rent-wait-older'
+            if not self.rent.can_rent(queued_bound_waiting=1):
+                return item, 'cap-wait'
+            renting = item
+        else:
+            raise TransitionError('rent requires BOUND or RENTING-without-box')
+        try:
+            out = self.rent.rent(item_id=renting.item_id, epoch=renting.epoch, attempt=renting.attempt)
+        except (RentError, AssertionError, RuntimeError, ValueError, TypeError) as exc:
+            # Per-item catch: a bad rent name/cap/offer must not crash the tick loop.
+            # Price / offer-ceiling failures: stay RENTING without a box, do not
+            # burn attempts, and keep the slot so newer items cannot jump ahead.
+            if self._is_price_rent_error(exc):
+                renting.last_error = 'rent:%s' % str(exc)[:240]
+                meta = dict(renting.meta or {})
+                meta['rent_price_wait'] = True
+                meta['rent_price_error'] = str(exc)[:200]
+                renting.meta = meta
+                return renting, 'rent-price-wait'
+            failed = apply_transition(
+                renting, ItemState.FAILED, reason='rent-error',
+                updates={'last_error': 'rent:%s' % str(exc)[:240]},
+            )
+            return failed, 'rent-error'
+        if not out.get('auto_backup_disabled', True) and self.config.disable_lium_auto_backup:
+            raise RentError('lium auto-backup must be disabled')
+        meta = dict(renting.meta or {})
+        gpu = out.get('gpu') or out.get('gpu_model') or out.get('gpu_name')
+        if gpu:
+            meta['train_gpu'] = str(gpu)
+            meta['eval_gpu'] = str(gpu)  # same box trains then probes
+        # Persist the full pe_rent dict so pe_lane.serve/run_probe get a real pod handle.
+        meta['pod'] = {
+            k: out.get(k) for k in (
+                'id', 'box_id', 'name', 'ip', 'port', 'ssh_port', 'huid', 'gpu',
+                'price_h', 'price_usd_h', 'price_per_hour', 'ssh_command',
+                'executor', 'tier', 'offer_type', 'type', 'market',
+            ) if out.get(k) is not None
+        }
+        meta['pod']['id'] = meta['pod'].get('id') or out.get('box_id')
+        # Record Lium tier (spot/secure); do not change selection.
+        tier = (
+            out.get('tier') or out.get('offer_type') or out.get('type')
+            or out.get('market') or meta['pod'].get('tier')
+        )
+        if tier:
+            meta['lium_tier'] = str(tier).lower()
+        provisioned = apply_transition(
+            renting, ItemState.PROVISIONING, reason='rented',
+            updates={
+                'box_id': str(out['box_id']),
+                'box_name': out.get('name'),
+                'meta': meta,
+            },
+        )
+        return provisioned, 'rented'
+
+
+    def _persist(self, item: ItemRecord) -> None:
+        if self.durable_save_fn is not None:
+            try:
+                self.durable_save_fn(item)
+            except Exception:
+                pass
+
+    def _worker_result_path(self, item_id: str) -> Path:
+        return pit_state_root() / 'items' / ('%s.worker-result.json' % item_id)
+
+    def _save_worker_result(self, item_id: str, payload: Mapping[str, Any]) -> Path:
+        """Atomically persist finished train+eval before advancing to decided."""
+        path = self._worker_result_path(item_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc = dict(payload)
+        item = doc.get('item')
+        if isinstance(item, ItemRecord):
+            doc['item'] = item_to_dict(item)
+        tmp = path.with_name('.%s.%d.tmp' % (path.name, os.getpid()))
+        tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+        return path
+
+    def _load_worker_result(self, item_id: str) -> Optional[dict]:
+        path = self._worker_result_path(item_id)
+        try:
+            raw = json.loads(path.read_text())
+        except Exception:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        item_raw = raw.get('item')
+        if isinstance(item_raw, dict):
+            raw = dict(raw)
+            raw['item'] = item_from_dict(item_raw)
+        return raw
+
+    def _run_box_async(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        """Start one worker thread per item (up to cap); durable so restarts re-adopt.
+
+        Scripted / non-host lanes stay synchronous so unit tests remain deterministic.
+        """
+        if not self.lane.require_host and self.lane.host_run_probe is None:
+            return self._run_box(item)
+        with self._worker_lock:
+            existing = self._workers.get(item.item_id)
+            if existing is not None and existing.is_alive():
+                return item, 'box-worker-running'
+            done = self._worker_out.pop(item.item_id, None)
+        if done is not None:
+            return self._apply_worker_result(item, done)
+        disk = self._load_worker_result(item.item_id)
+        if disk is not None:
+            return self._apply_worker_result(item, disk)
+        # Snapshot stays PROVISIONING for BoxRunner; controller view moves to TRAINING.
+        snapshot = item
+        working = apply_transition(item, ItemState.TRAINING, reason='box-worker-start')
+        working.meta = dict(working.meta or {}, worker_started_at=self.now_fn(), worker_box_id=working.box_id)
+        self._persist(working)
+
+        def _target(snap: ItemRecord) -> None:
+            try:
+                # BoxRunner requires PROVISIONING at entry.
+                if snap.state is not ItemState.PROVISIONING:
+                    snap = apply_transition(snap, ItemState.PROVISIONING, reason='worker-entry')
+                updated, note = self._run_box(snap)
+                payload = dict(ok=True, item=updated, note=note)
+                # Persist BEFORE in-memory handoff so a restart never re-runs train+probe.
+                try:
+                    self._save_worker_result(snap.item_id, payload)
+                except Exception as persist_exc:
+                    payload = dict(
+                        ok=False,
+                        error='worker-result-persist:%s' % str(persist_exc)[:200],
+                        item_id=snap.item_id,
+                    )
+            except Exception as exc:
+                payload = dict(ok=False, error=str(exc)[:400], item_id=snap.item_id)
+            with self._worker_lock:
+                self._worker_out[snap.item_id] = payload
+                self._workers.pop(snap.item_id, None)
+
+        thr = threading.Thread(
+            target=_target, args=(snapshot,),
+            name='pit-box-%s' % working.item_id[:12], daemon=True,
+        )
+        with self._worker_lock:
+            self._workers[working.item_id] = thr
+        thr.start()
+        return working, 'box-worker-started'
+
+    def _poll_box_worker(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        with self._worker_lock:
+            thr = self._workers.get(item.item_id)
+            done = self._worker_out.pop(item.item_id, None)
+        if done is not None:
+            return self._apply_worker_result(item, done)
+        if thr is not None and thr.is_alive():
+            return item, 'box-worker-running'
+        disk = self._load_worker_result(item.item_id)
+        if disk is not None:
+            return self._apply_worker_result(item, disk)
+        # No live worker and no durable result after restart: re-adopt the box
+        # and re-run train+probe.
+        if item.box_id and (item.meta or {}).get('pod'):
+            meta = dict(item.meta or {})
+            meta.pop('probe_bundle', None)
+            item.meta = meta
+            item.sealed = False
+            item.result_stored = False
+            item.candidate_id = None
+            if item.state is not ItemState.PROVISIONING:
+                try:
+                    item = apply_transition(item, ItemState.PROVISIONING, reason='readopt-worker')
+                except TransitionError:
+                    # Force via snapshot fields when mid-pipeline state can't step back.
+                    item.state = ItemState.PROVISIONING
+            return self._run_box_async(item)
+        return item, 'box-worker-wait'
+
+    @staticmethod
+    def _lium_row_unreachable(row: Mapping[str, Any]) -> bool:
+        """Lium 'Node is not reachable' ⇒ treat as box lost."""
+        blob = ' '.join(
+            str(row.get(k) or '')
+            for k in ('status', 'state', 'message', 'error', 'note', 'detail')
+        ).lower()
+        return 'node is not reachable' in blob or 'not reachable' in blob
+
+    def _box_still_in_lium(self, item: ItemRecord) -> bool:
+        """True when the item's box is still visible/reachable in lium."""
+        if not item.box_id:
+            return False
+        if self.rent.list_pods is None:
+            # No listing hook: treat pod meta as still live so we retry rather than
+            # release a potentially billing box after a transient SSH blip.
+            return bool((item.meta or {}).get('pod'))
+        try:
+            rows = list(self.rent.list_pods() or [])
+        except Exception as exc:
+            if 'node is not reachable' in str(exc).lower():
+                return False
+            return True
+        box_id = str(item.box_id)
+        box_name = str(item.box_name or '')
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            bid = str(row.get('id') or row.get('box_id') or '')
+            name = str(row.get('name') or row.get('pod_name') or '')
+            matched = (
+                (bid and bid == box_id)
+                or (name and (name == box_id or (box_name and name == box_name)))
+            )
+            if not matched:
+                continue
+            if self._lium_row_unreachable(row):
+                return False
+            return True
+        return False
+
+    @staticmethod
+    def _is_readopt_transport_error(err: str) -> bool:
+        msg = (err or '').lower()
+        return any(
+            tok in msg
+            for tok in (
+                'rc=255', 'ssh', 'connection refused', 'connection reset',
+                'broken pipe', 'timed out', 'timeout', 'no route',
+                'network is unreachable', 'readopt',
+            )
+        )
+
+    @staticmethod
+    def _is_gpu_busy_readopt_error(err: str) -> bool:
+        """GPU-busy during re-adopt must keep the box (prefer resume, never release)."""
+        msg = (err or '').lower()
+        return 'gpus not free' in msg or 'gpu-busy' in msg or 'gpus busy' in msg
+
+    def _maybe_retry_readopt(
+        self, item: ItemRecord, err: str,
+    ) -> Optional[tuple[ItemRecord, str]]:
+        """Retry a failed re-adopt a few times when the box is still in lium."""
+        soft = self._is_readopt_transport_error(err) or self._is_gpu_busy_readopt_error(err)
+        if not soft:
+            return None
+        if not item.box_id:
+            return None
+        attempts = int((item.meta or {}).get('readopt_attempts') or 0)
+        if self._is_gpu_busy_readopt_error(err):
+            return self._maybe_retry_gpu_busy(item, err)
+        if attempts >= READOPT_MAX_ATTEMPTS:
+            return None
+        if not self._box_still_in_lium(item):
+            return None
+        meta = dict(item.meta or {})
+        meta['readopt_attempts'] = attempts + 1
+        meta['last_readopt_error'] = (err or '')[:200]
+        meta.pop('probe_bundle', None)
+        item.meta = meta
+        item.sealed = False
+        item.result_stored = False
+        item.candidate_id = None
+        if item.state is not ItemState.PROVISIONING:
+            try:
+                item = apply_transition(item, ItemState.PROVISIONING, reason='readopt-retry')
+            except TransitionError:
+                item.state = ItemState.PROVISIONING
+        self._persist(item)
+        return item, 'readopt-retry'
+
+    def _maybe_retry_gpu_busy(
+        self, item: ItemRecord, err: str,
+    ) -> Optional[tuple[ItemRecord, str]]:
+        """GPU-busy: keep ≤15 min, then kill recorded job PIDs and retry once.
+
+        Still busy after that → alert + release (no unbounded billing).
+        """
+        if not self._box_still_in_lium(item):
+            return None
+        now = float(self.now_fn())
+        meta = dict(item.meta or {})
+        first_at = meta.get('gpu_busy_since')
+        if first_at is None:
+            meta['gpu_busy_since'] = now
+            first_at = now
+        meta['last_readopt_error'] = (err or '')[:200]
+        elapsed = now - float(first_at)
+        kill_retries = int(meta.get('gpu_busy_kill_retries') or 0)
+        if elapsed < float(GPU_BUSY_KEEP_S):
+            # Prefer resume: keep box, wait for eval job / free GPUs.
+            item.meta = meta
+            item.last_error = (err or '')[:300]
+            self._persist(item)
+            return item, 'readopt-gpu-busy-keep'
+        if kill_retries < int(GPU_BUSY_KILL_RETRY_MAX):
+            # Cap elapsed: kill recorded box-job PIDs / vLLM, then one more try.
+            killed = self._kill_box_job_pids(item)
+            meta['gpu_busy_kill_retries'] = kill_retries + 1
+            meta['gpu_busy_killed'] = killed
+            meta['gpu_busy_since'] = now  # reset window for the single retry
+            meta.pop('probe_bundle', None)
+            item.meta = meta
+            item.sealed = False
+            item.result_stored = False
+            if item.state is not ItemState.PROVISIONING:
+                try:
+                    item = apply_transition(item, ItemState.PROVISIONING, reason='gpu-busy-kill-retry')
+                except TransitionError:
+                    item.state = ItemState.PROVISIONING
+            self._persist(item)
+            return item, 'readopt-gpu-busy-kill-retry'
+        # Still busy after keep+kill+retry → alert and release.
+        self._alert_gpu_busy_release(item, err)
+        return None
+
+    def _kill_box_job_pids(self, item: ItemRecord) -> list:
+        """Best-effort kill of recorded box-job PIDs / vLLM on the pod.
+
+        ``meta['pod']`` is a persisted rent dict — normalize via ``_as_pod``
+        before building the box-job controller (a bare dict has no ``.run``).
+        """
+        raw = (item.meta or {}).get('pod')
+        if raw is None:
+            return []
+        try:
+            from .box import normalize_meta_pod
+            from .box_job import controller_for_pod
+            P = normalize_meta_pod(raw)
+            if P is None or not hasattr(P, 'run'):
+                return []
+            ctrl = controller_for_pod(P, item.item_id)
+            return list(ctrl.kill_stale(extra_patterns=(
+                'vllm serve', 'podctl.py serve', 'pit-box-job-eval', 'train_pit.py',
+            )))
+        except Exception:
+            return []
+
+    def _capture_box_job_log_tail(
+        self, item: ItemRecord, *, n_lines: int = 200,
+    ) -> Optional[str]:
+        """Pull last lines of box ``job.log`` before release (e1066 class)."""
+        raw = (item.meta or {}).get('pod')
+        if raw is None or not item.box_id:
+            return None
+        try:
+            from .box import normalize_meta_pod
+            from .box_job import controller_for_pod
+            P = normalize_meta_pod(raw)
+            if P is None:
+                return None
+            ctrl = controller_for_pod(P, item.item_id)
+            return ctrl.read_log_tail(n_lines=n_lines)
+        except Exception:
+            return None
+
+    def _attach_box_job_log_tail(self, item: ItemRecord) -> ItemRecord:
+        """Stamp log tail onto the item + host log before any box release."""
+        if (item.meta or {}).get('box_job_log_tail'):
+            return item
+        tail = self._capture_box_job_log_tail(item)
+        if not tail:
+            return item
+        # Cap stored size — ~200 lines, but also byte-cap for durable meta.
+        stored = tail if len(tail) <= 64_000 else tail[-64_000:]
+        meta = dict(item.meta or {})
+        meta['box_job_log_tail'] = stored
+        item.meta = meta
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'box_job_log_tail',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'lines': stored.count('\n') or (1 if stored else 0),
+                'tail': stored[-4000:],
+            }, default=str),
+            flush=True,
+        )
+        return item
+
+    def _alert_gpu_busy_release(self, item: ItemRecord, err: str) -> None:
+        doc = {
+            'ok': False,
+            'event': 'gpu_busy_release',
+            'at_unix': self.now_fn(),
+            'item_id': item.item_id,
+            'epoch': item.epoch,
+            'box_id': item.box_id,
+            'error': (err or '')[:800],
+            'gpu_busy_since': (item.meta or {}).get('gpu_busy_since'),
+            'gpu_busy_kill_retries': (item.meta or {}).get('gpu_busy_kill_retries'),
+        }
+        try:
+            root = pit_state_root()
+            root.mkdir(parents=True, exist_ok=True)
+            alert = root / 'GPU-BUSY-ALERT.json'
+            tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, alert)
+            doc['alert'] = str(alert)
+        except Exception as exc:
+            doc['alert_write_error'] = str(exc)[:200]
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'gpu_busy_release',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'error': (err or '')[:400],
+                'alert': doc.get('alert'),
+            }, default=str),
+            flush=True,
+        )
+
+    def _apply_worker_result(self, item: ItemRecord, done: Mapping[str, Any]) -> tuple[ItemRecord, str]:
+        if not done.get('ok'):
+            err = 'box-worker:%s' % (done.get('error') or 'failed')
+            # Early upload failed after retries: never start eval; keep box + alert.
+            if self._is_early_upload_error(err):
+                return self._keep_after_early_upload_fail(item, err), 'early-upload-keep'
+            retry = self._maybe_retry_readopt(item, err)
+            if retry is not None:
+                return retry
+            return self._fail_and_release(item, err), 'box-worker-fail'
+        updated = done.get('item')
+        if not isinstance(updated, ItemRecord):
+            return self._fail_and_release(item, 'box-worker:bad-result'), 'box-worker-fail'
+        # Ensure durable result exists before any decided transition consumes it.
+        try:
+            self._save_worker_result(item.item_id, done)
+        except Exception as exc:
+            return (
+                self._fail_and_release(item, 'worker-result-persist:%s' % str(exc)[:200]),
+                'box-worker-fail',
+            )
+        # Successful worker clears prior re-adopt / GPU-busy retry counters.
+        meta = dict(updated.meta or {})
+        cleared = False
+        for key in (
+            'readopt_attempts', 'last_readopt_error',
+            'gpu_busy_since', 'gpu_busy_kill_retries', 'gpu_busy_killed',
+        ):
+            if key in meta:
+                meta.pop(key, None)
+                cleared = True
+        if cleared:
+            updated.meta = meta
+        self._persist(updated)
+        return updated, str(done.get('note') or 'box-complete')
+
+
+    def _run_box(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        runner = BoxRunner(config=self.config, io=self.box_io_factory(), lane=self.lane)
+        box_key = generate_ephemeral_box_key()
+        env = build_admission_envelope(
+            box_key,
+            pod_id=item.box_id or 'unknown',
+            epoch=item.epoch,
+            binding_H=item.bound_head or '',
+            master_digest=item.bound_master_digest or '',
+            now=self.now_fn(),
+        )
+        if self.root_signer is not None:
+            cert = request_real_root_signature(env, signer=self.root_signer, issued_at_unix=self.now_fn())
+            runner.root_pubkey_hex = self.root_signer.public_key_hex()
+            runner.admit(box_key, cert, now=self.now_fn())
+        meta0 = item.meta or {}
+        # Prefer real K1 batch path from ingest. Synthetic batch-handle is only for
+        # ScriptedBoxIO tests; live HostBoxIO.train_v834e refuses it (fail closed).
+        batch_handle = (
+            meta0.get('batch_path')
+            or meta0.get('batch_handle')
+            or meta0.get('batch')
+            or ('batch-handle:%s' % item.item_id)
+        )
+        indices = None
+        if self.indices_fn is not None:
+            indices = list(self.indices_fn(int(item.epoch)))
+        elif self.lane.require_host or self.lane.host_run_probe is not None:
+            raise TransitionError('host run_probe requires indices_fn (pe_round_seed)')
+        updated, bundle = runner.run(
+            item,
+            batch_handle=str(batch_handle),
+            plan_handle=item.bound_plan_seed or 'plan-handle',
+            box_key=box_key,
+            now=self.now_fn(),
+            indices=indices,
+            train_gpu=(item.meta or {}).get('train_gpu'),
+            eval_gpu=(item.meta or {}).get('eval_gpu'),
+        )
+        meta = dict(updated.meta)
+        meta['probe_bundle'] = {
+            'item_id': bundle.item_id,
+            'candidate_id': bundle.candidate_id,
+            'bound_head': bundle.bound_head,
+            'bound_master_digest': bundle.bound_master_digest,
+            'probe_result': dict(bundle.probe_result),
+            'master_upload': dict(bundle.master_upload),
+            'train_receipt': dict(bundle.train_receipt),
+            'box_public_key_hex': bundle.box_public_key_hex,
+            'training_report': dict(bundle.training_report or {}),
+            'train_gpu': bundle.train_gpu,
+            'eval_gpu': bundle.eval_gpu,
+            'admission_digest': env.digest(),
+        }
+        receipt = bundle.train_receipt or {}
+        meta['candidate_path'] = receipt.get('candidate_path')
+        meta['candidate_on_box'] = bool(receipt.get('candidate_on_box') or receipt.get('defer_candidate_upload'))
+        meta['box_candidate_dir'] = receipt.get('box_candidate_dir')
+        meta['box_master_dir'] = receipt.get('box_master_dir')
+        meta['candidate_files'] = dict(receipt.get('candidate_files') or {})
+        meta['defer_candidate_upload'] = bool(receipt.get('defer_candidate_upload'))
+        meta['candidate_master_path'] = receipt.get('candidate_master_path')
+        meta['candidate_master_digest'] = receipt.get('candidate_master_digest')
+        meta['candidate_sha256'] = receipt.get('candidate_sha256') or bundle.candidate_id
+        meta['artifacts_uploaded'] = bool(receipt.get('artifacts_uploaded'))
+        # Early post-train upload stamps live_apply so APPLY never needs the box.
+        seed = receipt.get('live_apply_seed')
+        if isinstance(seed, Mapping) and seed.get('candidate_verified') and seed.get('master_verified'):
+            live = dict(meta.get('live_apply') or {})
+            live.update(dict(seed))
+            meta['live_apply'] = live
+            meta['candidate_on_box'] = False
+            meta['defer_candidate_upload'] = False
+        # Persist training report + GPUs on the item before any release path.
+        meta['training_report'] = dict(bundle.training_report or {})
+        meta['train_gpu'] = bundle.train_gpu
+        meta['eval_gpu'] = bundle.eval_gpu
+        updated.meta = meta
+        updated.candidate_id = bundle.candidate_id
+        updated.sealed = True
+        updated.result_stored = True
+        return updated, 'box-complete'
+
+    def _probe_bundle_from_item(self, item: ItemRecord) -> ProbeBundle:
+        meta = item.meta or {}
+        raw = meta.get('_bundle')
+        if isinstance(raw, ProbeBundle):
+            return raw
+        snap = meta.get('probe_bundle')
+        if not isinstance(snap, Mapping):
+            raise TransitionError('missing probe bundle')
+        return ProbeBundle(
+            item_id=str(snap.get('item_id') or item.item_id),
+            bound_head=str(snap.get('bound_head') or item.bound_head or ''),
+            bound_master_digest=str(snap.get('bound_master_digest') or item.bound_master_digest or ''),
+            candidate_id=str(snap.get('candidate_id') or item.candidate_id or ''),
+            probe_result=dict(snap.get('probe_result') or {}),
+            master_upload=dict(snap.get('master_upload') or {}),
+            train_receipt=dict(snap.get('train_receipt') or {}),
+            box_public_key_hex=str(snap.get('box_public_key_hex') or ''),
+            training_report=dict(snap.get('training_report') or meta.get('training_report') or {}),
+            train_gpu=snap.get('train_gpu') or meta.get('train_gpu'),
+            eval_gpu=snap.get('eval_gpu') or meta.get('eval_gpu'),
+            meta=dict(snap),
+        )
+
+    def _staleness_reference_head(self) -> str:
+        """Real chain HEAD for stale classification.
+
+        First-GREEN slot ownership is tracked separately via
+        ``_unapplied_first_green_leader``; lost_infra / waiting greens never
+        own the slot.
+        """
+        if self.current_head is None:
+            raise TransitionError('no current_head')
+        return self.current_head
+
+    def _unapplied_first_green_leader(
+        self, *, exclude_id: Optional[str] = None,
+    ) -> Optional[ItemRecord]:
+        leaders: List[tuple[float, ItemRecord]] = []
+        for rec in self.items:
+            if exclude_id and rec.item_id == exclude_id:
+                continue
+            if rec.decision != 'green_fresh' or not rec.candidate_id:
+                continue
+            if rec.state is not ItemState.DECIDED:
+                continue
+            meta = rec.meta or {}
+            if meta.get('lost_infra') or meta.get('head_advanced'):
+                continue
+            gat = meta.get('decided_at_mono')
+            if gat is None:
+                continue
+            leaders.append((float(gat), rec))
+        if not leaders:
+            return None
+        leaders.sort(key=lambda row: row[0])
+        return leaders[0][1]
+
+    def _note_lium_missing(self, item: ItemRecord) -> Dict[str, Any]:
+        """Accumulate Lium-missing samples; never declare lost on a single miss."""
+        meta = dict(item.meta or {})
+        now = float(self.now_fn())
+        first = meta.get('lium_missing_since')
+        if first is None:
+            meta['lium_missing_since'] = now
+            meta['lium_missing_count'] = 1
+            meta['lium_missing_last_at'] = now
+        else:
+            last = float(meta.get('lium_missing_last_at') or first)
+            # Require ≥5 minutes between consecutive miss samples.
+            if (now - last) >= 300.0:
+                meta['lium_missing_count'] = int(meta.get('lium_missing_count') or 1) + 1
+                meta['lium_missing_last_at'] = now
+        item.meta = meta
+        return meta
+
+    def _lium_missing_confirmed(self, item: ItemRecord) -> bool:
+        """True after ≥2 Lium misses spanning ≥5 minutes."""
+        meta = item.meta or {}
+        count = int(meta.get('lium_missing_count') or 0)
+        first = meta.get('lium_missing_since')
+        if count < 2 or first is None:
+            return False
+        return (float(self.now_fn()) - float(first)) >= 300.0
+
+    def _should_declare_lost_infra(self, item: ItemRecord) -> bool:
+        if self._candidate_upload_complete(item):
+            return False
+        decision = (item.decision or '').lower()
+        if decision not in ('green_fresh', 'green'):
+            return False
+        if (item.meta or {}).get('lost_infra') or decision == 'lost_infra':
+            return False
+        since = (item.meta or {}).get('green_apply_since') or (item.meta or {}).get('decided_at_mono')
+        timed_out = (
+            since is not None
+            and (float(self.now_fn()) - float(since) >= float(GREEN_APPLY_LOST_INFRA_S))
+        )
+        # box_id None must NOT mean lost immediately — require the 30m timer.
+        if not item.box_id:
+            return bool(timed_out)
+        # Lium unreachable / not listing: require 2 samples ≥5 min apart (no single-sample lost).
+        if not self._box_still_in_lium(item):
+            self._note_lium_missing(item)
+            if self._lium_missing_confirmed(item):
+                return True
+            return bool(timed_out)
+        # Box still listed — clear miss counters; timer alone can still fire.
+        meta = dict(item.meta or {})
+        for k in ('lium_missing_since', 'lium_missing_count', 'lium_missing_last_at'):
+            meta.pop(k, None)
+        item.meta = meta
+        return bool(timed_out)
+
+    def declare_lost_infra(
+        self,
+        item: ItemRecord,
+        *,
+        reason: str,
+        operator: str = 'host',
+    ) -> tuple[ItemRecord, str]:
+        from .lost_infra import stamp_item_lost_infra
+        now = float(self.now_fn())
+        updated = stamp_item_lost_infra(
+            item, reason=reason, now=now, operator=operator,
+        )
+        # Alert
+        try:
+            root = pit_state_root()
+            alert = root / 'LOST-INFRA.json'
+            alert.write_text(json.dumps({
+                'item_id': updated.item_id,
+                'epoch': updated.epoch,
+                'candidate_id': updated.candidate_id,
+                'bound_head': updated.bound_head,
+                'reason': reason[:400],
+                'operator': operator,
+                'at': now,
+            }, indent=1, sort_keys=True) + '\n')
+        except Exception:
+            pass
+        # Release box if held.
+        if updated.box_id:
+            try:
+                released, _note = self._release(updated, reason='lost-infra:%s' % reason[:80])
+                updated = released
+            except Exception:
+                # Force-clear box_id if release refuses unverified (should be rare).
+                meta = self._stamp_released_box_id(updated)
+                updated.meta = meta
+                updated.box_id = None
+                updated.box_name = None
+        self._persist(updated)
+        # Promote earliest same-head waiter with verified master.
+        self._promote_earliest_waiter(updated)
+        # Emit path
+        updated.meta = dict(updated.meta or {}, gate_emit_ready=True)
+        self._seal_decision_log(updated)
+        if updated.state is ItemState.DECIDED and can_transition(updated, ItemState.RELEASED):
+            updated = apply_transition(
+                updated, ItemState.RELEASED, reason='lost-infra-release',
+                updates={'box_id': None, 'box_name': None},
+            )
+            self._persist(updated)
+        return updated, 'lost-infra'
+
+    def _promote_earliest_waiter(self, lost: ItemRecord) -> Optional[ItemRecord]:
+        waiters = [
+            r for r in self.items
+            if r.decision == 'green_waiting'
+            and r.bound_head == lost.bound_head
+            and r.state is ItemState.DECIDED
+            and self._candidate_upload_complete(r)
+        ]
+        if not waiters:
+            return None
+        waiters.sort(key=lambda r: float((r.meta or {}).get('decided_at_mono') or 0))
+        w = waiters[0]
+        meta = dict(w.meta or {})
+        meta.pop('waiting_on_leader', None)
+        meta['promoted_from_waiting'] = True
+        meta['promoted_after_lost'] = lost.item_id
+        w.decision = 'green_fresh'
+        w.fresh = True
+        w.merge_blocked = False
+        w.stranded = False
+        w.paid = True
+        w.meta = meta
+        self._persist(w)
+        return w
+
+    def _release_waiters_as_stale(self, leader: ItemRecord) -> None:
+        for rec in list(self.items):
+            if rec.decision != 'green_waiting':
+                continue
+            if rec.bound_head != leader.bound_head:
+                continue
+            if rec.item_id == leader.item_id:
+                continue
+            rec.decision = 'green_stale'
+            rec.fresh = False
+            rec.merge_blocked = True
+            rec.stranded = True
+            meta = dict(rec.meta or {})
+            meta['stale_after_leader_applied'] = leader.item_id
+            meta.pop('waiting_on_leader', None)
+            rec.meta = meta
+            self._persist(rec)
+            try:
+                self._destroy_and_release(rec, reason='green_stale-after-leader')
+            except Exception:
+                pass
+
+    def ping_box_liveness(self, item: ItemRecord) -> Dict[str, Any]:
+        """TCP ping pod ip:ssh_port; append to item timeline (every ~60s)."""
+        import socket
+        meta = dict(item.meta or {})
+        last = float(meta.get('box_ping_at') or 0)
+        now = float(self.now_fn())
+        if last and (now - last) < float(BOX_PING_INTERVAL_S):
+            return dict(meta.get('box_ping_last') or {})
+        pod = meta.get('pod') or {}
+        host = pod.get('ip') or pod.get('host')
+        port = pod.get('ssh_port') or pod.get('port') or 22
+        row: Dict[str, Any] = {'at': now, 'event': 'box_ping', 'ok': False}
+        if host:
+            t0 = time.time()
+            try:
+                with socket.create_connection((str(host), int(port)), timeout=1.0):
+                    row['ok'] = True
+            except Exception as exc:
+                row['error'] = str(exc)[:200]
+            row['ms'] = round((time.time() - t0) * 1000.0, 1)
+            row['host'] = str(host)
+            row['port'] = int(port)
+        timeline = list(meta.get('timeline') or [])
+        timeline.append(row)
+        meta['timeline'] = timeline[-200:]
+        meta['box_ping_at'] = now
+        meta['box_ping_last'] = row
+        item.meta = meta
+        return row
+
+    def _record_lium_tier(self, item: ItemRecord, pod: Any) -> None:
+        meta = dict(item.meta or {})
+        row = pod if isinstance(pod, Mapping) else getattr(pod, '__dict__', {}) or {}
+        tier = (
+            row.get('tier') or row.get('offer_type') or row.get('type')
+            or row.get('market') or row.get('reliability')
+        )
+        if tier:
+            meta['lium_tier'] = str(tier).lower()
+        item.meta = meta
+
+    def _decide(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        bundle = self._probe_bundle_from_item(item)
+        if self.current_head is None:
+            raise TransitionError('no current_head')
+
+        # Backoff while waiting on live baseline — stay SCORED, keep box.
+        meta0 = dict(item.meta or {})
+        next_at = meta0.get('baseline_wait_next_at')
+        if next_at is not None and float(self.now_fn()) < float(next_at):
+            return item, 'wait-baseline'
+
+        probe = bundle.probe_result or {}
+        if probe.get('partial') or probe.get('timeout') or probe.get('incomplete'):
+            updated = apply_transition(
+                item, ItemState.NO_DECISION, reason='incomplete-probe',
+                updates={'decision': 'no_decision', 'result_stored': True, 'paid': False},
+            )
+            return updated, 'no_decision-incomplete'
+
+        try:
+            if self.config.is_shadow() and self.live_decision_lookup is not None:
+                live = self.live_decision_lookup(item.epoch)
+                shadow_out = score_epoch_shadow(
+                    epoch=item.epoch,
+                    round_id=item.bound_round_id or self.current_round_id,
+                    box_result=bundle.probe_result,
+                    box_candidate_id=bundle.candidate_id,
+                    box_head_id=item.bound_head or self.current_head,
+                    live_decision=live,
+                    host_score=self.score_fn,
+                    box_report=bundle.training_report or (item.meta or {}).get('training_report'),
+                    live_report=(live or {}).get('training_report') if isinstance(live, Mapping) else None,
+                    box_meta={
+                        'round_id': item.bound_round_id or self.current_round_id,
+                        'plan_seed': item.bound_plan_seed,
+                        'train_gpu': bundle.train_gpu or (item.meta or {}).get('train_gpu'),
+                        'eval_gpu': bundle.eval_gpu or (item.meta or {}).get('eval_gpu'),
+                        'training_report': bundle.training_report,
+                    },
+                    live_meta=dict(live or {}) if isinstance(live, Mapping) else None,
+                    train_gpu=bundle.train_gpu or (item.meta or {}).get('train_gpu'),
+                    eval_gpu=bundle.eval_gpu or (item.meta or {}).get('eval_gpu'),
+                )
+                scored = shadow_out['scored']
+                item.meta['shadow_comparison'] = shadow_out['comparison']
+                item.meta['shadow_pass'] = shadow_out.get('shadow_pass')
+                if shadow_out['candidate'] != bundle.candidate_id:
+                    raise TransitionError('shadow scorer returned wrong candidate')
+            else:
+                if self.config.is_live() and self.score_fn is None:
+                    raise TransitionError('live decide requires host score_fn')
+                scored = pit_score(
+                    epoch=item.epoch,
+                    round_id=item.bound_round_id or self.current_round_id,
+                    result=bundle.probe_result,
+                    candidate_id=bundle.candidate_id,
+                    head_id=item.bound_head or self.current_head,
+                    host_score=self.score_fn,
+                    require_host=self.config.is_live(),
+                )
+        except Exception as exc:
+            # Belt-and-suspenders: Pending must never reach tick→_fail_and_release.
+            if is_live_pending_exc(exc):
+                return self._wait_baseline(
+                    item, pending_reason=str(exc)[:400],
+                )
+            raise
+
+        if scored.get('candidate') != bundle.candidate_id:
+            raise TransitionError('scored candidate must be the box candidate')
+
+        decision = str(scored.get('decision') or '').lower()
+        if decision == 'pending':
+            return self._wait_baseline(
+                item,
+                pending_reason=str(
+                    scored.get('pending_reason') or scored.get('reason') or 'baseline not ready'
+                )[:400],
+            )
+        if decision == 'no_decision':
+            updated = apply_transition(
+                item, ItemState.NO_DECISION, reason='infra-no-decision',
+                updates={'decision': 'no_decision', 'result_stored': True, 'paid': False},
+            )
+            return updated, 'no_decision'
+
+        # Clear baseline-wait markers once we have a real decision.
+        if (item.meta or {}).get('baseline_wait_since') is not None:
+            meta_clear = dict(item.meta or {})
+            for key in (
+                'baseline_wait_since', 'baseline_wait_next_at', 'baseline_wait_note',
+                'baseline_wait_alerted', 'baseline_wait_logged_note',
+                'baseline_wait_retries',
+            ):
+                meta_clear.pop(key, None)
+            item.meta = meta_clear
+
+        # e1065 class: scored GREEN but box/candidate already gone — terminal block,
+        # never apply (same posture as blocked_incomplete_master).
+        if decision == 'green' and not self._candidate_available_for_apply(item):
+            return self._block_green_no_candidate(item, scored)
+
+        decided_at = float(self.now_fn())
+        item.meta['decided_at_mono'] = decided_at
+        staleness_head = self._staleness_reference_head()
+        updated = mark_scored_decision(
+            item,
+            current_head=staleness_head,
+            decision='green' if decision == 'green' else 'red',
+            z=scored.get('z'),
+            candidate_id=bundle.candidate_id,
+        )
+        # Hard rule: REDs earn nothing.
+        if updated.decision == 'red' and updated.paid:
+            raise TransitionError('RED must not be paid (last-10-GREEN rule)')
+
+        # Same-head waiter: an earlier unapplied first-GREEN still owns the slot.
+        if updated.decision == 'green_fresh':
+            leader = self._unapplied_first_green_leader(exclude_id=updated.item_id)
+            if (
+                leader is not None
+                and leader.bound_head
+                and leader.bound_head == updated.bound_head
+                and leader.decision in ('green_fresh', 'green')
+                and not (leader.meta or {}).get('lost_infra')
+                and not (leader.meta or {}).get('head_advanced')
+            ):
+                meta_w = dict(updated.meta or {})
+                meta_w['waiting_on_leader'] = leader.item_id
+                meta_w['decided_at_mono'] = decided_at
+                updated.decision = 'green_waiting'
+                updated.fresh = False
+                updated.merge_blocked = False
+                updated.stranded = False
+                updated.paid = True
+                updated.meta = meta_w
+            else:
+                meta_l = dict(updated.meta or {})
+                meta_l['green_apply_since'] = decided_at
+                meta_l['decided_at_mono'] = decided_at
+                updated.meta = meta_l
+
+        # Keep host score (incl. heldout) for gate emit after verify.
+        updated.meta = dict(updated.meta or {}, scored=dict(scored))
+        # Live: defer DecisionLog until finish/verify so green-time order stays
+        # consistent and unpaid greens never land in the sealed log.
+        # Shadow seals immediately (no upload verify gate).
+        if self.config.is_shadow():
+            self.decisions.append(
+                epoch=updated.epoch,
+                uid=updated.uid,
+                hotkey_prefix=updated.hotkey_prefix,
+                binding_H=updated.bound_head or '',
+                binding_round_id=updated.bound_round_id or '',
+                candidate=updated.candidate_id or '',
+                decision=updated.decision or 'red',
+                z=updated.z,
+                fresh=updated.fresh,
+                merge_blocked=updated.merge_blocked,
+                paid=updated.paid,
+                decided_at=decided_at,
+                shadow=True,
+            )
+            self._shadow_refuse_live_writes(updated)
+            if updated.decision == 'green_fresh':
+                self.current_head = updated.candidate_id
+                self.current_head_epoch = int(updated.meta.get('binding', {}).get('head_epoch') or self.current_head_epoch) + 1
+                if self.apply_hook is not None:
+                    self.apply_hook(updated)
+        else:
+            updated.meta['decision_log_pending'] = True
+        return updated, updated.decision or 'decided'
+
+    def _seal_decision_log(self, item: ItemRecord) -> None:
+        if not (item.meta or {}).get('decision_log_pending'):
+            return
+        self.decisions.append(
+            epoch=item.epoch,
+            uid=item.uid,
+            hotkey_prefix=item.hotkey_prefix,
+            binding_H=item.bound_head or '',
+            binding_round_id=item.bound_round_id or '',
+            candidate=item.candidate_id or '',
+            decision=item.decision or 'red',
+            z=item.z,
+            fresh=item.fresh,
+            merge_blocked=item.merge_blocked,
+            paid=item.paid,
+            decided_at=float((item.meta or {}).get('decided_at_mono') or self.now_fn()),
+            shadow=False,
+        )
+        item.meta = dict(item.meta or {}, decision_log_pending=False)
+
+
+    def _green_apply_backoff_s(self, item: ItemRecord) -> float:
+        n = int((item.meta or {}).get('apply_retry_count') or 0)
+        return float(min(GREEN_APPLY_BACKOFF_CAP_S, GREEN_APPLY_BACKOFF_S * (2 ** max(0, n))))
+
+    def _alert_green_apply_failure(self, item: ItemRecord, reason: str) -> Optional[Path]:
+        """Loud durable alert: never silently drop a GREEN that still owns a box."""
+        doc = {
+            'ok': False,
+            'event': 'green_apply_failure',
+            'at_unix': self.now_fn(),
+            'item_id': item.item_id,
+            'epoch': item.epoch,
+            'candidate_id': item.candidate_id,
+            'box_id': item.box_id,
+            'decision': item.decision,
+            'error': reason[:800],
+            'apply_retry_count': int((item.meta or {}).get('apply_retry_count') or 0),
+            'apply_retry_at': (item.meta or {}).get('apply_retry_at'),
+            'candidate_on_box': bool((item.meta or {}).get('candidate_on_box')),
+            'defer_candidate_upload': bool((item.meta or {}).get('defer_candidate_upload')),
+        }
+        alert: Optional[Path] = None
+        try:
+            root = pit_state_root()
+            root.mkdir(parents=True, exist_ok=True)
+            alert = root / 'GREEN-APPLY-ALERT.json'
+            tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, alert)
+        except Exception as exc:
+            doc['alert_write_error'] = str(exc)[:200]
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'green_apply_failure',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'error': reason[:400],
+                'alert': str(alert) if alert is not None else None,
+            }, default=str),
+            flush=True,
+        )
+        return alert
+
+    def _keep_green_for_retry(self, item: ItemRecord, reason: str) -> ItemRecord:
+        """Stay DECIDED with box held; schedule backoff retry. Never silent-drop."""
+        meta = dict(item.meta or {})
+        retries = int(meta.get('apply_retry_count') or 0) + 1
+        delay = float(min(
+            GREEN_APPLY_BACKOFF_CAP_S,
+            GREEN_APPLY_BACKOFF_S * (2 ** max(0, retries - 1)),
+        ))
+        now = float(self.now_fn())
+        if meta.get('green_apply_since') is None:
+            meta['green_apply_since'] = now
+        meta.update({
+            'live_apply_error': reason[:300],
+            'apply_retry_count': retries,
+            'apply_retry_at': now + delay,
+            'gate_emit_ready': False,
+            'green_apply_pending': True,
+        })
+        item.meta = meta
+        item.last_error = reason[:300]
+        self._alert_green_apply_failure(item, reason)
+        self._persist(item)
+        return item
+
+    @staticmethod
+    def _is_early_upload_error(err: str) -> bool:
+        msg = (err or '').lower()
+        return (
+            'earlyuploaderror' in msg
+            or 'early upload' in msg
+            or 'early-upload' in msg
+        )
+
+    def _keep_after_early_upload_fail(self, item: ItemRecord, reason: str) -> ItemRecord:
+        """Fail-closed: early upload died → do not eval, keep box, durable alert."""
+        meta = dict(item.meta or {})
+        meta.update({
+            'early_upload_failed': True,
+            'early_upload_error': reason[:400],
+            'defer_eval': True,
+            'gate_emit_ready': False,
+        })
+        item.meta = meta
+        item.last_error = reason[:300]
+        # Loud alert (reuse GREEN-APPLY channel + dedicated event).
+        try:
+            # Prefer PIT_STATE directly so a disagreeing PE_STATE cannot silence the alert.
+            root = Path(os.environ['PIT_STATE']) if os.environ.get('PIT_STATE') else pit_state_root()
+            root.mkdir(parents=True, exist_ok=True)
+            alert = root / 'EARLY-UPLOAD-ALERT.json'
+            doc = {
+                'ok': False,
+                'event': 'early_upload_failed',
+                'at_unix': self.now_fn(),
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'candidate_id': item.candidate_id,
+                'error': reason[:800],
+                'note': 'keep box; refuse eval until upload succeeds',
+            }
+            tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, alert)
+        except Exception as exc:
+            print(
+                json.dumps({
+                    'component': 'pit-controller',
+                    'level': 'error',
+                    'event': 'early_upload_alert_write_failed',
+                    'error': str(exc)[:200],
+                }, default=str),
+                flush=True,
+            )
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'early_upload_failed',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'error': reason[:400],
+                'note': 'keeping box — eval not started',
+            }, default=str),
+            flush=True,
+        )
+        self._persist(item)
+        return item
+
+    def _candidate_upload_complete(self, item: ItemRecord) -> bool:
+        """Verified durable upload: bf16 + fp32 (pending early-upload or live).
+
+        Once ``live_apply`` stamps candidate_verified + master_verified and
+        master_complete is not False, the upload is durable — do NOT also
+        require the public master index (pending seeds / fixture skips /
+        green_waiting promote all stamp verified before promote).
+        """
+        apply = (item.meta or {}).get('live_apply') or {}
+        if not (apply.get('candidate_verified') and apply.get('master_verified')):
+            return False
+        if apply.get('master_complete') is False:
+            return False
+        return True
+
+    def _candidate_uploaded(self, item: ItemRecord) -> bool:
+        return self._candidate_upload_complete(item)
+
+    def _box_still_active(self, item: ItemRecord) -> bool:
+        """True only when box_id is in the rent ledger AND still listed in lium."""
+        if not item.box_id:
+            return False
+        if item.box_id not in self.rent.ledger.active:
+            return False
+        return self._box_still_in_lium(item)
+
+    def _candidate_available_for_apply(self, item: ItemRecord) -> bool:
+        """True when C can be applied: active live box, or verified complete upload.
+
+        A stale ``box_id`` left after release must NOT count — e1065/e1066 still
+        carried released ids and would have DECIDED GREEN against a destroyed C.
+        """
+        if self._candidate_upload_complete(item):
+            return True
+        return self._box_still_active(item)
+
+    def _stamp_released_box_id(self, item: ItemRecord, meta: Optional[dict] = None) -> dict:
+        """Move box_id → meta.released_box_id for audit; return updated meta."""
+        out = dict(meta if meta is not None else (item.meta or {}))
+        if item.box_id:
+            out['released_box_id'] = item.box_id
+            if item.box_name:
+                out['released_box_name'] = item.box_name
+        return out
+
+    def migrate_stale_box_ids(self) -> list[str]:
+        """Startup: box_id not in rent.ledger.active → released_box_id (clear box_id)."""
+        moved: list[str] = []
+        active = set(self.rent.ledger.active.keys()) if self.rent.ledger is not None else set()
+        for item in self.items:
+            if not item.box_id:
+                continue
+            bid = str(item.box_id)
+            if bid in active:
+                continue
+            meta = self._stamp_released_box_id(item)
+            meta['stale_box_migrated_at'] = float(self.now_fn())
+            item.meta = meta
+            item.box_id = None
+            item.box_name = None
+            self._persist(item)
+            moved.append(bid)
+        return moved
+
+    def _must_keep_unuploaded_candidate(self, item: ItemRecord) -> bool:
+        """After a probe result, never release a box whose candidate isn't uploaded.
+
+        DECIDED is handled by the green-keep / destroy paths in ``_fail_and_release``.
+        """
+        if item.state is ItemState.DECIDED:
+            return False
+        if item.state not in (ItemState.RESULT, ItemState.SCORED) and not item.result_stored:
+            return False
+        return not self._candidate_uploaded(item)
+
+    def _wait_baseline(
+        self, item: ItemRecord, *, pending_reason: str,
+    ) -> tuple[ItemRecord, str]:
+        """Stay SCORED; keep box + candidate; retry score with backoff; alert after 2h.
+
+        After ``BASELINE_WAIT_RELEASE_S`` (45m), upload C if needed then release the
+        box (score later from the saved result). Never release an unuploaded C.
+        """
+        now = float(self.now_fn())
+        meta = dict(item.meta or {})
+        first = meta.get('baseline_wait_since')
+        note = (pending_reason or 'baseline not ready')[:400]
+        retries = int(meta.get('baseline_wait_retries') or 0)
+        if first is None:
+            meta['baseline_wait_since'] = now
+            first = now
+            retries = 0
+        else:
+            retries += 1
+        delay = float(min(
+            BASELINE_WAIT_BACKOFF_CAP_S,
+            BASELINE_WAIT_BACKOFF_S * (2 ** max(0, retries - 1)),
+        ))
+        meta['baseline_wait_retries'] = retries
+        meta['baseline_wait_next_at'] = now + delay
+        meta['baseline_wait_note'] = note
+        # Log once per state change (not every tick).
+        logged = meta.get('baseline_wait_logged_note')
+        if logged != note:
+            meta['baseline_wait_logged_note'] = note
+            print(
+                json.dumps({
+                    'component': 'pit-controller',
+                    'level': 'warning',
+                    'event': 'wait_baseline',
+                    'item_id': item.item_id,
+                    'epoch': item.epoch,
+                    'box_id': item.box_id,
+                    'note': note,
+                    'waited_s': round(now - float(first), 1),
+                    'next_at': meta['baseline_wait_next_at'],
+                }, default=str),
+                flush=True,
+            )
+        elapsed = now - float(first)
+        if elapsed >= float(BASELINE_WAIT_ALERT_S) and not meta.get('baseline_wait_alerted'):
+            self._alert_baseline_wait(item, elapsed_s=elapsed, note=note)
+            meta['baseline_wait_alerted'] = True
+        item.meta = meta
+        item.last_error = 'wait-baseline:%s' % note[:200]
+        # Ensure we remain SCORED so ticks keep calling _decide.
+        if item.state is ItemState.RESULT and can_transition(item, ItemState.SCORED):
+            item = apply_transition(
+                item, ItemState.SCORED, reason='wait-baseline',
+                updates={'result_stored': True, 'meta': dict(item.meta)},
+            )
+        # Cap billing: after 45m, upload then release the box (unless already done).
+        if (
+            elapsed >= float(BASELINE_WAIT_RELEASE_S)
+            and not (item.meta or {}).get('baseline_wait_box_released')
+            and item.box_id
+        ):
+            self._persist(item)
+            return self._release_after_baseline_wait(item, note=note)
+        self._persist(item)
+        return item, 'wait-baseline'
+
+    def _ensure_candidate_uploaded(self, item: ItemRecord) -> ItemRecord:
+        """Upload bf16 + full fp32 shards via live applicator; stamp live_apply."""
+        if self._candidate_upload_complete(item):
+            return item
+        app = self.live_applicator
+        if app is None or not hasattr(app, 'upload_candidate_artifacts'):
+            raise RuntimeError('no live applicator upload_candidate_artifacts')
+        stamped = dict(app.upload_candidate_artifacts(item) or {})
+        meta = dict(item.meta or {})
+        live = dict(meta.get('live_apply') or {})
+        live.update(stamped)
+        meta['live_apply'] = live
+        item.meta = meta
+        self._persist(item)
+        if not self._candidate_upload_complete(item):
+            raise RuntimeError('candidate upload incomplete after upload_candidate_artifacts')
+        return item
+
+    def _release_box_keep_scored(
+        self, item: ItemRecord, *, reason: str, note: str = '',
+    ) -> tuple[ItemRecord, str]:
+        """Release rental after candidate is durably uploaded; stay SCORED for later score."""
+        meta = self._stamp_released_box_id(item)
+        meta['baseline_box_released_at'] = float(self.now_fn())
+        meta['baseline_box_released_reason'] = reason
+        meta['baseline_box_released_note'] = (note or '')[:400]
+        meta['baseline_wait_box_released'] = True
+        bid = item.box_id
+        if bid and bid in self.rent.ledger.active:
+            try:
+                self.rent.release(bid, reason=reason)
+            except Exception:
+                if bid in self.rent.ledger.active:
+                    self.rent.ledger.release(
+                        bid, reason='force-%s' % reason, at=self.now_fn(),
+                    )
+        item.meta = meta
+        item.box_id = None
+        item.box_name = None
+        item.last_error = 'wait-baseline-box-released:%s' % reason[:120]
+        self._persist(item)
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'warning',
+                'event': 'baseline_wait_box_released',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'released_box_id': (item.meta or {}).get('released_box_id'),
+                'reason': reason,
+                'note': (note or '')[:200],
+            }, default=str),
+            flush=True,
+        )
+        return item, 'wait-baseline-box-released'
+
+    def _release_after_baseline_wait(
+        self, item: ItemRecord, *, note: str,
+    ) -> tuple[ItemRecord, str]:
+        """45m cap: upload C if needed, then release box; never release unuploaded C."""
+        if self._candidate_upload_complete(item):
+            return self._release_box_keep_scored(
+                item, reason='baseline-wait-cap-uploaded', note=note,
+            )
+        try:
+            item = self._ensure_candidate_uploaded(item)
+        except Exception as exc:
+            meta = dict(item.meta or {})
+            meta['baseline_wait_upload_error'] = str(exc)[:300]
+            if not meta.get('baseline_wait_release_alerted'):
+                self._alert_baseline_wait(
+                    item,
+                    elapsed_s=float(self.now_fn()) - float(
+                        meta.get('baseline_wait_since') or self.now_fn()
+                    ),
+                    note='upload-before-release-failed:%s' % str(exc)[:200],
+                )
+                meta['baseline_wait_release_alerted'] = True
+            item.meta = meta
+            item.last_error = 'wait-baseline-upload-failed:%s' % str(exc)[:200]
+            self._persist(item)
+            return item, 'wait-baseline-upload-failed'
+        if not self._candidate_upload_complete(item):
+            # Fail closed: never release an unuploaded candidate.
+            return item, 'wait-baseline-keep-unuploaded'
+        return self._release_box_keep_scored(
+            item, reason='baseline-wait-cap-uploaded-after-put', note=note,
+        )
+
+    def _alert_baseline_wait(
+        self, item: ItemRecord, *, elapsed_s: float, note: str,
+    ) -> None:
+        doc = {
+            'ok': False,
+            'event': 'baseline_wait_timeout',
+            'at_unix': self.now_fn(),
+            'item_id': item.item_id,
+            'epoch': item.epoch,
+            'box_id': item.box_id,
+            'candidate_id': item.candidate_id,
+            'elapsed_s': round(float(elapsed_s), 1),
+            'note': note[:800],
+        }
+        try:
+            root = pit_state_root()
+            root.mkdir(parents=True, exist_ok=True)
+            alert = root / 'BASELINE-WAIT-ALERT.json'
+            tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, alert)
+            doc['alert'] = str(alert)
+        except Exception as exc:
+            doc['alert_write_error'] = str(exc)[:200]
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'baseline_wait_timeout',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'elapsed_s': round(float(elapsed_s), 1),
+                'alert': doc.get('alert'),
+            }, default=str),
+            flush=True,
+        )
+
+    def _keep_after_result_error(
+        self, item: ItemRecord, exc: BaseException,
+    ) -> ItemRecord:
+        """Keep box (if any) + candidate after post-result errors; never silent release."""
+        if is_live_pending_exc(exc):
+            kept, _note = self._wait_baseline(item, pending_reason=str(exc)[:400])
+            return kept
+        reason = '%s:%s' % (type(exc).__name__, str(exc)[:300])
+        meta = dict(item.meta or {})
+        meta['post_result_error'] = reason
+        meta['post_result_keep'] = True
+        meta['post_result_keep_note'] = reason[:200]
+        if item.state is ItemState.RESULT and can_transition(item, ItemState.SCORED):
+            item = apply_transition(
+                item, ItemState.SCORED, reason='post-result-keep',
+                updates={'result_stored': True},
+            )
+        item.meta = meta
+        item.last_error = reason[:300]
+        # Alert once per distinct error string.
+        if meta.get('post_result_alerted_for') != reason[:200]:
+            meta['post_result_alerted_for'] = reason[:200]
+            item.meta = meta
+            self._alert_post_result_keep(item, reason)
+        self._persist(item)
+        return item
+
+    def _alert_post_result_keep(self, item: ItemRecord, reason: str) -> None:
+        doc = {
+            'ok': False,
+            'event': 'post_result_keep',
+            'at_unix': self.now_fn(),
+            'item_id': item.item_id,
+            'epoch': item.epoch,
+            'box_id': item.box_id,
+            'candidate_id': item.candidate_id,
+            'state': item.state.value,
+            'error': reason[:800],
+        }
+        try:
+            root = pit_state_root()
+            root.mkdir(parents=True, exist_ok=True)
+            alert = root / 'POST-RESULT-KEEP-ALERT.json'
+            tmp = alert.with_name('.%s.%d.tmp' % (alert.name, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True, default=str) + '\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, alert)
+            doc['alert'] = str(alert)
+        except Exception as exc:
+            doc['alert_write_error'] = str(exc)[:200]
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'post_result_keep',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'box_id': item.box_id,
+                'error': reason[:400],
+                'alert': doc.get('alert'),
+            }, default=str),
+            flush=True,
+        )
+
+    def _block_green_no_candidate(
+        self, item: ItemRecord, scored: Mapping[str, Any],
+    ) -> tuple[ItemRecord, str]:
+        """GREEN but candidate gone (e1065): terminal blocked, never apply.
+
+        Sets ``gate_emit_ready`` so run_host writes DECISION + PIT-RESULT with
+        ``settlement=pending_operator`` (frees lifecycle pending; no payout/HEAD).
+        """
+        meta = dict(item.meta or {})
+        scored_doc = dict(scored)
+        meta['scored'] = scored_doc
+        meta['blocked'] = 'no_candidate'
+        meta['blocked_like'] = 'blocked_incomplete_master'
+        meta['gate_emit_ready'] = True
+        meta['green_apply_pending'] = False
+        meta['settlement'] = 'pending_operator'
+        for key in (
+            'baseline_wait_since', 'baseline_wait_next_at', 'baseline_wait_note',
+            'baseline_wait_alerted', 'baseline_wait_logged_note', 'baseline_wait_retries',
+        ):
+            meta.pop(key, None)
+        z_val = scored_doc.get('z')
+        if z_val is None:
+            z_val = (scored_doc.get('evaluated') or {}).get('z')
+        if z_val is None:
+            z_val = item.z
+        updated = apply_transition(
+            item, ItemState.NO_DECISION, reason='green-no-candidate',
+            updates={
+                'decision': 'blocked_no_candidate',
+                'paid': False,
+                'result_stored': True,
+                'fresh': False,
+                'merge_blocked': False,
+                'z': float(z_val) if z_val is not None else None,
+                'meta': meta,
+            },
+        )
+        print(
+            json.dumps({
+                'component': 'pit-controller',
+                'level': 'error',
+                'event': 'blocked_no_candidate',
+                'item_id': item.item_id,
+                'epoch': item.epoch,
+                'candidate_id': item.candidate_id,
+                'z': updated.z,
+                'note': (
+                    'GREEN with no box/candidate — terminal block; emit DECISION/'
+                    'PIT-RESULT settlement=pending_operator; never apply'
+                ),
+            }, default=str),
+            flush=True,
+        )
+        self._persist(updated)
+        return updated, 'blocked-no-candidate'
+
+    def _drive_pending_head(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        """Drive pending → APPLY ready → record_applied for a queued GREEN.
+
+        ``head_advanced`` / box release only after HEAD-CHAIN append is verified.
+        Incomplete fp32 master index blocks apply and keeps the box.
+        """
+        cand = item.candidate_id or ''
+        if not cand or not master_index_is_complete(cand):
+            kept = self._keep_green_for_retry(
+                item, 'incomplete-fp32-master:refuse-head-apply',
+            )
+            # Keep gate_emit_ready if DECISION already landed; still block HEAD.
+            if ((item.meta or {}).get('live_apply') or {}).get('candidate_verified'):
+                kept.meta = dict(kept.meta or {}, gate_emit_ready=True, green_apply_pending=True)
+                self._persist(kept)
+            return kept, 'green-master-incomplete'
+
+        def _finalize_advanced() -> tuple[ItemRecord, str]:
+            item.meta = dict(item.meta or {})
+            item.meta.pop('green_apply_pending', None)
+            item.meta['head_advanced'] = True
+            live = dict(item.meta.get('live_apply') or {})
+            live['head_advanced'] = True
+            item.meta['live_apply'] = live
+            self.current_head = cand
+            self.current_head_epoch = int(self.current_head_epoch) + 1
+            if self.on_green_fresh is not None:
+                self.on_green_fresh(item)
+            try:
+                self._release_waiters_as_stale(item)
+            except Exception:
+                pass
+            self._persist(item)
+            return self._release(item, reason='green_fresh-applied')
+
+        if confirm_head_advanced(cand):
+            return _finalize_advanced()
+        try:
+            drive_cutover_apply(alert_fn=cutover_apply_alert)
+        except Exception as exc:
+            if confirm_head_advanced(cand):
+                return _finalize_advanced()
+            kept = self._keep_green_for_retry(
+                item, 'cutover-apply:%s' % str(exc)[:200],
+            )
+            return kept, 'green-head-drive-error'
+        if not confirm_head_advanced(cand):
+            # Lifecycle may still need an epoch tick to offer/consume APPLY ready.
+            item.meta = dict(item.meta or {}, green_apply_pending=True, head_advanced=False)
+            self._persist(item)
+            return item, 'green-head-pending'
+        return _finalize_advanced()
+
+    def _finish_decision(self, item: ItemRecord) -> tuple[ItemRecord, str]:
+        # Recovery (e1055): decided + box already gone + non-GREEN decision on disk.
+        # Still mark gate_emit_ready and move to RELEASED so turns/PIT-RESULT finish.
+        # Never take this path for unverified GREEN — that would drop C on the box.
+        decision = (item.decision or '').lower()
+        if decision == 'lost_infra':
+            item.meta = dict(item.meta or {}, gate_emit_ready=True)
+            self._seal_decision_log(item)
+            return self._destroy_and_release(item, reason='lost_infra')
+        if decision == 'green_waiting':
+            if item.box_id:
+                try:
+                    self.ping_box_liveness(item)
+                except Exception:
+                    pass
+            # Wait until promoted (leader lost_infra) or demoted stale (leader applied).
+            return item, 'green-waiting'
+        if decision in ('green_fresh', 'green') and item.box_id:
+            try:
+                self.ping_box_liveness(item)
+            except Exception:
+                pass
+            # Lium unreachable / gone: apply from upload if complete; else wait for
+            # confirmed multi-sample miss or 30m timer (never single-sample lost).
+            if not self._box_still_in_lium(item):
+                if self._candidate_upload_complete(item):
+                    meta = self._stamp_released_box_id(item)
+                    item.meta = meta
+                    item.box_id = None
+                    item.box_name = None
+                    self._persist(item)
+                elif self._should_declare_lost_infra(item):
+                    return self.declare_lost_infra(
+                        item, reason='lium-unreachable-no-upload',
+                    )
+                else:
+                    self._note_lium_missing(item)
+                    self._persist(item)
+                    return item, 'lium-missing-sample'
+            elif self._should_declare_lost_infra(item):
+                return self.declare_lost_infra(
+                    item, reason='green-apply-timeout-no-upload',
+                )
+        if (
+            self.config.is_live()
+            and item.decision
+            and not item.box_id
+            and decision not in ('green_fresh', 'green', 'green_waiting')
+            and (item.meta or {}).get('decision_emitted') is not True
+        ):
+            item.meta = dict(item.meta or {}, gate_emit_ready=True)
+            self._seal_decision_log(item)
+            if item.state is ItemState.DECIDED and can_transition(item, ItemState.RELEASED):
+                return apply_transition(
+                    item, ItemState.RELEASED, reason='post-decision-recovery',
+                    updates={'box_id': None, 'box_name': None},
+                ), 'post-decision-recovery'
+            return item, 'post-decision-recovery'
+        if decision in ('green_fresh', 'green') and not item.box_id:
+            # Uploaded C can apply from R2 without a live box (baseline-wait release).
+            if not self._candidate_upload_complete(item):
+                kept = self._keep_green_for_retry(
+                    item, 'green-missing-box:cannot-apply-without-pod',
+                )
+                return kept, 'green-apply-retry'
+        if self.config.is_live() and self.live_applicator is not None:
+            # GREEN: upload+verify before anything else depends on the box.
+            # Early post-train upload may already have stamped live_apply; this
+            # call is then a no-op. If the box dies afterward, apply still uses
+            # the durable upload (no ssh).
+            if decision in ('green_fresh', 'green') and not self._candidate_upload_complete(item):
+                try:
+                    item = self._ensure_candidate_uploaded(item)
+                except Exception as exc:
+                    kept = self._keep_green_for_retry(
+                        item, 'green-upload-before-apply:%s' % str(exc)[:200],
+                    )
+                    return kept, 'green-apply-retry'
+            retry_at = (item.meta or {}).get('apply_retry_at')
+            if (
+                decision in ('green_fresh', 'green')
+                and retry_at is not None
+                and float(retry_at) > float(self.now_fn())
+            ):
+                return item, 'green-apply-backoff'
+            # Already queued GREEN waiting on HEAD-CHAIN: drive apply_tick /
+            # reconcile without re-uploading; refuse incomplete master.
+            if (
+                decision in ('green_fresh', 'green')
+                and (item.meta or {}).get('green_apply_pending')
+                and ((item.meta or {}).get('live_apply') or {}).get('pe_apply_accepted')
+            ):
+                return self._drive_pending_head(item)
+            scored = dict((item.meta or {}).get('scored') or {'decision': item.decision})
+            try:
+                result = self.live_applicator.apply(item, scored=scored)
+            except PromoteRefused as exc:
+                # Never promote on timeout / incomplete — demote loudly.
+                item.meta = dict(item.meta or {}, live_apply_error=str(exc)[:300], gate_emit_ready=True)
+                self._alert_green_apply_failure(item, 'promote-refused:%s' % str(exc)[:200])
+                demoted = item
+                if can_transition(item, ItemState.RELEASED):
+                    demoted = apply_transition(
+                        item,
+                        ItemState.RELEASED,
+                        reason='promote-refused:%s' % str(exc)[:120],
+                        updates={
+                            'decision': 'no_decision', 'paid': False, 'fresh': None,
+                            'merge_blocked': False,
+                        },
+                    )
+                demoted.meta = dict(demoted.meta or {}, gate_emit_ready=True)
+                return self._destroy_and_release(demoted, reason='promote-refused')
+            except ApplyLiveError as exc:
+                item.meta = dict(item.meta or {}, live_apply_error=str(exc)[:300])
+                if item.decision in ('red', 'green_stale'):
+                    item.meta['gate_emit_ready'] = True
+                    self._seal_decision_log(item)
+                    return self._destroy_and_release(
+                        item, reason='apply-failed-keep-decision:%s' % str(exc)[:80],
+                    )
+                if decision in ('green_fresh', 'green'):
+                    kept = self._keep_green_for_retry(
+                        item, 'green-apply:%s' % str(exc)[:200],
+                    )
+                    return kept, 'green-apply-retry'
+                released = apply_transition(
+                    item,
+                    ItemState.RELEASED,
+                    reason='apply-failed:%s' % str(exc)[:120],
+                    updates={
+                        'decision': 'no_decision', 'paid': False, 'fresh': None,
+                        'merge_blocked': False, 'box_id': None, 'box_name': None,
+                    },
+                )
+                released.meta = dict(released.meta or {}, decision_log_pending=True, gate_emit_ready=True)
+                self._seal_decision_log(released)
+                return released, 'apply-failed'
+            item.meta['live_apply'] = result.as_dict()
+            item.meta['gate_emit_ready'] = True
+            item.meta.pop('apply_retry_at', None)
+            self._seal_decision_log(item)
+            if item.decision == 'green_fresh' and not result.head_advanced:
+                # Queued in GREENS pending; HEAD-CHAIN not yet appended. Keep the
+                # box until cutover_apply confirms record_applied (or master fix).
+                item.meta['green_apply_pending'] = True
+                item.meta['head_advanced'] = False
+                self._persist(item)
+                return item, 'green-head-pending'
+            item.meta.pop('green_apply_pending', None)
+            item.meta['head_advanced'] = bool(result.head_advanced)
+            if result.head_advanced and item.candidate_id:
+                self.current_head = item.candidate_id
+                self.current_head_epoch = int(self.current_head_epoch) + 1
+                if self.on_green_fresh is not None:
+                    self.on_green_fresh(item)
+                try:
+                    self._release_waiters_as_stale(item)
+                except Exception:
+                    pass
+            if result.destroyed_box_state or item.decision != 'green_fresh':
+                return self._destroy_and_release(item, reason=item.decision or 'decided')
+            return self._release(item, reason='green_fresh-applied')
+        # Shadow / live without applicator: release; still mark emit ready for RED.
+        item.meta = dict(item.meta or {}, gate_emit_ready=True)
+        if item.decision and item.decision != 'green_fresh':
+            return self._destroy_and_release(item, reason=item.decision)
+        return self._release(item, reason='decided')
+
+    def _unverified_green(self, item: ItemRecord) -> bool:
+        """Live GREEN whose candidate/master uploads are not yet verified.
+
+        Shadow / unit paths without a live applicator must still release.
+        """
+        if not self.config.is_live():
+            return False
+        decision = (item.decision or '').lower()
+        if decision not in ('green_fresh', 'green'):
+            return False
+        apply = (item.meta or {}).get('live_apply') or {}
+        return not (
+            apply.get('candidate_verified') and apply.get('master_verified')
+        )
+
+    def _destroy_and_release(self, item: ItemRecord, *, reason: str) -> tuple[ItemRecord, str]:
+        # Never destroy a pod that still holds the only copy of a GREEN candidate.
+        if self._unverified_green(item) and reason != 'green_fresh-applied':
+            kept = self._keep_green_for_retry(
+                item, 'refuse-destroy-unverified-green:%s' % reason[:160],
+            )
+            return kept, 'green-hold'
+        if self.destroy_box_state_fn is not None and item.box_id:
+            try:
+                self.destroy_box_state_fn(
+                    box_id=item.box_id, candidate_id=item.candidate_id, reason=reason,
+                )
+            except Exception as exc:
+                item.meta = dict(item.meta or {}, destroy_error=str(exc)[:200])
+        # RED / stale: GC private pending R2 artifacts (best-effort).
+        decision = (item.decision or '').lower()
+        if decision in ('red', 'green_stale') and item.candidate_id:
+            try:
+                from ops.parallel_eval.live.pe_artifact_upload import gc_pending_artifacts
+                gc_pending_artifacts(str(item.candidate_id))
+            except Exception:
+                pass
+        return self._release(item, reason=reason)
+
+    def _release(self, item: ItemRecord, *, reason: str) -> tuple[ItemRecord, str]:
+        if self._unverified_green(item) and reason != 'green_fresh-applied':
+            kept = self._keep_green_for_retry(
+                item, 'refuse-release-unverified-green:%s' % reason[:160],
+            )
+            return kept, 'green-hold'
+        if item.box_id and (holds_rental(item) or item.box_id):
+            # Skip rent.release when already out of the active ledger (idempotent
+            # decided-item retries must not grow history).
+            if item.box_id in self.rent.ledger.active:
+                try:
+                    self.rent.release(item.box_id, reason=reason)
+                except Exception:
+                    if item.box_id in self.rent.ledger.active:
+                        self.rent.ledger.release(
+                            item.box_id, reason='force-%s' % reason, at=self.now_fn(),
+                        )
+        meta = self._stamp_released_box_id(item)
+        if item.state is ItemState.RELEASED:
+            if item.box_id:
+                item.meta = meta
+                item.box_id = None
+                item.box_name = None
+                self._persist(item)
+            return item, 'already-released'
+        if can_transition(item, ItemState.RELEASED):
+            released = apply_transition(
+                item, ItemState.RELEASED, reason=reason,
+                updates={'box_id': None, 'box_name': None, 'meta': meta},
+            )
+            return released, 'released'
+        if item.state is ItemState.ABORTED and can_transition(item, ItemState.RELEASED):
+            return apply_transition(
+                item, ItemState.RELEASED, reason=reason,
+                updates={'box_id': None, 'box_name': None, 'meta': meta},
+            ), 'released'
+        if item.box_id:
+            item.meta = meta
+            item.box_id = None
+            item.box_name = None
+            self._persist(item)
+        return item, 'release-noop'
+
+    def _train_done_on_box(self, item: ItemRecord) -> bool:
+        """True when markers/train.done exists (or item already sealed with C)."""
+        if item.sealed and item.candidate_id and len(str(item.candidate_id)) == 64:
+            return True
+        if (item.meta or {}).get('train_done_checkpoint'):
+            return True
+        raw = (item.meta or {}).get('pod')
+        if raw is None:
+            return False
+        try:
+            from .box import normalize_meta_pod
+            from .box_job import controller_for_pod, marker_path
+            P = normalize_meta_pod(raw)
+            if P is None:
+                return False
+            ctrl = controller_for_pod(P, item.item_id)
+            st = ctrl.status()
+            if 'train' not in st.markers:
+                return False
+            raw_m = ctrl.store.read_text(marker_path(ctrl.job_dir, 'train'))
+            if raw_m:
+                try:
+                    doc = json.loads(raw_m)
+                except Exception:
+                    doc = {}
+                ck = (doc or {}).get('checkpoint') or (doc or {}).get('candidate_id')
+                if isinstance(ck, str) and len(ck) == 64:
+                    meta = dict(item.meta or {})
+                    meta['train_done_checkpoint'] = ck
+                    if not item.candidate_id:
+                        item.candidate_id = ck
+                    # Hydrate upload fields from the enriched train marker when present.
+                    for key in (
+                        'candidate_path', 'candidate_master_path', 'candidate_master_digest',
+                        'candidate_sha256', 'box_candidate_dir', 'box_master_dir',
+                        'candidate_files', 'defer_candidate_upload', 'candidate_on_box',
+                    ):
+                        if key in doc and meta.get(key) in (None, '', {}, []):
+                            meta[key] = doc[key]
+                    if not meta.get('candidate_sha256'):
+                        meta['candidate_sha256'] = ck
+                    if not meta.get('candidate_master_digest') and doc.get('candidate_master_digest'):
+                        meta['candidate_master_digest'] = doc['candidate_master_digest']
+                    item.meta = meta
+            return True
+        except Exception:
+            return bool(item.candidate_id and len(str(item.candidate_id)) == 64)
+
+    def _upload_before_release_after_train(
+        self, item: ItemRecord, *, reason: str,
+    ) -> Optional[ItemRecord]:
+        """After train.done: upload bf16+fp32 (verified) before any box release.
+
+        Returns a kept item when upload fails (never release an unuploaded C).
+        Returns None when upload succeeded (or was already complete) so release
+        may proceed.
+        """
+        if not item.box_id:
+            return None
+        if not self._train_done_on_box(item):
+            return None
+        if self._candidate_upload_complete(item):
+            return None
+        try:
+            item = self._ensure_candidate_uploaded(item)
+        except Exception as exc:
+            meta = dict(item.meta or {})
+            meta['post_train_upload_error'] = str(exc)[:400]
+            meta['post_train_upload_reason'] = (reason or '')[:200]
+            item.meta = meta
+            item.last_error = 'post-train-upload:%s' % str(exc)[:200]
+            print(
+                json.dumps({
+                    'component': 'pit-controller',
+                    'level': 'error',
+                    'event': 'post_train_upload_failed',
+                    'item_id': item.item_id,
+                    'epoch': item.epoch,
+                    'box_id': item.box_id,
+                    'error': str(exc)[:400],
+                    'note': 'keeping box — never release unuploaded post-train candidate',
+                }, default=str),
+                flush=True,
+            )
+            self._persist(item)
+            return item
+        self._persist(item)
+        return None
+
+    def _fail_and_release(self, item: ItemRecord, reason: str) -> ItemRecord:
+        """Always return an ItemRecord (never a (item, note) tuple)."""
+        if self._is_early_upload_error(reason):
+            return self._keep_after_early_upload_fail(item, reason)
+        if item.state is ItemState.DECIDED:
+            item.last_error = reason
+            decision = (item.decision or '').lower()
+            # Unverified GREEN: keep the box and retry apply — never terminal release
+            # without DECISION/PIT-RESULT (candidate may exist only on the pod).
+            if decision in ('green_fresh', 'green') and not (
+                ((item.meta or {}).get('live_apply') or {}).get('candidate_verified')
+                and ((item.meta or {}).get('live_apply') or {}).get('master_verified')
+            ):
+                return self._keep_green_for_retry(item, 'fail-keep-green:%s' % reason[:200])
+            # Post-decision failures for RED/stale/verified GREEN: clear box and
+            # surface gate_emit_ready so later ticks finish turns / PIT-RESULT.
+            if item.box_id:
+                item = self._attach_box_job_log_tail(item)
+            released, _note = self._destroy_and_release(item, reason=reason)
+            released.meta = dict(released.meta or {}, gate_emit_ready=True)
+            return released
+        # After a probe result, never release a box whose candidate isn't uploaded
+        # (Pending / scoring blips must not destroy the only copy of C).
+        if self._must_keep_unuploaded_candidate(item):
+            return self._keep_after_result_error(item, RuntimeError(reason))
+        # e1066: train/eval job can exit without a marker; copy job.log tail onto
+        # the item / host log BEFORE release so the trail survives pod teardown.
+        if item.box_id:
+            item = self._attach_box_job_log_tail(item)
+        # After train.done: upload full bf16 + fp32 shards (verified) before release.
+        kept = self._upload_before_release_after_train(item, reason=reason)
+        if kept is not None:
+            return kept
+        next_attempt = item.attempt + 1
+        if item.box_id and item.box_id in self.rent.ledger.active:
+            try:
+                self.rent.release(item.box_id, reason='fail:%s' % reason[:60])
+            except Exception:
+                if item.box_id in self.rent.ledger.active:
+                    self.rent.ledger.release(item.box_id, reason='fail-force', at=self.now_fn())
+        meta = self._stamp_released_box_id(item, dict(item.meta or {}))
+        updates = {
+            'attempt': next_attempt,
+            'last_error': reason,
+            'box_id': None,
+            'box_name': None,
+            'meta': meta,
+        }
+        if 'expected-master' in reason or 'fp32-master' in reason or 'Fp32MasterError' in reason or 'promote-refused' in reason:
+            if can_transition(item, ItemState.NO_DECISION):
+                nd = apply_transition(item, ItemState.NO_DECISION, reason=reason, updates={**updates, 'decision': 'no_decision'})
+                return apply_transition(nd, ItemState.RELEASED, reason='no_decision-release')
+        if next_attempt > self.config.max_attempts:
+            if can_transition(item, ItemState.ABORTED):
+                ab = apply_transition(item, ItemState.ABORTED, reason=reason, updates=updates)
+                return apply_transition(ab, ItemState.RELEASED, reason='aborted-release')
+            if can_transition(item, ItemState.FAILED):
+                failed = apply_transition(item, ItemState.FAILED, reason=reason, updates=updates)
+                ab = apply_transition(failed, ItemState.ABORTED, reason=reason)
+                return apply_transition(ab, ItemState.RELEASED, reason='failed-release')
+        if can_transition(item, ItemState.RETRY_WAIT):
+            return apply_transition(item, ItemState.RETRY_WAIT, reason=reason, updates=updates)
+        if can_transition(item, ItemState.FAILED):
+            failed = apply_transition(item, ItemState.FAILED, reason=reason, updates=updates)
+            return apply_transition(failed, ItemState.RETRY_WAIT, reason=reason)
+        return item
+
+    def _shadow_refuse_live_writes(self, item: ItemRecord) -> None:
+        for action in (
+            'write_decision', 'write_head_chain', 'write_weights',
+            'publish_r2_head', 'apply_green_live',
+        ):
+            try:
+                self.shadow.check_action(action)
+                raise ShadowWriteError('shadow guard failed to refuse %s' % action)
+            except ShadowWriteError:
+                pass
+        for name in ('DECISION.json', 'HEAD-CHAIN.json', 'CURRENT.json', 'WEIGHTS.json'):
+            try:
+                self.shadow.check_path(name)
+                raise ShadowWriteError('shadow guard failed to refuse path %s' % name)
+            except ShadowWriteError:
+                pass
+
+
+HostController = Controller
