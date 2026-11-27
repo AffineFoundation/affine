@@ -9,6 +9,8 @@
   checkpoint  read-only for the journal: with a stack that keeps the folded weight files on the box, upload the
               full files of the last folded head now and mark it as a checkpoint (``run`` can go on)
   round       print the summary of a closed round as a short text to paste
+  retag-irt   idle only: aim the IRT table at a known head; ``--dry-run`` writes nothing
+              (stop ``run`` first: without ``--dry-run`` this command takes over the journal)
   dedup-dryrun  offline analysis of explicit frozen batches and optional LoRA directories; writes nothing
   set-params  pin new parameters (stop ``run`` first: this command takes over the journal)
   end-round   end the open round now with no decision, when its box is dead: nobody is charged, and its
@@ -386,6 +388,43 @@ def cmd_revert_head(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_retag_irt(args: argparse.Namespace) -> int:
+    """Operator: aim IRT at a known head. Idle only; replay needs no new record."""
+    from .irt import IRTSampler
+
+    state, _, stack = read_state(args, "retag-irt")  # refusals never take over the journal
+    if state.round is not None:
+        raise V2Error(f"round {state.round.round_id} is open; retag IRT only between rounds")
+    target = resolve_head(state, args.to)
+    if stack is None or not isinstance(stack.sampler, IRTSampler):
+        raise ConfigError("retag-irt needs a stack with an IRT sampler")
+    current = stack.sampler.public_snapshot()
+    if target not in current["heads"]:
+        raise V2Error("the IRT table has no ability record for --to")
+    if args.dry_run:
+        controller = None
+    else:
+        controller, stack = open_controller(args, "retag-irt")
+    before = stack.sampler.public_snapshot()
+    snapshot_id = stack.sampler.retag(target)
+    after = stack.sampler.public_snapshot()
+    report = {
+        "dry_run": bool(args.dry_run),
+        "current": {"head_version_id": current["head_version_id"], "head_ability": current["head_ability"]},
+        "target": {"head_version_id": after["head_version_id"], "head_ability": after["head_ability"]},
+        "to_version_id": target,
+        "head_version_id": after["head_version_id"],
+        "head_ability": after["head_ability"],
+        "snapshot_id": snapshot_id,
+        "replayed_head_reverted": controller is not None and before["snapshot_id"] != current["snapshot_id"],
+    }
+    if not args.dry_run:
+        controller.retag_irt(target, now())
+        report["stored"] = stack.store.exists(layout.irt_snapshot(snapshot_id))
+    print(json.dumps(report, indent=2))
+    return 0
+
+
 def cmd_round(args: argparse.Namespace) -> int:
     state, _, stack = read_state(args, "round")
     if not args.round and not state.rounds:
@@ -685,6 +724,9 @@ def main(argv: list[str] | None = None) -> int:
     back.add_argument("--to", required=True, help="version id of a folded ancestor head (64 hex, or a unique prefix of at least 12)")
     back.add_argument("--reason", required=True, help="why the head goes back; the journal record and the head chain keep this text")
     back.add_argument("--dry-run", "--dryrun", dest="dry_run", action="store_true", help="print what would change; write nothing")
+    retag = command("retag-irt", cmd_retag_irt, stack=True)
+    retag.add_argument("--to", required=True, help="known head version id (64 hex, or a unique prefix of at least 12)")
+    retag.add_argument("--dry-run", "--dryrun", dest="dry_run", action="store_true", help="print current and target IRT tags and the would-be snapshot id; write nothing")
     force = command("force-sync", cmd_force_sync, stack=True)
     force.add_argument("--confirm-remove", type=int, metavar="N", help="apply the changes, when exactly N seats leave; without it the changes are only shown")
     args = parser.parse_args(argv)

@@ -88,6 +88,57 @@ def test_rotated_round_opens_artifacts_before_journal_and_closes_ledger(tmp_path
     assert replay.rotation_state_sha == world.controller.state.rotation_state_sha
 
 
+def test_open_retags_rotation_source_before_draw(tmp_path):
+    world, pool = rotated_world(tmp_path)
+    world.admission.upload("hk1", 1.0)
+    world.round()
+    world.register(2, 0.0)
+    target, stale_head = world.controller.state.heads[0], world.controller.state.head
+    sampler = IRTSampler(world.pool, world.params)
+    draw = sampler.draw(target, "target", 20)
+    sampler.update(target, draw, {"null": ("F" * 20,)})
+    draw = sampler.draw(stale_head, "stale", 20)
+    sampler.update(stale_head, draw, {"null": ("P" * 20,), "winner": ("P" * 20,)},
+                   new_head_version_id=stale_head.version_id, winner_lora_hash="winner")
+    stale = sampler.public_snapshot()
+    world.store.put(layout.irt_snapshot(sampler.snapshot_id()), canonical_json(stale))
+    world.controller.sampler = sampler
+    world.controller.revert_head(target.version_id, "operator restore", world.clock())
+    healed = world.controller.sampler.public_snapshot()
+    # Restart healing already changed the in-memory ID; the old stored source must not replace it at open.
+    replayed = Controller(Journal(world.root / "journal.jsonl", "replayed-retag", world.clock()), world.store,
+                          world.admission, IRTSampler(world.pool, world.params, snapshot=stale), world.params, pool=pool)
+    assert replayed.sampler.snapshot_id() == healed["snapshot_id"]
+    world.controller = replayed
+    world.controller.pool = None  # validate the live snapshot ID chosen by open without a second rotation
+    world.register(3, 0.0)
+    seen = []
+    real_open = pool.open_and_publish
+
+    def capture_open(*args, **kwargs):
+        seen.append((args, kwargs))
+        raise ConfigError("stop after checking the selected source")
+
+    pool.open_and_publish = capture_open
+    replayed.pool = pool
+    with pytest.raises(ConfigError, match="selected source"):
+        replayed.open_round(world.clock(), "rotation-retag-after-restart")
+    assert seen[0][0][1]["snapshot_id"] == healed["snapshot_id"]
+    assert seen[0][1]["retagged_source"] is True
+    assert replayed.state.round is None, "a failed pre-open must not journal ROUND_OPENED"
+
+    # The ordinary fail-safe also supplies that source before its first draw.
+    pool.open_and_publish = real_open
+    replayed.sampler = IRTSampler(world.pool, world.params, snapshot=stale)
+    tickets = replayed.open_round(world.clock(), "rotation-retag")
+    assert tickets
+    assert replayed._rotation.source_snapshot_id == healed["snapshot_id"]
+    assert tickets[0].draw.snapshot_id != stale["snapshot_id"]
+    assert world.controller.state.round.snapshot_id == tickets[0].draw.snapshot_id
+    opened = json.loads(world.store.get(layout.irt_snapshot(tickets[0].draw.snapshot_id)))
+    assert opened["head_version_id"] == target.version_id and opened["head_ability"] == healed["head_ability"]
+
+
 def test_real_publisher_restores_public_pool_objects_across_history(tmp_path):
     world, _ = rotated_world(tmp_path, rotation_rule="info", rotation_active_size=2, rotation_churn_frac=0.5)
     world.round()
