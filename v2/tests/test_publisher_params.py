@@ -269,6 +269,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "the normal quantile of 1 - a_k",
         "or when its se is 0.",
         publisher.LOCAL_INSTALL,
+        publisher.LOCAL_MINER_BOUNDS,
         publisher.LOCAL_KL_DEFAULTS,
         publisher.TRAIN_COST_EXAMPLE,
         "Worked example: cap 22,130,000 with steps=16 gives 1,383,125 tokens (integer floor).",

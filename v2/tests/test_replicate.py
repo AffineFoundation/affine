@@ -280,6 +280,13 @@ def test_the_cache_verifies_the_real_master_and_refuses_a_corrupt_one(world, tmp
 # ---- fetch ----
 
 
+def test_fetch_accepts_info_guard_contract(world, capsys):
+    world.write(params=dataclasses.replace(world.params, rotation_rule="info-guard"))
+    report = fetch(world, capsys)
+    assert report["files"] == 3 and report["base_hash"] == world.head.base_hash
+    assert replicate.Contract.load(str(world.tmp / "mining.json")).params.rotation_rule == "info-guard"
+
+
 def test_fetch_from_a_directory_checks_each_file_and_fills_the_cache_in_one_move(world, capsys):
     (world.source / "model-00001.safetensors").write_bytes(b"other weights")
     code, report = cli(capsys, "fetch", "--mining-json", str(world.tmp / "mining.json"), "--work", str(world.work), "--from", str(world.source))
@@ -843,7 +850,7 @@ def test_the_document_names_every_command_option_and_difference(world):
         argv = ["8" if word == "<N>" else word for word in argv]
         replicate.parser().parse_args(argv)  # exits on an argument the tool does not have
     for warning in (
-        "git clone https://github.com/AffineFoundation/affine", "git checkout v2", "python3.12 -m venv .venv",
+        "git clone https://github.com/AffineFoundation/affine", "git switch v2", "python3.12 -m venv .venv",
         "python -m pip install -e './v2[gpu,envs,r2]'", "tens of GB", "`master` / `master_files`",
         "max_train_token_steps = steps × tokens", "Minibatches do **not** multiply", "22,130,000", "steps=16", "1,383,125",
         "does NOT train and does NOT measure `kl_seq` or `kl_tok`", "passing file check is NOT a passing KL gate",

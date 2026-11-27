@@ -104,6 +104,13 @@ def test_changed_params_shows_left_out_at_default_fields_in_both_directions():
         assert changed_params(default, changed)[name] == {"before": old, "after": value}
 
 
+def test_public_params_accept_known_rotation_rules_and_reject_unknown_rules():
+    for rule in ("v1", "info", "info-guard"):
+        assert Params.from_public_dict(Params().to_dict() | {"rotation_rule": rule}).rotation_rule == rule
+    with pytest.raises(ConfigError, match="rotation_rule must be 'v1', 'info' or 'info-guard'"):
+        Params.from_public_dict(Params().to_dict() | {"rotation_rule": "unknown"})
+
+
 def test_params_hash_and_recipe_id_pin_every_field_and_survive_a_json_round_trip():
     base = Params()
     assert base.params_hash == Params().params_hash and base.recipe_id == Recipe().recipe_id
@@ -154,6 +161,7 @@ def test_look_sizes_end_with_every_task():
         {"looks": (0.5, 0.25, 1.0)}, {"z_bar": float("nan")}, {"cap_hit_floor": 1.5}, {"min_cover": 0.0}, {"min_scored_tasks": 1},
         {"drop_alpha": 0.0}, {"fold_every_k": 0}, {"max_output_tokens": 70000}, {"max_num_seqs": 0}, {"lease_timeout_s": 0}, {"kings_window": 0},
         {"irt_draw_rule": "middle"}, {"irt_draw_rule": ""}, {"irt_draw_rule": "Fisher"}, {"irt_draw_rule": None},
+        {"rotation_rule": "unknown"},
         {"null_samples_per_task": 0}, {"null_samples_per_task": -1}, {"null_samples_per_task": 1.5}, {"null_samples_per_task": True},
     ],
 )

@@ -8,6 +8,27 @@ This document says what you need, the commands, what is the same as on the box, 
 
 Nothing here touches the subnet. The tool reads public files. It writes only below the work directory you name. It uploads nothing and holds no key.
 
+## Batch formats and recipe ranges
+
+Valid official batch formats include `affine-batch-v3` (GRPO) and `affine-batch-v4` (ordered stages, including SFT-only). The live contract is the authority for the full version list.
+
+The following public bounds are a snapshot of the live llms.txt "What you may set" table generated 2026-11-27 18:30:00 UTC:
+
+- `train.rank`: a whole number from 8 to 64, both ends included (default 16)
+- `train.alpha`: a number from 8 to 128, both ends included (default 32)
+- `train.lora_lr`: a number from 1e-06 to 0.01, both ends included (default 1e-05)
+- `train.steps`: a whole number from 1 to 64, both ends included (default 1)
+- `recite_max_share`: 0.05
+- `max_kl_tok`: 0.25
+
+KL rises with rank, alpha, lr and steps. Measure `kl_tok` locally with `python -m sn120_v2.replicate run` before submitting; an SFT-only r64/a128 lr3e-4 run measured about 0.5, double the cap.
+
+Other `train` fields exist and are listed in llms.txt. https://affine.io/llms.txt and https://affine.io/mining.json are the authority; if this page and the live contract disagree, the live contract wins. Read the live ranges with:
+
+```bash
+python v2/miner/affine_miner.py bounds --mining-json https://affine.io/mining.json
+```
+
 ## Words used here
 
 - **Box**: the validator's GPU machine. It trains and scores every round.
@@ -30,11 +51,13 @@ Install from a fresh clone of the branch `v2`, at the **repository root**, in a 
 ```bash
 git clone https://github.com/AffineFoundation/affine
 cd affine
-git checkout v2
+git switch v2
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e './v2[gpu,envs,r2]'
 ```
+
+`git checkout v2` is ambiguous because the repository contains a `v2/` directory; use `git switch v2` (or `git checkout v2 --`) to select the branch.
 
 The `gpu` extra installs the trainer, tokenizer, vLLM and serving dependencies; `envs` installs the official grader; `r2` supplies the object-store dependency. No R2 credentials, wallet keys or other secrets are needed for these public-read commands.
 
@@ -69,6 +92,12 @@ It starts nothing and needs no GPU. It prints one JSON object:
 ```
 python -m sn120_v2.replicate fetch --mining-json https://affine.io/mining.json --work /data/affine
 ```
+
+A current `v2` tree accepts live `info-guard` contracts. The local replicate tool accepts `v1`, `info`, and `info-guard` when reading a mining.json.
+
+`rotation_rule="info-guard"` (`affine-pool-rotation-v3`): a candidate enters the active pool only with a recorded pool-quality guard PASS in the sealed public guard ledger; earlier rounds replay under their own rule versions. Ranking is the same as `info` (score every candidate by `p * (1-p)`), plus that fail-closed admission gate.
+
+**2026-11-27 UTC:** Miner tools now accept the live `info-guard` rotation rule; install docs use `git switch v2`, and the recipe notes include the live recitation/KL bounds and local KL measurement guidance.
 
 It downloads each base file of the head through the signed links of the links file that mining.json names (`contract.read_links`), and checks the size and the sha256 of each file against the head manifest in mining.json. With `eval_merged=true`, it **also downloads the real fp32 master—tens of GB** from the links file's `master` / `master_files` data. That master is required to construct the official merged candidate; a bf16 base is never upcast as a substitute. The links expire; the tool reads the links file anew at each start. If a download fails, run the command again: complete files in the staging directory are kept and verified. `--read-links FILE_OR_URL` names another copy of the links file.
 
