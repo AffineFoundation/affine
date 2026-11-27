@@ -16,3 +16,4 @@ logs/
 state/
 prototype/artifacts/
 prototype/model-source.json
+miner/validator/trainer-host-v835-64k/qual-results/

@@ -1,0 +1,78 @@
+{
+  "about": "Public description of trainer-host-v835-64k (NOT a ROOT-signed admission). Derived from live host-v834c/v834d. Async ZeRO-2 reduce-to-owner in post-accumulate hooks, shard clip before gather, pinned-CPU gather into the host optimizer, thresholded activation offload for >=64K packed bins.",
+  "host_version": "host-v835-64k",
+  "parent_host": "host-v834c / host-v834d",
+  "repo_directory": "miner/validator/trainer-host-v835-64k",
+  "model_class": "transformers 5.14.1 Qwen3_5ForConditionalGeneration (hybrid GDN + full attention, vocab 248320)",
+  "trainable": "model.language_model.* and lm_head.* (vision tower and MTP heads frozen)",
+  "h200_measured_prototype": {
+    "source": "bench_step.py on calm-raven-70 / 8xH200, random://qwen3_5_9b, singleton 64K",
+    "v834c_64k_s": 32.7,
+    "v835_shipped_broken_then_cpu_staging_64k_s": 64.5,
+    "v835_async_gpu_reduce_64k_s": 33.1,
+    "v835_async_plus_pinned_cpu_gather_64k_s": 21.8,
+    "v835_peak_gib": 65.2,
+    "v834c_peak_gib": 93.0
+  },
+  "memory_fix": {
+    "v834c_problem": "full actor replica + eager FP32 accumulator (~36 GB) + BF16 param grads (~18 GB) per GPU",
+    "v835_change": "async GPU reduce-SUM to owner in post-accumulate hooks (no CPU contrib, no post-bwd reduce_shards); clip on shards; gather to pinned CPU on rank 0; activation offload only when packed bin tokens >= 65536",
+    "expected_peak_64k_gib": "~65 GiB measured (async path); ~48 GiB with offload"
+  },
+  "engine": {
+    "batched_engine": "packed",
+    "dp_max_rows": 256,
+    "dp_port": 29583,
+    "dp_token_budget": 69632,
+    "dp_world": 8,
+    "drop_unresolved": false,
+    "fast_stage": true,
+    "loss_agg_mode": "seq-mean-token-mean",
+    "loss_scale": 0.5635,
+    "max_rows": 64,
+    "optimizer_persistence": "none",
+    "optimizer_step_threads": 14,
+    "activation_offload": true,
+    "sgd_direction": "normgrad",
+    "sgd_fp32_master": true,
+    "sgd_freeze": [],
+    "sgd_lr": 5e-07,
+    "sgd_mode": "fresh-adam",
+    "sgd_tensor_rel_cap": 2e-05,
+    "sgd_update_norm_cap": 1.0,
+    "support_renorm": {
+      "temperature": 1.0,
+      "top_k": 20,
+      "top_p": 0.95
+    },
+    "token_budget": 69632,
+    "training_kernels": {
+      "fla-core": "0.6.0",
+      "flash-linear-attention": "0.6.0"
+    }
+  },
+  "caps": {
+    "dp_token_budget": 69632,
+    "logit_chunk": 4096,
+    "max_context_tokens": 69632,
+    "max_output_tokens": 65536,
+    "singleton_min_tokens": 65536,
+    "activation_offload_min_tokens": 65536,
+    "reduce_max_inflight": 4
+  },
+  "deps": {
+    "torch": "2.14+",
+    "transformers": "5.14.x",
+    "flash-linear-attention": "0.6.x",
+    "triton": ">=3.7.1"
+  },
+  "qualification": {
+    "script": "run_64k_qual.sh",
+    "equivalence": "numerical_equivalence_test.py",
+    "estimator": "memory_estimate.py",
+    "step_harness": "qual_step.py",
+    "speed_bench": "bench_step.py",
+    "note": "Unsigned experimental host. Do not deploy live until 8xH200 qual JSON is green and ROOT re-admits a signed bundle."
+  },
+  "kl_ignored": true
+}

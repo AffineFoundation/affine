@@ -1,0 +1,606 @@
+"""v8.3.5 data-parallel packed engine: same GRPO update math as v834c, ZeRO-2-style grad sharding for 64K.
+
+Semantics are those of v8211_batched.train_update_batched (same layout, loss aggregation, KL reference, derail mask,
+rewards/advantages, cap policy, loss_scale, clip, ONE optimizer step on the worker = rank 0). Only the execution differs:
+  * rows are packed into varlen micro-batches (first-fit-decreasing, token budget) and spread over W GPUs
+    (LPT by tokens); 65,536-output rollouts are forced into singleton bins;
+  * every rank runs the SAME v8211_batched._reference_pass/_gradient_pass on its own micro-batches with packed
+    fast_kernels.packed_log_probs (selected-token logprob + optional top-k/top-p support-renorm unchanged);
+  * FP32 gradient accumulation is **sharded across ranks** (reduce-to-owner / ZeRO-2). Post-accumulate hooks fold
+    each BF16 ``param.grad`` into the local shard (or pinned-CPU contrib for non-owned tensors) and free it;
+  * after local passes, shards are SUM-reduced onto owners, rank 0 gathers the full FP32 inventory, clips, and
+    runs the same host optimizer step as v834c;
+  * optional activation offload moves checkpointed block inputs to CPU (extra HBM headroom; same math via recompute).
+Failure before the optimizer step on any rank -> every rank joins the ok-flag reduction and the update raises
+(transaction fails exactly as a single-GPU failure would; the in-memory actor/optimizer are untouched).
+"""
+import math, os, pickle, sys, time, json, importlib.util
+import torch, torch.distributed as dist
+from datetime import timedelta
+
+
+def _load_sharded_accum():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'v835_sharded_accum.py')
+    name = 'v835_sharded_accum'
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+ShardedFP32Accumulator = _load_sharded_accum().ShardedFP32Accumulator
+
+# v8.3.3g (RA/20261030-trainer-speed, Jacob pt841u/t847u): execution-only speedups, same update.
+#  * install_fast_hash: subnet.mimo_runtime.file_hash = the ORIGINAL function run in a thread pool (siblings *.safetensors
+#    prefetched in parallel) and memoized by (path, dev, ino, size, mtime_ns, ctime_ns); a changed file re-hashes.
+#  * helper ranks preload the KL reference + an actor copy at process start from PRELOAD_HINT (written by rank 0 every job);
+#    the actor parameters are still overwritten by the rank-0 broadcast at every job (bit-exact copy as before).
+PRELOAD_HINT = '/workspace/affine-mimo-trainer-prod/v833g-helper-preload.json'
+
+
+def install_fast_hash(workers=16):
+    import stat as _st, threading
+    from concurrent.futures import ThreadPoolExecutor
+    import subnet.mimo_runtime as R
+    if getattr(R.file_hash, '_v833g', False):
+        return R.file_hash
+    original = R.file_hash
+    memo, lock = {}, threading.Lock()
+    pool = ThreadPoolExecutor(workers, thread_name_prefix='v833g-hash')
+
+    def key(path):
+        st = os.lstat(path)
+        if not _st.S_ISREG(st.st_mode):
+            return None
+        return (os.path.abspath(str(path)), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+    def submit(path, k):
+        with lock:
+            f = memo.get(k)
+            if f is None:
+                f = memo[k] = pool.submit(original, path)
+        return f
+
+    def file_hash(path):
+        try:
+            k = key(path)
+        except OSError:
+            return original(path)
+        if k is None:
+            return original(path)
+        f = submit(path, k)
+        if str(path).endswith('.safetensors'):
+            try:
+                for sib in os.scandir(os.path.dirname(os.path.abspath(str(path)))):
+                    if sib.name.endswith('.safetensors') and not sib.name.startswith('.'):
+                        ks = key(sib.path)
+                        if ks is not None:
+                            submit(sib.path, ks)
+            except OSError:
+                pass
+        try:
+            value = f.result()
+        except BaseException:
+            with lock:
+                memo.pop(k, None)
+            raise
+        if key(path) != k:            # changed after hashing: never serve a stale digest
+            with lock:
+                memo.pop(k, None)
+            return original(path)
+        return value
+    file_hash._v833g = True
+    file_hash.__doc__ = original.__doc__
+    R.file_hash = file_hash
+    return file_hash
+
+
+def _write_hint(obj):
+    try:
+        tmp = PRELOAD_HINT + '.tmp-%d' % os.getpid()
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            json.dump(obj, f, sort_keys=True)
+        os.replace(tmp, PRELOAD_HINT)
+    except Exception:
+        pass
+
+STATE = dict(world=1, ref=None, actor=None, actor_ckpt=None, initialized=False)
+# 4096 prompt headroom + 65536 output = 69632 total context (singleton bin at this budget).
+BUDGET = 69632
+MAX_ROWS = 256
+LOGIT_CHUNK = 4096
+NO_CKPT_LAYERS_RANK0 = 0
+NO_CKPT_LAYERS_HELPER = 2
+# Any rollout at/above this total length is never packed with another row.
+SINGLETON_MIN_TOKENS = 65536
+# Activation offload mode: 'off' | 'on' | 'auto'.
+#   off  — never offload
+#   on   — offload every training forward (still via saved_tensors_hooks)
+#   auto — offload only when the packed micro-batch token count >= ACTIVATION_OFFLOAD_MIN_TOKENS
+# Default is auto. Override with configure_activation_offload() / env ACTIVATION_OFFLOAD.
+ACTIVATION_OFFLOAD_MODE = 'auto'
+# Back-compat boolean used by older call sites; True means mode != 'off'.
+ACTIVATION_OFFLOAD = True
+# Threshold for mode 'auto' (64K-class bins).
+ACTIVATION_OFFLOAD_MIN_TOKENS = 65536
+# Bound async NCCL reduces in-flight during backward (see v835_sharded_accum).
+REDUCE_MAX_INFLIGHT = 4
+
+
+def configure_activation_offload(value=None, *, min_tokens=None):
+    """Set activation-offload policy from env/CLI/host config.
+
+    Accepted ``value`` forms: None (read env), True/False, or '0'/'1'/'off'/'on'/'auto'
+    / 'true'/'false'. Env key: ``ACTIVATION_OFFLOAD`` (default ``auto``).
+    """
+    global ACTIVATION_OFFLOAD, ACTIVATION_OFFLOAD_MODE, ACTIVATION_OFFLOAD_MIN_TOKENS
+    if min_tokens is not None:
+        ACTIVATION_OFFLOAD_MIN_TOKENS = int(min_tokens)
+    if value is None:
+        value = os.environ.get('ACTIVATION_OFFLOAD', 'auto')
+    if isinstance(value, bool):
+        mode = 'on' if value else 'off'
+    else:
+        key = str(value).strip().lower()
+        if key in ('0', 'false', 'off', 'no'):
+            mode = 'off'
+        elif key in ('1', 'true', 'on', 'yes'):
+            mode = 'on'
+        elif key in ('auto', ''):
+            mode = 'auto'
+        else:
+            raise ValueError('ACTIVATION_OFFLOAD must be 0/1/auto (or off/on/true/false); got %r' % (value,))
+    ACTIVATION_OFFLOAD_MODE = mode
+    ACTIVATION_OFFLOAD = mode != 'off'
+    return dict(mode=ACTIVATION_OFFLOAD_MODE, min_tokens=ACTIVATION_OFFLOAD_MIN_TOKENS,
+                enabled=ACTIVATION_OFFLOAD)
+
+
+def _offload_this_batch(gradients, tokens):
+    """Whether the current packed forward should stage saved tensors on CPU."""
+    if not gradients or ACTIVATION_OFFLOAD_MODE == 'off':
+        return False
+    if ACTIVATION_OFFLOAD_MODE == 'on':
+        return True
+    return tokens >= ACTIVATION_OFFLOAD_MIN_TOKENS
+
+
+# Apply env default once at import (host/qual may call configure_activation_offload again).
+configure_activation_offload()
+
+
+def init(world, port):
+    os.environ.setdefault('MASTER_ADDR', '127.0.0.1'); os.environ['MASTER_PORT'] = str(port)
+    torch.cuda.set_device(0)
+    dist.init_process_group('nccl', rank=0, world_size=world, device_id=torch.device('cuda', 0), timeout=timedelta(minutes=45))
+    # v8.3.1: job hand-off on a CPU (gloo) group with a long timeout: helpers idle between epochs for > 45 min
+    STATE['ctrl'] = dist.new_group(backend='gloo', timeout=timedelta(days=30))
+    STATE.update(world=world, initialized=True)
+
+
+def _plan(rows, active, world):
+    lengths = {i: len(rows[i]['group'].prompt) + len(rows[i]['rollout'].tokens) for i in active}
+    bins = []
+    for i in sorted(active, key=lambda i: (-lengths[i], i)):
+        # 64K-class rollouts stay alone so packing shorter rows into a raised budget cannot recreate the
+        # Nov-6 H200 OOM (budget 69632 packing many medium sequences onto one rank).
+        if lengths[i] >= SINGLETON_MIN_TOKENS:
+            bins.append([lengths[i], [i]])
+            continue
+        for b in bins:
+            if b[0] >= SINGLETON_MIN_TOKENS:
+                continue
+            if b[0] + lengths[i] <= BUDGET and len(b[1]) < MAX_ROWS:
+                b[0] += lengths[i]; b[1].append(i); break
+        else:
+            bins.append([lengths[i], [i]])
+    loads = [0] * world; assign = [[] for _ in range(world)]
+    for cost, members in sorted(bins, key=lambda b: (-b[0], b[1])):
+        r = min(range(world), key=lambda k: loads[k]); loads[r] += cost; assign[r].append(sorted(members))
+    return assign, len(bins), loads
+
+
+def _bcast(obj):
+    box = [obj]; dist.broadcast_object_list(box, src=0, group=STATE['ctrl']); return box[0]
+
+
+def _install_activation_offload(runtime):
+    """Conditional CPU staging of autograd-saved tensors (same math, less HBM on long bins).
+
+    Offload applies only when ``STATE['offload_this_forward']`` is true — set by the packed
+    log-prob wrapper when the micro-batch token count is >= ``ACTIVATION_OFFLOAD_MIN_TOKENS``.
+    """
+    if ACTIVATION_OFFLOAD_MODE == 'off' or not runtime.trainable:
+        return
+    if getattr(runtime.model, '_v835_act_offload', False):
+        return
+
+    def pack(tensor):
+        if not torch.is_tensor(tensor) or not tensor.is_cuda:
+            return tensor
+        return (tensor.device, tensor.detach().to('cpu', non_blocking=True))
+
+    def unpack(obj):
+        if isinstance(obj, tuple) and len(obj) == 2 and torch.is_tensor(obj[1]):
+            device, cpu = obj
+            return cpu.to(device=device, non_blocking=False)
+        return obj
+
+    layers = runtime.model.model.language_model.layers
+    for layer in layers:
+        original = layer.forward
+
+        def make_forward(original):
+            def forward(*args, **kwargs):
+                if not torch.is_grad_enabled() or not STATE.get('offload_this_forward'):
+                    return original(*args, **kwargs)
+                with torch.autograd.graph.saved_tensors_hooks(pack, unpack):
+                    return original(*args, **kwargs)
+            return forward
+
+        layer.forward = make_forward(original)
+    runtime.model._v835_act_offload = True
+
+
+def _install_fast(B, FK, runtime, no_ckpt):
+    if not getattr(runtime.model, '_v83_fast', False):
+        FK.install(runtime.model)
+        if runtime.trainable:
+            for layer in list(runtime.model.model.language_model.layers)[:no_ckpt]:
+                layer.__dict__.pop('forward', None)
+        runtime.model._v83_fast = True
+    _install_activation_offload(runtime)
+
+
+def _dummy_touch_backward(actor):
+    """Backward that touches every trainable param so lockstep NCCL hooks stay matched."""
+    loss = None
+    for _, p in actor.model.named_parameters():
+        if p.requires_grad:
+            loss = p.float().sum() * 0.0 if loss is None else loss + p.float().sum() * 0.0
+    if loss is None:
+        raise ValueError('no trainable parameters for dummy backward')
+    loss.backward()
+
+
+def _passes(B, FK, actor, ref, rows, plan, config, agg_config, loss_scale, active_rollouts, versions, guard, record):
+    """One rank's share. Returns (accumulator|None, details, losses, err).
+
+    Micro-batches are lock-stepped across ranks: shorter plans are padded with a dummy
+    backward so async reduce-to-owner hooks never deadlock on NCCL.
+    """
+    accumulator, details, losses, err = None, {}, {}, None
+    try:
+        B._reference_pass(rows, plan, config, ref, engine='packed', logit_chunk=LOGIT_CHUNK, guard=guard)
+        if B._versions(actor.model) != versions:
+            raise ValueError('input actor changed during reference preparation')
+        for p in actor.model.parameters():
+            p.grad = None
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        world = STATE['world']
+        # Pad to the max local micro-batch count so every rank issues the same reduce sequence.
+        my_n = len(plan)
+        if world > 1 and dist.is_initialized():
+            counts = [None] * world
+            dist.all_gather_object(counts, my_n)
+            max_n = max(counts)
+        else:
+            max_n = my_n
+        padded = list(plan) + [None] * (max_n - my_n)
+        accumulator = ShardedFP32Accumulator(actor.model.named_parameters(), rank=rank, world=world,
+                                             device=actor.device, max_inflight=REDUCE_MAX_INFLIGHT)
+        accumulator.install_hooks()
+        # One micro-batch index at a time across all ranks (real or dummy) so async
+        # reduce-to-owner hooks stay collective-safe.
+        for batch in padded:
+            if batch is not None:
+                B._gradient_pass(actor, rows, [batch], config, agg_config, loss_scale, active_rollouts,
+                                 accumulator, versions, details, losses, engine='packed',
+                                 logit_chunk=LOGIT_CHUNK, guard=guard, record=record)
+            else:
+                guard()
+                for p in actor.model.parameters():
+                    p.grad = None
+                with torch.enable_grad():
+                    _dummy_touch_backward(actor)
+                accumulator.capture()
+        accumulator.finish()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+    except BaseException as e:   # every rank must reach the ok-flag reduction
+        err = f'{type(e).__name__}: {e}'
+        if accumulator is not None:
+            try:
+                accumulator.remove_hooks()
+            except Exception:
+                pass
+    return accumulator, details, losses, err
+
+
+def _reduce(B, rows, accumulator, details, losses, err, rank, clip_max):
+    """Ok-flag + shard clip + pinned-CPU gather of full FP32 inventory to rank 0.
+
+    Reduce-to-owner already ran inside post-accumulate hooks during backward.
+    """
+    world = STATE['world']
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    ok = torch.tensor([0.0 if err else 1.0], device=device)
+    dist.all_reduce(ok, op=dist.ReduceOp.MIN)
+    errs = [None] * world
+    dist.all_gather_object(errs, err)
+    if ok.item() < 1:
+        if accumulator is not None:
+            accumulator.clear()
+        return None, [e for e in errs if e]
+    accumulator.finish()
+    norm = accumulator.clip_shards(clip_max)
+    full = accumulator.gather_to_cpu(dst=0)
+    gathered = [None] * world
+    dist.all_gather_object(gathered, (details, losses, {i: (rows[i]['keep'], rows[i]['derail_index']) for i in details}))
+    if rank != 0:
+        accumulator.clear()
+        return None, []
+    # Rank 0: CPU pinned inventory for the host optimizer (fresh-adam / CPUAdamW).
+    accumulator.buffers = full
+    accumulator.preclip_norm = norm
+    accumulator.remove_hooks()
+    all_d, all_l = {}, {}
+    for d, l, keep in gathered:
+        all_d.update(d); all_l.update(l)
+        for i, (k, di) in keep.items():
+            rows[i]['keep'], rows[i]['derail_index'] = k, di
+    return (all_d, all_l), []
+
+
+def make_train_update(B, FK):
+    """-> train_update_batched-compatible function (installed by the v8.3 host as v824_batched.train_update_batched)."""
+    original = B.train_update_batched
+
+    def fast_blp(runtime, items, *, gradients, engine, logit_chunk=2048, support=None):
+        runtime.guard()
+        if gradients and not runtime.trainable:
+            raise ValueError('inference runtime cannot train')
+        if engine != 'packed':
+            raise ValueError('v8.3 DP engine is packed-only')
+        tokens = sum(len(prompt) + len(output) for prompt, output in items)
+        STATE['offload_this_forward'] = _offload_this_batch(gradients, tokens)
+        try:
+            return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
+        finally:
+            STATE['offload_this_forward'] = False
+
+    def train_update_dp(runtime, optimizer, groups, binding, *, config, guard=lambda: None, record=lambda row: None,
+                        reference_runtime=None, engine='packed', token_budget=36864, max_rows=64, logit_chunk=2048,
+                        timings=None):
+        # Run the ORIGINAL preamble checks by calling the original with an empty-groups probe? No: replicate exactly by
+        # delegating the no-update path and all validation to the original function's own code below.
+        groups = tuple(groups)
+        if not groups:
+            return original(runtime, optimizer, groups, binding, config=config, guard=guard, record=record,
+                            reference_runtime=reference_runtime, engine='padded', token_budget=token_budget,
+                            max_rows=max_rows, logit_chunk=logit_chunk, timings=timings)
+        return _dp_update(runtime, optimizer, groups, binding, config, guard, record, reference_runtime, timings)
+
+    def _dp_update(runtime, optimizer, groups, binding, config, guard, record, reference_runtime, timings):
+        PRE.validate(runtime, optimizer, groups, binding, config, reference_runtime)
+        agg_config, loss_scale, aggregation = B.loss_aggregation(config)
+        timings = {} if timings is None else timings
+        started = time.monotonic(); guard()
+        world = STATE['world']
+        base_report = PRE.base_report(B, runtime, optimizer, groups, binding, config)
+        runtime.model.eval(); versions = B._versions(runtime.model)
+        if B.DROP_UNRESOLVED:
+            rows, unresolved_filter = B.layout_drop_unresolved(groups, config)
+        else:
+            rows, unresolved_filter = B._layout(groups, config), dict(enabled=False)
+        record(dict(stage='unresolved-filter', **unresolved_filter))
+        active = [i for i, row in enumerate(rows) if row['active']]
+        assign, nbins, loads = _plan(rows, active, world)
+        _install_fast(B, FK, runtime, NO_CKPT_LAYERS_RANK0)
+        if reference_runtime is not None:                         # v8.3.4: skip when KL is off
+            _install_fast(B, FK, reference_runtime, 0)
+        # helpers: job header, then the actor weights (bit-exact copy of the rank-0 actor)
+        t = time.monotonic()
+        job = dict(op='job', groups=groups, config=config, drop=B.DROP_UNRESOLVED, mode=B.LOSS_AGG_MODE, scale=B.LOSS_SCALE, support=B.SUPPORT_RENORM, knobs=getattr(B, 'KNOBS', None),
+                    actor_dir=str(runtime._checkpoint_guard.directory), actor_desc=runtime._checkpoint_guard.descriptor,
+                    ref_dir=(str(reference_runtime._checkpoint_guard.directory) if reference_runtime is not None else None),
+                    ref_desc=(reference_runtime._checkpoint_guard.descriptor if reference_runtime is not None else None),
+                    spec=runtime.spec.to_dict(), assign=assign)
+        _bcast(job)
+        for _, p in runtime.model.named_parameters():
+            dist.broadcast(p.data, src=0)
+        timings['dp_sync_seconds'] = time.monotonic() - t
+        hint = dict(spec=runtime.spec.to_dict(),
+                    actor_dir=str(runtime._checkpoint_guard.directory), actor_desc=runtime._checkpoint_guard.descriptor,
+                    ref_dir=job['ref_dir'], ref_desc=job['ref_desc'])
+        _write_hint(hint)
+        prep = time.monotonic()
+        acc, details, losses, err = _passes(B, FK, runtime, reference_runtime, rows, assign[0], config, agg_config, loss_scale,
+                                             len(active), versions, guard, record)
+        gathered, errs = _reduce(B, rows, acc, details, losses, err, 0, config.max_gradient_norm)
+        if gathered is None:
+            raise RuntimeError('v8.3 DP update failed before the optimizer step: ' + '; '.join(errs))
+        all_d, all_l = gathered
+        for i in sorted(all_d):     # trajectory-loss events for helper-owned rollouts (rank-0 ones were recorded live)
+            if i not in details: record(dict(stage='trajectory-loss', **all_d[i]))
+        timings['gradient_seconds'] = time.monotonic() - prep
+        # Clip already applied on GPU shards inside _reduce; buffers are pinned CPU grads.
+        norm = acc.preclip_norm
+        guard()
+        if B._versions(runtime.model) != versions:
+            raise ValueError('actor changed before optimizer step')
+        step_started = time.monotonic()
+        update = optimizer.step(acc.buffers)
+        if optimizer.global_step != binding.optimizer_step + 1:
+            raise ValueError('exactly one optimizer step required')
+        acc.clear()
+        ordered = [all_d[i] for i in sorted(all_d)]
+        return dict(base_report, status='updated', optimizer_step=optimizer.global_step,
+            trained_rollouts=len(ordered), masked_rollouts=len(rows) - len(ordered),
+            sampled_tokens=sum(len(r['rollout'].tokens) for r in rows),
+            trained_tokens=sum(r['tokens'] for r in ordered),
+            loss_tokens=sum(r['loss_tokens'] for r in ordered),
+            derailed_rollouts=sum(r['derail_index'] is not None for r in ordered),
+            unresolved_trained_rollouts=sum(r['outcome'] == 'unresolved' for r in ordered),
+            outcome_counts={outcome: sum(r['rollout'].outcome == outcome for r in rows)
+                            for outcome in ('correct', 'wrong', 'unresolved')},
+            objective_loss=math.fsum(all_l[i] for i in sorted(all_l)), preclip_gradient_norm=norm,
+            maximum_old_actor_logprob_drift=0.0, trajectories=ordered,
+            optimizer=update, preparation_seconds=timings['gradient_seconds'],
+            optimizer_seconds=time.monotonic() - step_started,
+            update_seconds=time.monotonic() - started,
+            microbatch=dict(engine='packed-dp-v835-zero2', token_budget=BUDGET, max_rows=MAX_ROWS, count=nbins,
+                            world=world, rank_tokens=loads, singleton_min_tokens=SINGLETON_MIN_TOKENS,
+                            activation_offload=ACTIVATION_OFFLOAD,
+                            activation_offload_mode=ACTIVATION_OFFLOAD_MODE,
+                            activation_offload_min_tokens=ACTIVATION_OFFLOAD_MIN_TOKENS,
+                            reduce_max_inflight=REDUCE_MAX_INFLIGHT),
+            unresolved_filter=unresolved_filter,
+            data_sha256=digest([__import__('dataclasses').asdict(group) for group in groups]),
+            loss_aggregation=aggregation,
+            epoch_metrics=B.epoch_metrics(rows, all_d, config, aggregation, len(active), norm))
+
+    from subnet.mimo_grpo.data import digest
+    B.batched_log_probs = fast_blp
+    train_update_dp._original = original
+    return train_update_dp
+
+
+class PRE:
+    """The exact precondition block of v8211_batched.train_update_batched (lines up to base_report), factored out."""
+    @staticmethod
+    def validate(runtime, optimizer, groups, binding, config, reference_runtime):
+        from subnet.mimo_grpo.config import SC_MIS, PROMPT_MEAN, TRAIN_UNRESOLVED
+        from subnet.mimo_grpo.data import TaskGroup
+        config.validate(); binding.validate()
+        if config.ppo_epochs != 1:
+            raise ValueError('actor-as-OLD requires exactly one PPO epoch / one optimizer step')
+        if config.sampler_correction == SC_MIS:
+            raise ValueError('sampler correction not supported by the batched engine')
+        if config.loss_agg_mode == PROMPT_MEAN and config.derail_mask:
+            raise ValueError('prompt-mean weights need derail keep before the gradient pass')
+        if len(groups) > config.max_tasks or len({g.task_id for g in groups}) != len(groups):
+            raise ValueError('distinct complete tasks within optimizer batch limit')
+        if runtime.checkpoint_id != binding.checkpoint or optimizer.input_checkpoint != binding.checkpoint:
+            raise ValueError('trusted runtime/optimizer must match input checkpoint')
+        if optimizer.global_step != binding.optimizer_step or optimizer.config != config or optimizer.failed:
+            raise ValueError('original healthy optimizer step and resolved config')
+        if config.kl_coefficient > 0:
+            if reference_runtime is None or reference_runtime.checkpoint_id != config.kl_reference_checkpoint:
+                raise ValueError('KL anchoring requires the configured frozen reference runtime')
+            if reference_runtime is runtime or getattr(reference_runtime, 'model', None) is runtime.model:
+                raise ValueError('KL reference must be a separate frozen model')
+        elif reference_runtime is not None:
+            raise ValueError('reference runtime supplied without a KL objective')
+        expected = tuple((name, id(p)) for name, p in runtime.model.named_parameters() if p.requires_grad)
+        if expected != tuple((name, id(p)) for name, p in optimizer.parameters):
+            raise ValueError('optimizer must own exact trainable actor parameters')
+        for group in groups:
+            if not isinstance(group, TaskGroup):
+                raise ValueError('native trusted TaskGroup required')
+            group.validate(config.group_size, vocab_size=runtime.vocab_size, eos_token_ids=set(runtime.eos_token_ids),
+                           unresolved_failures=config.cap_policy == TRAIN_UNRESOLVED)
+            if any(len(group.prompt) + len(r.tokens) > max(int(runtime.max_context_tokens), 69632) for r in group.trajectories):
+                raise ValueError('complete rollout exceeds qualified total context')
+
+    @staticmethod
+    def base_report(B, runtime, optimizer, groups, binding, config):
+        return dict(version='affine-mimo-grpo-update-v1', config=config.document(), input=dict(
+            run=binding.run, epoch=binding.epoch, checkpoint=binding.checkpoint,
+            contract_sha256=binding.contract_sha256, optimizer_step=binding.optimizer_step),
+            admitted_groups=[dict(task_id=g.task_id, admission_sha256=g.admission_sha256) for g in groups],
+            group_count=len(groups), rollout_count=len(groups) * config.group_size,
+            input_checkpoint=binding.checkpoint, optimizer_step_before=optimizer.global_step)
+
+
+def helper_main(rank, world, port, host_dir, source_root):
+    """Ranks 1..W-1: resident KL reference + actor copy; serve jobs until the group closes."""
+    sys.path.insert(0, source_root); sys.path.insert(0, host_dir)
+    import threading
+    parent = os.getppid()
+    def watchdog():   # the worker (rank 0) is our parent: never outlive it
+        while True:
+            time.sleep(5)
+            if os.getppid() != parent: os._exit(3)
+    threading.Thread(target=watchdog, daemon=True).start()
+    os.environ.setdefault('MASTER_ADDR', '127.0.0.1'); os.environ['MASTER_PORT'] = str(port)
+    torch.cuda.set_device(0)   # CUDA_VISIBLE_DEVICES pins one GPU per helper
+    dist.init_process_group('nccl', rank=rank, world_size=world, device_id=torch.device('cuda', 0), timeout=timedelta(minutes=45))
+    STATE['ctrl'] = dist.new_group(backend='gloo', timeout=timedelta(days=30))
+    import importlib.util
+    def load(name, rel):
+        spec = importlib.util.spec_from_file_location(name, os.path.join(host_dir, rel)); m = importlib.util.module_from_spec(spec)
+        sys.modules[name] = m; spec.loader.exec_module(m); return m
+    B = load('v824_batched', 'v8211_batched.py'); FK = load('v83_fast_kernels', 'v83_fast_kernels.py')
+    import v83_kernels_policy as KP
+    KP.allow()
+    from subnet.mimo_runtime import MimoRuntime
+    STATE['world'] = world
+    def fast_blp(runtime, items, *, gradients, engine, logit_chunk=2048, support=None):
+        tokens = sum(len(prompt) + len(output) for prompt, output in items)
+        STATE['offload_this_forward'] = _offload_this_batch(gradients, tokens)
+        try:
+            return FK.packed_log_probs(runtime, items, gradients=gradients, logit_chunk=LOGIT_CHUNK, support=support)
+        finally:
+            STATE['offload_this_forward'] = False
+    B.batched_log_probs = fast_blp
+    install_fast_hash()
+    try:      # v8.3.3g preload (any failure -> lazy load at the first job, as before)
+        hint = json.loads(open(PRELOAD_HINT).read())
+        # v8.3.4: skip KL reference when the hint has no ref (KL ignored)
+        if hint.get('ref_dir') and hint.get('ref_desc'):
+            STATE['ref'] = MimoRuntime.load(hint['ref_dir'], hint['ref_desc'], hint['spec'], device='cuda', trainable=False)
+            _install_fast(B, FK, STATE['ref'], 0)
+        else:
+            STATE['ref'] = None
+        STATE['actor'] = MimoRuntime.load(hint['actor_dir'], hint['actor_desc'], hint['spec'], device='cuda', trainable=True)
+        _install_fast(B, FK, STATE['actor'], NO_CKPT_LAYERS_HELPER)
+        print(json.dumps(dict(component='trainer-host-v835', event='helper-preloaded', rank=rank, ref=STATE['ref'] is not None)), flush=True)
+    except Exception as x:
+        STATE['actor'] = None
+        if STATE['ref'] is not None and not isinstance(x, FileNotFoundError):
+            pass
+        print(json.dumps(dict(component='trainer-host-v835', event='helper-preload-skipped', rank=rank, error=repr(x)[:200])), flush=True)
+        torch.cuda.empty_cache()
+    while True:
+        job = _bcast(None)
+        if job is None or job.get('op') == 'stop':
+            break
+        B.DROP_UNRESOLVED, B.LOSS_AGG_MODE, B.LOSS_SCALE = job['drop'], job['mode'], job['scale']
+        B.SUPPORT_RENORM = job.get('support')
+        B.KNOBS = job.get('knobs')                       # v8.3.3l
+        if job.get('ref_desc') is None:                    # v8.3.4: KL off — drop any resident ref
+            if STATE['ref'] is not None:
+                try: STATE['ref'].close()
+                except Exception: pass
+                STATE['ref'] = None
+                torch.cuda.empty_cache()
+        elif STATE['ref'] is None or STATE['ref'].checkpoint_id != job['ref_desc']['id']:
+            STATE['ref'] = MimoRuntime.load(job['ref_dir'], job['ref_desc'], job['spec'], device='cuda', trainable=False)
+            _install_fast(B, FK, STATE['ref'], 0)
+        if STATE['actor'] is None:
+            STATE['actor'] = MimoRuntime.load(job['actor_dir'], job['actor_desc'], job['spec'], device='cuda', trainable=True)
+            _install_fast(B, FK, STATE['actor'], NO_CKPT_LAYERS_HELPER)
+        actor = STATE['actor']
+        for _, p in actor.model.named_parameters():
+            dist.broadcast(p.data, src=0)
+        config = job['config']; agg_config, loss_scale, _ = B.loss_aggregation(config)
+        groups = job['groups']
+        rows = B.layout_drop_unresolved(groups, config)[0] if B.DROP_UNRESOLVED else B._layout(groups, config)
+        active = [i for i, row in enumerate(rows) if row['active']]
+        actor.model.eval(); versions = B._versions(actor.model)
+        acc, details, losses, err = _passes(B, FK, actor, STATE['ref'], rows, job['assign'][rank], config, agg_config, loss_scale,
+                                             len(active), versions, lambda: None, lambda row: None)
+        _reduce(B, rows, acc, details, losses, err, rank, config.max_gradient_norm)
+        for p in actor.model.parameters(): p.grad = None
+        torch.cuda.empty_cache()
+    dist.destroy_process_group()
+
+
+if __name__ == '__main__':
+    r, w, port = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
+    helper_main(r, w, port, sys.argv[4], sys.argv[5])
