@@ -749,6 +749,41 @@ def test_merged_cli_constructs_fold_inputs_after_verifying_the_real_master(world
     assert seen["fold_input"].root == world.work.resolve() / "fold-inputs"
 
 
+def test_replicate_applies_recitation_and_kl_ceiling_and_fails_open(build, world, capsys, monkeypatch):
+    from sn120_v2.envs.math_pool import Task
+    from sn120_v2.recite import PoolIndex
+
+    params = build.params(n_gpus=1, n_tasks=8, looks=(1.0,), min_kl_seq=0.1, max_kl_tok=0.25, recite_max_share=0.05)
+    ticket = build.ticket(n_entries=1, params=params)
+    raw = batch_bytes()
+    built = SimpleNamespace(store=LocalStore(world.work / "store"), trainer=None, evaluator=None, image=build.image)
+    for runner, merged in ((replicate.LocalRunner, False), (replicate.SoloRunner, True)):
+        original = runner.run
+
+        def fake_run(self, actual):
+            frozen = dataclasses.replace(actual.entries[0].batch, batch_sha256=sha256_hex(raw), hotkey=HOTKEY)
+            actual = dataclasses.replace(actual, entries=(dataclasses.replace(actual.entries[0], batch=frozen),))
+            result = build.result(actual, "F" * 8, {0: "P" * 8})
+            return dataclasses.replace(result, entries=(dataclasses.replace(result.entries[0], kl_seq=0.2, kl_seq_se=0.01, kl_tok=0.3, kl_k=1, kl_tokens=10,
+                                                                              tested_base_hash=build.h("merged") if merged else "",
+                                                                              tested_fold_kernel="fixed-order-v1" if merged else ""),))
+
+        runner.run = fake_run
+        try:
+            report = replicate.run_round(raw, HOTKEY, params, dataclasses.replace(params, eval_merged=merged), ticket.head, ticket.draw, built, tokens=WordTokens(), recite_index=PoolIndex([]))
+            assert report["status"] == "lost" and report["reason"] == "behaviour KL 0.3 nats/token is above max_kl_tok 0.25"
+            assert not report["kl_gate"]["passed"] and report["anti_recitation"]["passed"]
+        finally:
+            runner.run = original
+
+    tasks = [Task("task", "math", "a distinct pool problem with enough words to index here", "answer")]
+    index = PoolIndex((task.task_id, task.problem, task.answer) for task in tasks)
+    monkeypatch.setattr(replicate, "measure_batch", lambda *args: (_ for _ in ()).throw(RuntimeError("test internal error")))
+    report, status, reason = replicate.recite_gate(raw, index, 0.05)
+    assert report is None and status == "error (failed open)" and reason == ""
+    assert "failed open: RuntimeError" in capsys.readouterr().err
+
+
 def test_non_merged_run_does_not_require_the_master(world, capsys):
     fetch(world, capsys)
     assert not (world.work / "cache" / world.head.base_fp32_master_digest).exists()

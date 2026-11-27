@@ -122,6 +122,33 @@ def test_public_params_load_the_current_gate_and_paired_parent_fields():
         Params.from_dict(public)
 
 
+def test_public_params_keep_live_crown_recitation_and_kl_ceiling_fields():
+    recipe = Recipe().to_dict()
+    recipe["miner_bounds"] = [*recipe["miner_bounds"], {"key": "future_field", "low": 0, "high": 1}]
+    public = Params().to_dict() | {
+        "recipe": recipe,
+        "crown_gate": "argmax_symmetric",
+        "z_crown": 1.5,
+        "recite_max_share": 0.05,
+        "max_kl_tok": 0.25,
+    }
+    params = Params.from_public_dict(public)
+    assert (params.crown_bar, params.recite_max_share, params.max_kl_tok) == (1.5, 0.05, 0.25)
+    assert params.kl_floor_on
+    # The 2026-11-27 live values hashed bd7b9aee... here; the old drop-unknown
+    # behavior on the king branch at 08a936d5 hashed the reduced dict 54c5656c...
+    old = {key: value for key, value in public.items() if key not in ("z_crown", "recite_max_share", "max_kl_tok")}
+    assert params.params_hash != Params.from_public_dict(old).params_hash
+    for key in ("z_crown", "recite_max_share", "max_kl_tok"):
+        assert public[key] == params.to_dict()[key]
+        assert key in Params.LEFT_OUT_AT_DEFAULT
+    assert not {"z_crown", "recite_max_share", "max_kl_tok"} & Params().to_dict().keys()
+    assert dataclasses.replace(Params(), z_crown=None).params_hash == Params().params_hash
+    assert {bound.key for bound in params.recipe.miner_bounds} == {bound.key for bound in Recipe().miner_bounds}
+    with pytest.raises(ConfigError):
+        Params.from_dict(public)
+
+
 def test_public_params_accept_known_rotation_rules_and_reject_unknown_rules():
     for rule in ("v1", "info", "info-guard"):
         assert Params.from_public_dict(Params().to_dict() | {"rotation_rule": rule}).rotation_rule == rule
