@@ -2306,7 +2306,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
     numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params)
-               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "z_crown" or f.name in ("recite_max_share", "max_kl_tok")) and getattr(params, f.name) == f.default) and not (f.name.startswith("anchor_") and params.anchor_n == 0)]
+               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "merge_after_confirm" or f.name == "z_crown" or f.name in ("recite_max_share", "max_kl_tok")) and getattr(params, f.name) == f.default) and not (f.name.startswith("anchor_") and params.anchor_n == 0)]
     url = doc["contract"]["public_url"]
     where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
@@ -2430,7 +2430,7 @@ def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_tex
         problems.append(f"llms.txt and mining.json are not a pair: llms.txt names snapshot {found and found.group(1)}, mining.json {doc['snapshot_digest']}")
     stated = stated_params(text)
     values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params)
-              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "z_crown" or f.name in ("recite_max_share", "max_kl_tok")) and getattr(params, f.name) == f.default) and not (f.name.startswith("anchor_") and params.anchor_n == 0)}
+              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round" or f.name == "merge_after_confirm" or f.name == "z_crown" or f.name in ("recite_max_share", "max_kl_tok")) and getattr(params, f.name) == f.default) and not (f.name.startswith("anchor_") and params.anchor_n == 0)}
     for name in sorted(values.keys() | stated.keys()):
         if stated.get(name) != values.get(name):
             problems.append(f"`{name}`: llms.txt states {stated.get(name, 'no value')}, mining.json has {values.get(name, 'no such parameter')}")
