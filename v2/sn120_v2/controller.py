@@ -49,7 +49,7 @@ from .judging import check_result, decide, duplicate_decision, legacy_parent_one
 from .params import GenesisSpec, Params
 from .payout import payees
 from .public import phase as public_phase
-from .public import public_text, round_report, snapshot, winner_stats
+from .public import last_round_view, public_text, round_report, snapshot, winner_stats
 from .recite import PoolIndex, fail_reason as recite_fail_reason, measure_batch
 from .queue import SyncPlan, plan_sync, select_round, split_among_boxes, squat_trim, waiting
 from .sampling import make_round_seed, train_seed
@@ -173,10 +173,11 @@ class Stack:
 def public_snapshot(head: HeadPublish, state: State, params: Params, now: int, verdicts: Mapping[str, Verdict] | None = None,
                     checked_at: int | None = None, chain: ChainSnapshot | None = None, *, stop_asked: bool = False,
                     close_publish_pending: bool = False, waiting_for_seats: bool | None = None,
-                    irt_snapshot: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                    irt_snapshot: Mapping[str, Any] | None = None, last_round_note: str = "") -> dict[str, Any]:
     """The public snapshot. ``chain`` is an existing validated read; no chain I/O or journal lock happens here."""
     shown = snapshot(state, params, now, verdicts, checked_at, chain, stop_asked=stop_asked,
                      close_publish_pending=close_publish_pending, waiting_for_seats=waiting_for_seats)
+    shown["last_round"] = last_round_view(state.rounds[-1] if state.rounds else None, last_round_note)
     # In-memory input for StorePublisher, removed before mining.json is rendered. It carries only the crowned
     # winner's already-public facts, never a private lease or batch location. No State reaches the publisher.
     shown["winner_stats"] = winner_stats(state, now)
@@ -1349,6 +1350,13 @@ class Controller:
                 seats, {hotkey: (verdict.valid, verdict.batch_sha256, verdict.checked_at) for hotkey, verdict in self._verdicts.items()},
                 self._registrations, self._stop_asked, self._close_publish_pending, self._waiting_for_seats)
 
+    def _last_round_note(self) -> str:
+        """The note of the last closed round, from its public round file, when that round closed no_decision."""
+        if not self.state.rounds or self.state.rounds[-1].outcome != NO_DECISION:
+            return ""
+        key = layout.round_file(self.state.rounds[-1].round_id)
+        return str(json.loads(self.store.get(key)).get("note", "")) if self.store.exists(key) else ""
+
     def _publish(self, now: int) -> None:
         if self.publisher is None:
             return
@@ -1360,6 +1368,7 @@ class Controller:
                 self.head, self.state, self.params, now, self._verdicts, self._verdicts_at, self._registrations,
                 stop_asked=self._stop_asked, close_publish_pending=self._close_publish_pending, waiting_for_seats=self._waiting_for_seats,
                 irt_snapshot=self.sampler.public_snapshot() if isinstance(self.sampler, IRTSampler) else None,
+                last_round_note=self._last_round_note(),
             ))
             self._published, self._published_at = shown, records
         except Exception as exc:

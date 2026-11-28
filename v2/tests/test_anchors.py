@@ -306,7 +306,7 @@ def test_no_anchor_logic_under_gpu_and_the_code_digest_is_unchanged():
 
     gpu = Path(__file__).parents[1] / "sn120_v2" / "gpu"
     assert not any("anchor" in path.read_text(encoding="utf-8") for path in gpu.glob("*.py"))
-    assert code_digest() == "1c8f7c278ab25dbd9c74126b279b26cc6278e8a5c9e22158a47001ec4d076d07"
+    assert code_digest() == "cac896e4b4c825522e57cdaa15406052f35de4074f068c6eb240f16a8db12e0b"
 
 
 def test_gate_rollout_rows_flag_anchors_only(build, tmp_path):

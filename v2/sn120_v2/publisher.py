@@ -1133,6 +1133,7 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- One entry for each hotkey in a round. A second seat of the same hotkey waits for a later round.",
         f"- `{NO_DECISION}`: our infrastructure failed (section 3). You are not charged and you go to the front of the",
         "  queue.",
+        "- When the whole round fails on our side (no scores for anyone), every seated batch returns to the front of the queue, is not charged, and the failure is not counted toward max_infra_attempts.",
         "- A failure is counted for your seat in one case only: your batch had the whole training time of the round",
         f"  (it started at the lease, and the box started its work on the round at most {AT_THE_LEASE_S} s after the start of the",
         "  lease), the first try of its training did not finish in that time (section 3), and at least one other batch",

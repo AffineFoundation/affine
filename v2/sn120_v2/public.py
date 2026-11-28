@@ -24,7 +24,7 @@ from .errors import V2Error
 from .params import Params
 from .payout import paid_set, payees
 from .queue import waiting
-from .state import APPLIED, RoundRecord, State
+from .state import APPLIED, NO_DECISION, RoundRecord, State
 from .types import KL_FIELDS, NOT_SCORED, NOT_TRAINED, WINNER, BoxResult, ChainSnapshot, EntryDecision, King, QueueEntry, RoundTicket, Verdict
 
 SCHEMA = "sn120-v2-public-1"
@@ -331,6 +331,20 @@ def visible_params(params: Params) -> dict[str, Any]:
     recipe.setdefault("sft_weight", params.recipe.sft_weight)
     shown["recipe"] = recipe
     return shown
+
+
+LAST_ROUND_SEATS = "returned to the front of the queue, not charged, not counted toward max_infra_attempts"
+
+
+def last_round_view(record: RoundRecord | None, note: str = "") -> dict[str, Any] | None:
+    """The last closed round. A round with no decision whose lease failed names its cause; ``note`` is its round file's note."""
+    if record is None:
+        return None
+    failed = record.outcome == NO_DECISION and record.decision is None and any(lease.status == "failed" for lease in record.leases)
+    view: dict[str, Any] = {"round_id": record.round_id, "outcome": record.outcome, "infra_failure": failed}
+    if failed:
+        view |= {"note": public_text(note), "seats": LAST_ROUND_SEATS}
+    return view
 
 
 def snapshot(

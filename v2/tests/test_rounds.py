@@ -204,6 +204,80 @@ def test_a_round_in_which_no_training_finished_fails_its_lease_and_counts_nothin
     assert list(queue) == [(3, 1003)] and (queue[(3, 1003)].infra_attempts, queue[(3, 1003)].front) == (0, True)
 
 
+def test_a_lease_failure_returns_every_seat_uncharged_with_its_count_unchanged_and_seats_it_again(world, out_of_time):
+    """A box failure closes no_decision with no decision: the seats are only returned to the front, nothing else moves."""
+    world.register(1, 0.3)
+    world.register(2, 0.0)
+    out_of_time(world, {"hk2"})
+    assert world.round().outcome == "applied"
+    assert world.controller.state.queue[(2, 1002)].infra_attempts == 1, "one counted failure before the lease fails"
+    world.trainer.fail_hotkeys = set()
+    world.register(3, 0.0)
+    served_before = set(world.controller.state.served_hotkeys)
+
+    ticket = world.controller.open_round(world.clock(), "lease-fails")[0]
+    assert seats(world.controller.state.round) == [2, 3]
+    world.controller.fail_lease(ticket.lease_id, "InfraError: simulated box outage", world.clock())
+
+    state = world.controller.state
+    record = state.rounds[-1]
+    assert record.outcome == "no_decision" and record.decision is None and [lease.status for lease in record.leases] == ["failed"]
+    assert state.round is None
+    assert sorted(state.queue) == [(2, 1002), (3, 1003)], "every seated entry stays in the queue"
+    for key in state.queue:
+        seat = state.queue[key]
+        assert (seat.front, seat.leased, seat.held) == (True, False, False)
+    assert (state.queue[(2, 1002)].infra_attempts, state.queue[(3, 1003)].infra_attempts) == (1, 0), "the counts are unchanged"
+    assert state.served_hotkeys == served_before and (2, 1002) not in state.served_regs and (3, 1003) not in state.served_regs, "not served, not charged"
+    closed = [record.data for record in read_journal(world.root / JOURNAL_FILE) if record.kind == ROUND_CLOSED][-1]
+    assert closed["outcome"] == "no_decision" and closed["attempted"] == [] and closed["held"] == [] and closed["served"] == []
+
+    world.now += world.params.apply_retry_s
+    world.trainer.fail_hotkeys, world.trainer.reject_hotkeys = set(), set()
+    again = world.round()
+    assert sorted(seats(again)) == [2, 3], "both seats are seated in the next round"
+
+
+def test_mining_json_names_the_last_closed_round_only_when_its_lease_failed(world):
+    """The last closed round in mining.json: an infra failure carries a note from its public round file, any other outcome none."""
+    from sn120_v2.layout import round_file
+    from sn120_v2.publisher import mining_document
+    from sn120_v2.public import LAST_ROUND_SEATS
+
+    class Capture:
+        def __init__(self):
+            self.snapshots = []
+
+        def publish(self, snapshot):
+            self.snapshots.append(snapshot)
+
+    capture = Capture()
+    world.controller.publisher = capture
+
+    def mining() -> dict:
+        # The publisher strips winner_stats before it renders mining.json; do the same here.
+        return mining_document({key: value for key, value in capture.snapshots[-1].items() if key != "winner_stats"})
+
+    world.register(1, 0.3)
+    ticket = world.controller.open_round(world.clock(), "lease-fails")[0]
+    world.controller.fail_lease(ticket.lease_id, "InfraError: simulated box outage", world.clock())
+    world.controller._publish(world.clock())
+    closed = world.controller.state.rounds[-1]
+    note = json.loads(world.controller.store.get(round_file(closed.round_id)))["note"]
+    assert note == "InfraError: simulated box outage"
+    assert mining()["last_round"] == {
+        "round_id": closed.round_id, "outcome": "no_decision", "infra_failure": True,
+        "note": note, "seats": LAST_ROUND_SEATS,
+    }
+    assert "max_infra_attempts" in LAST_ROUND_SEATS and "Traceback" not in json.dumps(mining())
+
+    world.now += world.params.apply_retry_s
+    applied = world.round()
+    assert applied.outcome == "applied"
+    world.controller._publish(world.clock())
+    assert mining()["last_round"] == {"round_id": applied.round_id, "outcome": "applied", "infra_failure": False}, "no note for other outcomes"
+
+
 def test_a_text_from_an_exception_is_made_safe_before_it_goes_into_a_public_file(world, monkeypatch, capsys):
     """The box holds credentials. A text from an exception can hold a signed link, a secret of the environment or an address."""
     secret, link = "v2TestSecretValue0123456789", "https://store.example/bucket/private/x.json"
