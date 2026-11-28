@@ -151,10 +151,18 @@ class SimEvaluator:
         self.fail_looks: set[int] = set()  # every call for these looks fails
         self.closed = 0
         self.parent_quality = 0.0  # tests may make the old parent stronger to reject a lucky first-round crown
+        self.candidate_quality: float | None = None  # merge_after_confirm: None re-tests the crown LoRA's own quality
 
     def score_parent(self, ticket, deadline: int = 0) -> tuple[str, ...]:
         """Fresh r+1 parent samples, with exactly null's seed derivation and no prior winner outcomes."""
         quality = self.parent_quality(ticket) if callable(self.parent_quality) else self.parent_quality
+        pending = ticket.parent.pending if ticket.parent is not None else None
+        if pending is not None and pending.deferred:
+            # merge_after_confirm: the parent slot is the crown's candidate (head + its LoRA), not the old head.
+            quality = self.candidate_quality
+            if quality is None:
+                lora_hash = pending.stacked.head.loras[-1].lora_hash
+                quality = json.loads(self.store.get(f"{layout.public_lora_prefix(lora_hash)}/adapter_config.json"))["quality"]
         strings = []
         for sample in range(ticket.params.null_samples):
             codes = []

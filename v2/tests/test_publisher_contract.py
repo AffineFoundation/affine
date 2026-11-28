@@ -614,7 +614,7 @@ def test_every_number_follows_the_pinned_params(tmp_path):
     for field in dataclasses.fields(made.params) + dataclasses.fields(recipe):  # the full table and the full recipe
         # Optional king-count, confirmation and default rotation fields are deliberately absent;
         # a selected king count and every dedup/seed field are stated.
-        assert f"`{field.name}`" in text or field.name.startswith("_") or field.name in ("recipe", "miner_bounds") or (field.name in made.params.LEFT_OUT_AT_DEFAULT and (field.name == "null_samples_per_task" or field.name == "min_kl_tok" or field.name.startswith("rotation_") or field.name == "confirm_next_round") and getattr(made.params, field.name) == field.default) or (field.name.startswith("anchor_") and made.params.anchor_n == 0)
+        assert f"`{field.name}`" in text or field.name.startswith("_") or field.name in ("recipe", "miner_bounds") or (field.name in made.params.LEFT_OUT_AT_DEFAULT and (field.name == "null_samples_per_task" or field.name == "min_kl_tok" or field.name.startswith("rotation_") or field.name == "confirm_next_round" or field.name == "merge_after_confirm") and getattr(made.params, field.name) == field.default) or (field.name.startswith("anchor_") and made.params.anchor_n == 0)
     selected = world(tmp_path / "selected", null_samples_per_task=2)
     selected_text = published(selected.publisher.snapshots[-1])[1]
     assert "`null_samples_per_task`" in selected_text

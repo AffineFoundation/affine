@@ -433,7 +433,9 @@ def confirmation_stats(state: State) -> dict[str, Any]:
             # With the confirmation rule active, only the current crown can still be awaiting its next round.
             if state.pending_king is None or record.round_id != state.pending_king.crown_round_id:
                 continue
-            status, confirmed, confirmation_round_id = "pending", None, None
+            # merge_after_confirm: the crown is not in the head; it waits for its fresh paired re-test.
+            status = "pending_confirmation" if state.pending_king.deferred else "pending"
+            confirmed, confirmation_round_id = None, None
             confirmation_z = confirmation_delta = None
             paid = False
         else:
@@ -450,6 +452,8 @@ def confirmation_stats(state: State) -> dict[str, Any]:
             "z": winner.score.z, "delta": winner.score.delta, "status": status,
             "confirmation_round_id": confirmation_round_id, "confirmed": confirmed,
             "confirmation_z": confirmation_z, "confirmation_delta": confirmation_delta, "paid": paid,
+            # merge_after_confirm only: true once a confirmation merged the crown into the head.
+            **({"merged": resolution is not None and resolution[1].merged} if state.params.merge_after_confirm else {}),
         })
 
     tested = [row for row in rows if row["status"] in ("paid", "unpaid")]
@@ -468,7 +472,7 @@ def confirmation_stats(state: State) -> dict[str, Any]:
     unpaid_z = [row["z"] for row in tested if row["status"] == "unpaid"]
     return {
         "rows": rows, "bands": bands, "cumulative": cumulative,
-        "total": {**aggregate(tested), "pending": sum(row["status"] == "pending" for row in rows),
+        "total": {**aggregate(tested), "pending": sum(row["status"] in ("pending", "pending_confirmation") for row in rows),
                   "no_decision": sum(row["status"] == "no_decision" for row in rows)},
         "lowest_paid_z": min(paid_z) if paid_z else None,
         "highest_unpaid_z": max(unpaid_z) if unpaid_z else None,
@@ -519,7 +523,8 @@ def _winner_stats(records: Sequence[RoundRecord], kings_seq: Sequence[King], hea
         frozen = next((seat.batch for lease in record.leases for seat in lease.entries
                        if seat.queue_pos == winner.queue_pos and seat.batch.batch_sha256 == winner.batch_sha256), None)
         king = kings.get(record.round_id)
-        new_head = king.new_version_id if king is not None and not isinstance(king, King) else king.head_version_id if king is not None else None
+        deferred = king is not None and not isinstance(king, King) and king.deferred  # not in the head before its confirmation
+        new_head = (None if deferred else king.new_version_id) if king is not None and not isinstance(king, King) else king.head_version_id if king is not None else None
         head = next((head for head in reversed(heads) if new_head is not None and head.version_id == new_head), None)
         if head is None:
             head = next((head for head in reversed(heads) if any(ref.round_id == record.round_id for ref in head.loras)), None)
@@ -530,7 +535,9 @@ def _winner_stats(records: Sequence[RoundRecord], kings_seq: Sequence[King], hea
             head = next((head for head in reversed(heads) if head.round_id == record.round_id), None)
         confirmation = confirmations.get(record.round_id)
         pending_king = king is not None and not isinstance(king, King)
-        applied_at = king.applied_at if king is not None else (head.applied_at if head is not None else record.closed_at)
+        if deferred:
+            head = None
+        applied_at = king.applied_at if king is not None and not deferred else (head.applied_at if head is not None else record.closed_at)
         row = {
             "round_id": record.round_id,
             "uid": winner.uid,

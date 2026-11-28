@@ -141,6 +141,8 @@ def test_each_param_alone_moves_the_text(tmp_path):
                 continue
             if name == "z_crown":  # valid only with crown_gate argmax_symmetric, not this field_median base; test_z_crown.py covers its rows and text
                 continue
+            if name == "merge_after_confirm":  # valid only with confirm_next_round; test_merge_after_confirm.py covers its row and text
+                continue
             if name.startswith("anchor_"):  # anchor_n > 0 is valid only with crown_gate argmax_symmetric; test_anchors.py covers its rows and text
                 continue
             value, changed = one_changed(record, name)

@@ -59,6 +59,7 @@ from .state import (
     APPLIED,
     APPLY_DEFERRED,
     CONFIRMATION_RESOLVED,
+    CROWN_DEFERRED,
     GENESIS,
     HEAD_APPLIED,
     HEAD_FOLDED,
@@ -79,6 +80,7 @@ from .state import (
     RoundRecord,
     State,
     apply,
+    legacy_revert_refusal,
     load,
     replay,
     revert_refusal,
@@ -572,6 +574,9 @@ class Controller:
         if not self.params.confirm_next_round or self.state.pending_king is None:
             return None
         pending = self.state.pending_king
+        if pending.deferred:
+            # merge_after_confirm: the slot scores the crown's folded candidate against this round's unchanged head.
+            return ParentEval(pending, pending.candidate if pending.parent_version_id == self.state.head.version_id else None)
         # A missing manifest is an explicit unscoreable parent, not a reason to block this round's candidates.
         return ParentEval(pending, self.state.manifests.get(pending.parent_version_id))
 
@@ -969,17 +974,50 @@ class Controller:
     # ------------------------------------------------------------ apply, fold, close
 
     def _resolve_confirmation(self, pairs: Leases, now: int) -> None:
-        """Settle the previous crown once, before this round can install another one.
+        """Settle the previous crown once; under merge_after_confirm then revert a failed legacy crown (idempotent)."""
+        merged = self._resolve_confirmation_once(pairs, now)
+        if merged:
+            self._publish_merged(now)
+        self._revert_failed_legacy(now)
+
+    def _publish_merged(self, now: int) -> None:
+        """A confirmation merged a deferred crown: its stacked manifest is public, then the head moves in public."""
+        stacked = self.state.manifests[self.state.head.parent_version_id]
+        try:
+            put_record(self.store, layout.head_manifest(stacked.head.version_id), stacked)
+        except (InfraError, VerifyError) as exc:
+            self.last_error = f"head manifest not published yet: {exc}"
+        self._publish_head_now(now)
+
+    def _revert_failed_legacy(self, now: int) -> None:
+        """merge_after_confirm: a legacy crown (installed at its crown) that failed or had no decision leaves the head.
+
+        Only while it is still the head tip. ``HEAD_REVERTED`` names the open round; the fast head publish follows.
+        """
+        record = self.state.round
+        if record is None or record.confirmation is None or not self.params.merge_after_confirm:
+            return
+        target = record.confirmation.parent_version_id
+        if legacy_revert_refusal(self.state, record.round_id, target):
+            return
+        reason = f"merge_after_confirm: the legacy crown of {record.confirmation.pending_round_id} was not confirmed ({record.confirmation.reason or 'failed'})"
+        self._log(HEAD_REVERTED, {"from_version_id": self.state.head.version_id, "to_version_id": target, "reason": reason,
+                                  "round_id": record.round_id}, now)
+        self._sync_pointer()
+        self._publish_head_now(now)
+
+    def _resolve_confirmation_once(self, pairs: Leases, now: int) -> bool:
+        """Settle the previous crown once, before this round can install another one. True when a deferred crown merged.
 
         Only sealed fresh r+1 outcomes are read here. In particular round r's winner_outcomes are never an input.
         Any absent/failed parent evidence is an explicit no_decision and leaves the installed head untouched.
         """
         record = self.state.round
         if record is None or record.confirmation is not None or self.state.pending_king is None:
-            return
+            return False
         pending = self.state.pending_king
         if pending.crown_round_id == record.round_id:
-            return  # the crown's own close installs its pending slot; only the next round can settle it
+            return False  # the crown's own close installs its pending slot; only the next round can settle it
         request = record.parent
         failed = self._pending_fails_checks(pending)
         if failed:
@@ -992,7 +1030,7 @@ class Controller:
                 reason=failed,
             )
             self._log(CONFIRMATION_RESOLVED, {"round_id": record.round_id, "confirmation": confirmation.to_dict()}, now)
-            return
+            return False
         # No clean parent slot means no usable comparison: expire the old crown before any immediate new crown.
         if request is None or request.pending != pending:
             confirmation = Confirmation(
@@ -1004,8 +1042,12 @@ class Controller:
                 reason="no_decision: confirmation was disabled or the round did not pin the pending parent",
             )
             self._log(CONFIRMATION_RESOLVED, {"round_id": record.round_id, "confirmation": confirmation.to_dict()}, now)
-            return
-        if request.manifest is not None and request.manifest.head.version_id != pending.parent_version_id:
+            return False
+        if pending.deferred and self.state.head.version_id != pending.parent_version_id:
+            fields = dict(reason="no_decision: the head moved since the crown; its candidate was not tested on this head")
+        elif pending.deferred and request.manifest is not None and request.manifest != pending.candidate:
+            fields = dict(reason="no_decision: the confirming round pinned another candidate")
+        elif not pending.deferred and request.manifest is not None and request.manifest.head.version_id != pending.parent_version_id:
             fields = dict(reason="no_decision: the confirming round pinned another parent head")
         else:
             fields: dict[str, Any] = dict(reason="no_decision: no fresh parent result arrived")
@@ -1015,10 +1057,17 @@ class Controller:
             if usable:
                 ticket, result = usable[0]
                 try:
-                    new_outcomes = result.null_outcomes[:1] if legacy_parent_one_sample(ticket.params, len(result.parent_outcomes)) else result.null_outcomes
+                    if pending.deferred:
+                        # merge_after_confirm: the parent slot scored the candidate (head + crown LoRA, folded); null is the unchanged head.
+                        if not len(result.parent_outcomes) == ticket.params.null_samples == len(result.null_outcomes):
+                            raise ValueError("the candidate and the head need the same full fresh draw")
+                        new_outcomes, old_outcomes = result.parent_outcomes, result.null_outcomes
+                    else:
+                        new_outcomes = result.null_outcomes[:1] if legacy_parent_one_sample(ticket.params, len(result.parent_outcomes)) else result.null_outcomes
+                        old_outcomes = result.parent_outcomes
                     # Confirmation uses the gate tasks only; anchors are cut out of both sides.
                     fields = score_confirmation(gate_draw(ticket.draw).weights, gate_outcomes(ticket.draw, new_outcomes),
-                                                gate_outcomes(ticket.draw, result.parent_outcomes),
+                                                gate_outcomes(ticket.draw, old_outcomes),
                                                 z_bar=ticket.params.z_bar if ticket.params.crown_gate == "argmax_symmetric" else 0.0,
                                                 crown_z=pending.z)
                 except Exception as exc:  # malformed/unavailable parent evidence can never silently confirm
@@ -1037,13 +1086,19 @@ class Controller:
             excluded_training_prompts=record.excluded_training_prompts,
             **fields,
         )
+        merged = pending.deferred and confirmation.confirmed
+        if merged:
+            confirmation = dataclasses.replace(confirmation, merged=True)
         self._log(CONFIRMATION_RESOLVED, {"round_id": record.round_id, "confirmation": confirmation.to_dict()}, now)
+        return merged
 
     def _finish(self, now: int) -> None:
         record = self.state.round
         pairs = self._leases(record, "done")
         self._resolve_confirmation(pairs, now)
         record = self.state.round
+        if self.params.merge_after_confirm:
+            return self._finish_deferred(record, pairs, now)
         winner = record.decision.winner
         tested = next((entry for _, result in pairs for entry in result.entries if winner is not None and entry.queue_pos == winner.queue_pos), None)
         made = None
@@ -1063,6 +1118,79 @@ class Controller:
         charged = any(entry.charged for entry in record.decision.entries)
         self._close(APPLIED if winner else (NULL if charged else NO_DECISION), pairs, now)
 
+    def _finish_deferred(self, record: RoundRecord, pairs: Leases, now: int) -> None:
+        """merge_after_confirm: the confirmation (with its merge or revert) is settled; then this round's winner is deferred.
+
+        The winner never touches the head here. Its LoRA is stacked on the head as it is now and folded into a
+        candidate, which the next round re-tests against that head. Only a confirmation installs the candidate.
+        """
+        winner = record.decision.winner
+        if winner is not None and not record.applied:
+            if self.overlap is not None:  # the chain read of the next open starts here, beside the fold
+                self.overlap.look_ahead(now)
+            try:
+                self._defer_crown(record, pairs, now)
+            except (VerifyError, HeadMismatchError) as exc:
+                return self._close(ABANDONED, pairs, now, str(exc))
+            except InfraError as exc:
+                if record.apply_attempts + 1 >= self.params.apply_max_attempts:
+                    return self._close(ABANDONED, pairs, now, f"apply failed {self.params.apply_max_attempts} times: {exc}")
+                self.last_error = f"crown candidate failed: {exc}"
+                return self._log(APPLY_DEFERRED, {"round_id": record.round_id, "reason": str(exc)}, now)
+        charged = any(entry.charged for entry in record.decision.entries)
+        self._close(APPLIED if winner else (NULL if charged else NO_DECISION), pairs, now)
+
+    def _defer_crown(self, record: RoundRecord, pairs: Leases, now: int) -> None:
+        """Publish the winner's LoRA and batch, fold its candidate head, and journal it as the deferred pending crown."""
+        from .gpu.merged import assert_tested_result
+
+        winner = record.decision.winner
+        ticket, result = next(pair for pair in pairs if any(e.queue_pos == winner.queue_pos for e in pair[0].entries))
+        seat = next(e for e in ticket.entries if e.queue_pos == winner.queue_pos)
+        tested = next(e for e in result.entries if e.queue_pos == winner.queue_pos)
+        artifact = tested.lora
+        assert_tested_result(ticket.params, tested)
+        self._winner_to_public(record, seat, artifact)
+        head = self.state.head
+        # If the head moved in this round (a merged or reverted crown), the LoRA is stacked on the head of now; its
+        # candidate is a plain fold, and the next round's fresh paired test of exactly that fold decides.
+        stacked = apply_lora(head, dataclasses.replace(artifact, head_version_id=head.version_id), lora_ref(record.round_id, seat, artifact), now)
+        params, proof = self.params, (tested if self.params.eval_merged else None)
+        if head.version_id != record.head_version_id:
+            params, proof = dataclasses.replace(params, eval_merged=False), None
+        if self.folder is None:
+            raise ConfigError("a crown candidate needs a folder")
+        self._check_pins("the crown candidate was not folded")
+        with timed(f"candidate of {record.round_id}: the fold (the sum, the upload to pending/ and its check)"):
+            fold = self.folder.fold(stacked, params, layout.pending_fold_prefix(stacked.version_id), **({"tested": proof} if params.eval_merged else {}))
+        with timed(f"candidate of {record.round_id}: the promotion of the base and the master"):
+            self.head.promote(self.store, fold)
+        candidate = fold_head(stacked, fold, now)
+        parent = self.state.manifest
+        stacked_manifest = HeadManifest(stacked, parent.base_files, parent.master_files, {artifact.lora_hash: artifact.files})
+        candidate_manifest = HeadManifest(candidate, fold.base_files, fold.master_files, {})
+        pending = PendingKing(seat.reg.uid, seat.reg.hotkey, record.round_id, head.version_id, stacked.version_id,
+                              seat.batch.batch_sha256, now, winner.score.z, deferred=True,
+                              stacked=stacked_manifest, candidate=candidate_manifest)
+        self._log(CROWN_DEFERRED, {"round_id": record.round_id, "pending": pending.to_dict()}, now)
+        with timed(f"candidate of {record.round_id}: the delete of its files in pending/"):
+            delete_pending(self.store, fold.prefix)
+
+    def _winner_to_public(self, record: RoundRecord, seat: Any, artifact: LoRAArtifact) -> None:
+        """The winner's LoRA and its frozen batch to public/, the batch checked by sha256."""
+        with timed(f"king of {record.round_id}: the winner's LoRA to public/"):
+            promote_lora(self.store, artifact)
+        started = time.monotonic()
+        public_batch = layout.winner_batch(record.round_id)
+        try:
+            self.store.copy(seat.batch.uri, public_batch)
+        except KeyError:
+            raise VerifyError("the winner's frozen batch is missing") from None
+        if self.store.sha256(public_batch) != seat.batch.batch_sha256:
+            self.store.delete(public_batch)
+            raise VerifyError("the winner's frozen batch does not match its sha256")
+        log_time(f"king of {record.round_id}: the winner's batch file to public/", started)
+
     def _apply(self, record: RoundRecord, pairs: Leases, now: int) -> FoldArtifact | None:
         """Verify and promote the winner, then append the new head. The journal record is the commit point.
 
@@ -1077,18 +1205,7 @@ class Controller:
         assert_tested_result(ticket.params, next(e for e in result.entries if e.queue_pos == winner.queue_pos))
 
         def to_public() -> None:
-            with timed(f"king of {record.round_id}: the winner's LoRA to public/"):
-                promote_lora(self.store, artifact)
-            started = time.monotonic()
-            public_batch = layout.winner_batch(record.round_id)
-            try:
-                self.store.copy(seat.batch.uri, public_batch)
-            except KeyError:
-                raise VerifyError("the winner's frozen batch is missing") from None
-            if self.store.sha256(public_batch) != seat.batch.batch_sha256:
-                self.store.delete(public_batch)
-                raise VerifyError("the winner's frozen batch does not match its sha256")
-            log_time(f"king of {record.round_id}: the winner's batch file to public/", started)
+            self._winner_to_public(record, seat, artifact)
 
         def stacked() -> HeadVersion:
             return apply_lora(self.state.head, artifact, lora_ref(record.round_id, seat, artifact), now)
@@ -1208,7 +1325,9 @@ class Controller:
         texts = [reason, *((decision.reason, *(entry.reason for entry in decision.entries)) if decision else ())]
         for text in dict.fromkeys(text for text in texts if public_text(text) != text):
             print(f"round {record.round_id}: the public round file holds a changed form of this text. The full text: {text}", file=sys.stderr, flush=True)
-        report["new_head_version_id"] = self.state.head.version_id if outcome == APPLIED else None
+        # merge_after_confirm: the head moves only by a merged confirmation or a legacy revert, never by this round's crown.
+        moved = self.state.head.version_id != record.head_version_id if params.merge_after_confirm else outcome == APPLIED
+        report["new_head_version_id"] = self.state.head.version_id if moved else None
         self.store.put(layout.round_file(record.round_id), canonical_json(report))
         data = {"round_id": record.round_id, "outcome": outcome, "reason": reason, "snapshot_id": snapshot_id}
         if self.pool is not None and self._rotation is not None and outcome in (APPLIED, NULL) and pairs:
@@ -1273,14 +1392,26 @@ class Controller:
         # The task table learns from the gate tasks only; anchors are retired tasks and stay out of IRT.
         outcomes = {NULL_MODEL: gate_outcomes(ticket.draw, result.null_outcomes)}
         outcomes |= {e.lora.lora_hash: gate_outcomes(ticket.draw, e.outcomes) for _, r in pairs for e in r.entries if e.lora is not None}
-        winner = self.state.round.decision.winner
+        record = self.state.round
+        winner = record.decision.winner
         applied = outcome == APPLIED
+        winner_lora_hash = winner.lora_hash if applied else ""
+        if self.params.merge_after_confirm:
+            # The head moved only if this round's confirmation merged the deferred crown: that candidate is the new head.
+            winner_lora_hash, applied = "", record.confirmation is not None and record.confirmation.merged
+            merged = record.parent.pending.stacked if applied and record.parent is not None else None
+            scored = next((result.parent_outcomes for t, result in pairs if t.parent == record.parent and result.parent_outcomes), ())
+            if merged is None or not scored:
+                applied = False
+            else:
+                winner_lora_hash = merged.head.loras[0].lora_hash
+                outcomes[winner_lora_hash] = gate_outcomes(ticket.draw, scored)
         try:
             snapshot_id = self.sampler.update(
                 ticket.head,
                 gate_draw(ticket.draw),
                 outcomes,
-                winner_lora_hash=winner.lora_hash if applied else "",
+                winner_lora_hash=winner_lora_hash if applied else "",
                 new_head_version_id=self.state.head.version_id if applied else "",
             )
             self._store_snapshot(snapshot_id)
