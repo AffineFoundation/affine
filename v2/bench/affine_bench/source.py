@@ -28,6 +28,38 @@ def store():
     return functools.reduce(getattr, factory.split("."), importlib.import_module(module))()
 
 
+def reverted_version_ids():
+    """Head version ids listed as reverted in the public head chain."""
+    ids = set()
+
+    def add(value):
+        if isinstance(value, str) and value:
+            ids.add(value)
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            for item in value:
+                add(item)
+        elif isinstance(value, dict):
+            add(value.get("reverted_version_ids"))
+            add(value.get("reverted_heads"))
+
+    def take(doc):
+        if not isinstance(doc, dict):
+            return
+        body = doc["head_chain"] if isinstance(doc.get("head_chain"), dict) else doc
+        add(body.get("reverts"))
+        add(body.get("reverted_heads"))
+        add(doc.get("reverted_heads"))
+
+    for key in (layout.HEAD_CHAIN, layout.MINING_JSON):
+        try:
+            take(json.loads(store().get(key)))
+        except KeyError:
+            continue
+        if ids:
+            break
+    return frozenset(ids)
+
+
 def _manifest(version_id):
     if version_id not in _manifests:
         m = HeadManifest.from_json(store().get(layout.head_manifest(version_id)))
@@ -91,6 +123,8 @@ def models():
                 uid = hotkey = None  # the round file is not published yet
             row |= dict(model_id="king-" + k[:16], kind="king", label=f"{head.round_id} {k[:8]}", uid=uid, hotkey=hotkey)
         rows.append(row)
+    # Current and already-published rows are filtered together in publish(). Keeping this
+    # lineage intact lets that filter also remove historical rows that still have scores.
     return sorted(rows, key=lambda r: r["crowned_at"])
 
 

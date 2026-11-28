@@ -211,6 +211,59 @@ def test_a_round_with_no_result_is_listed_and_its_entries_have_no_status(tmp_pat
     assert "r.status == null ? NO_RESULT" in script and "'NO RESULT'" in script
 
 
+def chart_rounds(snap: dict) -> list[dict]:
+    """An ordinary round, a failed next-round confirmation, and a no-decision round."""
+    ordinary = json.loads(json.dumps(snap["history"][0]))
+    ordinary.update(round_id="r000162", head_version_id="h162", opened_at=100, closed_at=200, null_pass_rate=.559)
+    reverted = json.loads(json.dumps(ordinary))
+    reverted.update(round_id="r000163", head_version_id="h163", opened_at=200, closed_at=300)
+    for entry in reverted["entries"]:
+        if entry["status"] == "winner":
+            entry.update(z=21.87, uid=829)
+    failed = json.loads(json.dumps(reverted))
+    failed.update(round_id="r000164", head_version_id="h164", outcome="null", winner_uid=None, confirmation={
+        "pending_round_id": "r000163", "confirmed": False, "new_version_id": "99980e2c",
+    })
+    no_decision = json.loads(json.dumps(ordinary))
+    no_decision.update(round_id="r000165", outcome="no_decision", winner_uid=None, null_pass_rate=0.0, reason="no entry was scored")
+    return [no_decision, failed, reverted, ordinary]
+
+
+def test_charts_mark_reverted_rounds_and_null_no_decision_pass_rates(tmp_path):
+    snap = snapshot(tmp_path)
+    snap["history"] = chart_rounds(snap)
+    snap["head_chain"] = {"reverts": [{"reverted_version_ids": ["99980e2c", "da9acbf7"]}]}
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0, done.stderr
+    data = json.loads(text)
+    rows = {r["round_id"]: r for r in data["rounds"]}
+    assert rows["r000163"]["reverted"] is True and rows["r000163"]["best_z"] == 21.87
+    assert rows["r000163"]["revert_note"] == "head reverted after a failed next-round confirmation; unpaid"
+    assert rows["r000165"]["reverted"] is False and rows["r000165"]["best_z"] is not None
+    assert rows["r000165"]["null_pass"] is None and rows["r000165"]["winner_pass"] is None
+    assert rows["r000162"]["reverted"] is False and rows["r000162"]["null_pass"] == .559
+    assert rows["r000164"]["reverted"] is False
+    assert all("reverted" in r for r in data["rounds"])
+
+
+def test_reverted_round_fallback_uses_the_next_head(tmp_path):
+    snap = snapshot(tmp_path)
+    snap["history"] = chart_rounds(snap)[:3]
+    snap["history"][0].pop("confirmation", None)
+    snap["history"][0]["head_version_id"] = "99980e2c"
+    snap["head_chain"] = {"reverted_heads": ["99980e2c"]}
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0, done.stderr
+    assert next(r for r in json.loads(text)["rounds"] if r["round_id"] == "r000163")["reverted"] is True
+
+
+def test_site_chart_rendering_with_node(tmp_path):
+    script = Path(__file__).parent / "site_charts.test.cjs"
+    done = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "PASS" in done.stdout
+
+
 def test_queue_lists_the_round_first_and_its_total_matches_the_rows(tmp_path):
     snap = snapshot(tmp_path)
     queue = json.loads(build(tmp_path, snap)[2])["queue"]
