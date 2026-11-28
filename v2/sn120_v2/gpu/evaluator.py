@@ -88,11 +88,18 @@ class CancellableHttp:
         self._cancelled: set[str] = set()
         self._active: dict[str, set[Any]] = {}
 
-    def reset(self) -> None:
+    def reset(self, *, stale_ok: bool = False) -> None:
+        """Start an evaluation with no cancellations left by an earlier one.
+
+        ``stale_ok`` forgets leftover request bookkeeping instead of raising;
+        the caller uses it only when no request of the current evaluation exists yet.
+        """
         with self._lock:
-            if any(self._active.values()):
+            if not stale_ok and any(self._active.values()):
                 raise ContractError("an earlier evaluation still has requests in flight")
             self._cancelled.clear()
+            if stale_ok:
+                self._active.clear()
 
     def cancel(self, model: str) -> None:
         with self._lock:

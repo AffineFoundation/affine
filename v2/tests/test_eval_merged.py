@@ -613,7 +613,7 @@ def test_merged_server_switch_waits_for_inflight_requests(build):
     evaluator._rollout = rollout
     worker = SoloWorker(evaluator, ticket, scheduler.trained, 10_000, 0)
     answers, claims = [], [(NULL_MODEL, 0, 1), (lora.lora_hash, 1, 3)]
-    thread = threading.Thread(target=lambda: worker.run(steal=lambda gpu, owner: claims.pop(0) if claims else None, result=lambda *job: answers.append(job), judge=lambda *args: None, alive=lambda: True, deadline=0))
+    thread = threading.Thread(target=lambda: worker.run(steal=lambda gpu, owner, bound="": claims.pop(0) if claims else None, result=lambda *job: answers.append(job), judge=lambda *args: None, alive=lambda: True, deadline=0))
     thread.start()
     deadline = __import__("time").monotonic() + 10
     while len(active) < 1 and __import__("time").monotonic() < deadline:

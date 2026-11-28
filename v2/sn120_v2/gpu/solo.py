@@ -20,7 +20,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Sequence
 
-from ..errors import InfraError
+from ..errors import ContractError, InfraError
 from ..judging import drop_at_look, score_entry
 from ..types import KL_FIELDS, NOT_RUN, NOT_SCORED, NULL_MODEL, SCORED, BoxResult, EntryResult, EvalRequest, LoRAArtifact, RoundTicket
 from ..worker import AT_THE_LEASE_S, LocalRunner
@@ -44,17 +44,24 @@ def lpt_train_all(entries: Sequence, prior: dict[int, float] | None = None) -> l
     return sorted(entries, key=lambda entry: (-prior.get(entry.queue_pos, float(entry.batch.n_rollouts)), entry.queue_pos))
 
 
-def choose_claim(remaining: Counter, alive: set[str], n_tasks: int, block: int, owner: str = "", own_first: bool = False) -> tuple[str, int, int] | None:
+NEEDED_RETRIES = 2  # extra tries for a rollout that a still-needed model requires
+
+
+def choose_claim(remaining: Counter, alive: set[str], n_tasks: int, block: int, owner: str = "", own_first: bool = False, bound: str = "") -> tuple[str, int, int] | None:
     """Choose null, own work, or the longest remaining live candidate.
 
-    Values are the next unclaimed task indexes. Null leads when it is not
-    ahead of the owner's next task. Otherwise the owner goes first; a worker
-    without an owner steals from the candidate with the most unclaimed work.
+    Values are the next unclaimed task indexes. A worker keeps its bound
+    model while that model has unclaimed work, because a switch restarts its
+    server. Otherwise null leads when it is not ahead of the owner's next
+    task. The owner goes first; a worker without an owner steals from the
+    candidate with the most unclaimed work.
     """
     candidates = [model for model in remaining if remaining[model] < n_tasks and (model == NULL_MODEL or model in alive)]
     if not candidates:
         return None
-    if own_first and owner in candidates:
+    if bound and bound in candidates:
+        model = bound
+    elif own_first and owner in candidates:
         model = owner
     elif owner not in candidates and owner != NULL_MODEL:
         model = max(candidates, key=lambda name: (n_tasks - remaining[name], name == NULL_MODEL))
@@ -137,13 +144,22 @@ class SoloScheduler:
             raise InfraError(f"no tested merged base is recorded for {model}")
         return self.tested[pos].path
 
-    def steal(self, gpu: int, owner: str) -> tuple[str, int, int] | None:
+    def needs(self, model: str) -> bool:
+        """Can a rollout of this model still change the round's outcome?"""
+        with self.changed:
+            if self.failure is not None or self.cut:
+                return False
+            if model == NULL_MODEL:
+                return self.confirmation_needed or bool(self.alive) or not self.training_done
+            return any(self.trained[pos].lora_hash == model for pos in self.alive)
+
+    def steal(self, gpu: int, owner: str, bound: str = "") -> tuple[str, int, int] | None:
         with self.changed:
             while True:
                 if self.failure is not None or self.cut or (self.training_done and not self.alive and not self.confirmation_needed):
                     return None
                 names = {lora.lora_hash for lora in self.trained.values()}
-                claim = choose_claim(self.remaining, names & {self.trained[pos].lora_hash for pos in self.alive}, self.n, self.runner.settings.steal_block_tasks, owner, own_first=self.params.eval_merged)
+                claim = choose_claim(self.remaining, names & {self.trained[pos].lora_hash for pos in self.alive}, self.n, self.runner.settings.steal_block_tasks, owner, own_first=self.params.eval_merged, bound=bound)
                 if claim is not None:
                     model, start, stop = claim
                     self.remaining[model] = stop
@@ -281,6 +297,7 @@ class SoloWorker:
         pending: set[Future] = set()
         stopped = False
         held_claim = None
+        tries: Counter = Counter()  # extra attempts of each rollout job on this worker
 
         def switch(model):
             nonlocal bound, url
@@ -301,7 +318,7 @@ class SoloWorker:
             try:
                 while pending or not stopped:
                     while not stopped and len(pending) < self._client_cap() and held_claim is None:
-                        claim = steal(self.gpu, self.owner)
+                        claim = steal(self.gpu, self.owner, bound) if self.params.eval_merged else steal(self.gpu, self.owner)
                         if claim is None:
                             stopped = True
                             break
@@ -345,9 +362,19 @@ class SoloWorker:
                                 self.scheduler.deadline_cut()
                             continue
                         except _Cancelled:
-                            continue
+                            reply = None
                         if reply is None:
-                            continue
+                            # A rollout that a still-needed model requires is never dropped silently.
+                            if self.scheduler is not None and not self.scheduler.needs(job[0]):
+                                continue
+                            if tries[job] < NEEDED_RETRIES:
+                                tries[job] += 1
+                                pending.add(submit(clients, *job))
+                                continue
+                            error = InfraError(f"a needed rollout returned no result after {NEEDED_RETRIES + 1} tries: model {job[0]}, sample {job[1]}, task index {job[2]}")
+                            if self.scheduler is not None:
+                                self.scheduler.fail(error)
+                            raise error
                         jobs.append(job)
                         replies.append(reply)
                     if jobs:
@@ -405,9 +432,20 @@ class SoloRunner(LocalRunner):
                         cleanup(ticket.round_id)
         return super().run(ticket)
 
+    def _start_http_round(self) -> None:
+        """Forget cancellations of an earlier round, so null and LoRA requests are sent again."""
+        reset = getattr(getattr(self.evaluator, "http", None), "reset", None)
+        if reset is None:
+            return
+        try:
+            reset()
+        except ContractError:
+            reset(stale_ok=True)  # leftovers of an earlier round are stale and must not fail this one
+
     def _solo_run_round(self, ticket: RoundTicket):
         started, params = self.clock(), ticket.params
         wall_started = time.monotonic()
+        self._start_http_round()
         begin_round = getattr(self.evaluator, "begin_round", None)
         if begin_round is not None:
             begin_round(ticket)

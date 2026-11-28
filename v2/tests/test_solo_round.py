@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 from types import SimpleNamespace
+
+import pytest
 
 from sn120_v2.gpu.evaluator import _Deadline
 from sn120_v2.gpu.solo import SoloRunner, SoloScheduler, SoloSettings, SoloWorker
 from sn120_v2.judging import check_result
 from sn120_v2.sampling import rollout_seed
-from sn120_v2.types import NULL_MODEL
+from sn120_v2.types import NULL_MODEL, PASS
 
 
 class Worker:
@@ -292,3 +295,139 @@ def test_more_batches_than_gpus_never_prewarms_between_training_jobs(build):
         assert first_server is not None, events
         assert first_train < last_train_end < first_server
         assert not any(event == ("train", gpu) for event in events[first_server + 1:])
+
+
+def _solo_evaluator(http, *, rollout=None):
+    """A solo evaluator whose rollouts go through the given http object."""
+    from sn120_v2.gpu.evaluator import VllmEvaluator
+    from sn120_v2.gpu.solo import SoloWorker as Worker_
+
+    class Pool:
+        def task(self, task_id):
+            return SimpleNamespace(messages=lambda: [{"role": "user", "content": task_id}])
+
+    class Evaluator:
+        _rollout = VllmEvaluator._rollout  # the real request path, cancellation included
+        solo_worker = lambda self, ticket, trained, deadline, gpu: Worker_(self, ticket, trained, deadline, gpu)
+
+        def __init__(self):
+            self.http, self.pool, self.capture = http, Pool(), None
+            self.settings = SimpleNamespace(retries=0)
+            self._solo_servers = {gpu: SimpleNamespace(alive=lambda: True) for gpu in range(4)}
+
+        def clients_for(self, params):
+            return 2
+
+        def _serve_one(self, head, params, table, gpu, model=NULL_MODEL, base_dir=None):
+            return f"http://gpu{gpu}"
+
+        def _load_one(self, gpu, lora):
+            pass
+
+        def _grade(self, tasks, jobs, replies, request):
+            return {job: PASS for job in jobs}
+
+        def close(self):
+            pass
+
+    evaluator = Evaluator()
+    if rollout is not None:
+        evaluator._rollout = rollout
+    return evaluator
+
+
+def test_second_solo_round_scores_null_after_an_earlier_round_cancelled_it(build, monkeypatch):
+    """Prod r000166/r000167: a round that cancelled null left it cancelled for every later round of the process."""
+    import json
+    import urllib.request
+
+    from sn120_v2.gpu.evaluator import CancellableHttp
+    from sn120_v2.types import NOT_TRAINED, EntryResult
+
+    sent = []
+
+    class Reply:
+        def __init__(self, body):
+            self.body = body
+
+        def read(self):
+            return self.body
+
+        def close(self):
+            pass
+
+    def urlopen(request, timeout=None):
+        sent.append(json.loads(request.data)["model"])
+        return Reply(json.dumps({"choices": [{"message": {"content": "answer"}, "finish_reason": "stop"}], "usage": {"completion_tokens": 1}}).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    now = int(time.time())
+    params = build.params(n_tasks=8, n_gpus=1, looks=(1.0,), eval_chunk_tasks=4)
+    ticket = dataclasses.replace(build.ticket(n_entries=1, n_tasks=8, params=params), issued_at=now, expires_at=now + 3000)
+    artifact = build.artifact(ticket.head, ticket.entries[0], params)
+    http = CancellableHttp()  # one object for the whole process, as in production
+    evaluator = _solo_evaluator(http)
+
+    class Trainer:
+        trains = False
+
+        def train(self, request):
+            if not self.trains:
+                return EntryResult(request.entry.queue_pos, NOT_TRAINED, reason="no batch finished training")
+            return artifact
+
+        def close(self):
+            pass
+
+    trainer = Trainer()
+    runner = SoloRunner(trainer, evaluator, time.time, build.image, settings=SoloSettings(steal_block_tasks=2), poll_s=0.01)
+    first = runner.run(ticket)  # no LoRA: training_finished cancels null
+    assert not first.null_outcomes
+    assert NULL_MODEL in http._cancelled
+
+    trainer.trains = True
+    sent.clear()
+    second = runner.run(ticket)
+    assert second.null_outcomes == (PASS * 8,)
+    assert second.entries[0].outcomes == (PASS * 8,)
+    assert sent.count(NULL_MODEL) == 8 * params.null_samples
+    check_result(ticket, second)
+
+
+@pytest.mark.parametrize("failures", [1, 99], ids=["transient", "persistent"])
+def test_needed_null_rollout_without_reply_is_retried_then_fails_specifically(build, failures):
+    from collections import Counter
+
+    from sn120_v2.errors import InfraError
+
+    params = build.params(n_tasks=4, n_gpus=1, looks=(1.0,), eval_chunk_tasks=2)
+    ticket = build.ticket(n_entries=1, n_tasks=4, params=params)
+    artifact = build.artifact(ticket.head, ticket.entries[0], params)
+    attempts = Counter()
+
+    def rollout(request, url, job, written):
+        if job[0] == NULL_MODEL:
+            attempts[job] += 1
+            if attempts[job] <= failures:
+                return None
+        return (PASS, False)
+
+    evaluator = _solo_evaluator(None, rollout=rollout)
+
+    class Trainer:
+        def train(self, request):
+            return artifact
+
+        def close(self):
+            pass
+
+    runner = SoloRunner(Trainer(), evaluator, lambda: 1000, build.image, settings=SoloSettings(steal_block_tasks=2), poll_s=0.01)
+    if failures == 1:
+        result = runner.run(ticket)
+        assert result.null_outcomes == (PASS * 4,)
+        assert attempts[NULL_MODEL, 0, 0] == 2
+    else:
+        with pytest.raises(InfraError, match="a needed rollout returned no result after 3 tries: model null, sample 0, task index 0") as info:
+            runner.run(ticket)
+        assert "solo scoring ended before" not in str(info.value)
+        assert attempts[NULL_MODEL, 0, 0] == 3

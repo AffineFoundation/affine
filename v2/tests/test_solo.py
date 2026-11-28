@@ -215,3 +215,33 @@ def test_lora_that_finishes_a_look_before_null_is_dropped_when_null_catches_up(b
     assert len(scheduler.scored[0][0]) == 4
     scheduler.result(lora.lora_hash, 0, 8, PASS)
     assert len(scheduler.scored[0][0]) == 4
+
+
+def test_merged_worker_keeps_its_bound_candidate_while_it_has_unclaimed_work():
+    from collections import Counter
+
+    # The worker's own model z is exhausted. It is bound to x, which has less unclaimed work than y.
+    remaining = Counter({NULL_MODEL: 64, "x": 16, "y": 0})
+    alive = {"x", "y"}
+    assert choose_claim(remaining, alive, 64, 16, owner="z", own_first=True) == ("y", 0, 16)
+    assert choose_claim(remaining, alive, 64, 16, owner="z", own_first=True, bound="x") == ("x", 16, 32)
+    remaining["x"] = 64  # bound model exhausted: the worker switches to the largest remaining work
+    assert choose_claim(remaining, alive, 64, 16, owner="z", own_first=True, bound="x") == ("y", 0, 16)
+
+
+def test_null_bound_worker_keeps_null_ahead_of_its_owner_and_scheduler_honours_the_binding(build):
+    from collections import Counter
+
+    remaining = Counter({NULL_MODEL: 16, "x": 0})
+    assert choose_claim(remaining, {"x"}, 64, 16, owner="x", own_first=True) == ("x", 0, 16)
+    assert choose_claim(remaining, {"x"}, 64, 16, owner="x", own_first=True, bound=NULL_MODEL) == (NULL_MODEL, 16, 32)
+
+    ticket = build.ticket(n_entries=2, n_tasks=64, params=build.params(n_tasks=64, looks=(1.0,), eval_chunk_tasks=4))
+    runner = SimpleNamespace(settings=SoloSettings(steal_block_tasks=16), evaluator=SimpleNamespace(http=None))
+    scheduler = SoloScheduler(runner, ticket, 10000)
+    x, y = (build.artifact(ticket.head, entry, ticket.params) for entry in ticket.entries)
+    scheduler.add_lora(0, x, gpu=0)
+    scheduler.add_lora(1, y, gpu=1)
+    scheduler.remaining.update({NULL_MODEL: 64, x.lora_hash: 16, y.lora_hash: 0})
+    assert scheduler.steal(2, "exhausted", x.lora_hash) == (x.lora_hash, 16, 32)
+    assert scheduler.steal(2, "exhausted") == (y.lora_hash, 0, 16)
