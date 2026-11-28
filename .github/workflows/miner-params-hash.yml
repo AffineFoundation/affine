@@ -1,0 +1,36 @@
+name: Miner Params live hash
+
+on:
+  push:
+    branches: [main, v2, affine/king4-kltok]
+    paths:
+      - v2/sn120_v2/params.py
+      - v2/tests/test_live_params_hash.py
+      - .github/workflows/miner-params-hash.yml
+  pull_request:
+    branches: [main, v2, affine/king4-kltok]
+    paths:
+      - v2/sn120_v2/params.py
+      - v2/tests/test_live_params_hash.py
+      - .github/workflows/miner-params-hash.yml
+
+permissions:
+  contents: read
+
+jobs:
+  live-params-hash:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: v2/pyproject.toml
+      - name: Install the lightweight test dependency
+        working-directory: v2
+        run: python -m pip install 'pytest>=8'
+      - name: Check Params and the live published hash
+        working-directory: v2
+        run: python -m pytest tests/test_params.py tests/test_live_params_hash.py
