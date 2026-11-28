@@ -131,6 +131,60 @@ def test_public_params_keep_live_crown_recitation_and_kl_ceiling_fields():
         Params.from_dict(public)
 
 
+def test_public_params_keep_anchor_fields_and_hash_them():
+    anchor_values = {
+        "anchor_n": 300,
+        "anchor_min_p": 0.85,
+        "anchor_min_rollouts": 8,
+        "anchor_hi_p": 0.9,
+        "anchor_hi_share": 0.2,
+        "anchor_z_veto": 2.0,
+        "anchor_min_scored": 80,
+    }
+    public = Params().to_dict() | {
+        "crown_gate": "argmax_symmetric",
+        "eval_merged": True,
+        "irt_draw_rule": "sqrt_fisher",
+        "z_crown": 1.5,
+        "recite_max_share": 0.05,
+        "max_kl_tok": 0.25,
+        **anchor_values,
+    }
+    params = Params.from_public_dict(public)
+    assert {key: getattr(params, key) for key in anchor_values} == anchor_values
+    assert params.to_dict().items() >= anchor_values.items()
+    without_anchor_n = Params.from_public_dict({key: value for key, value in public.items() if key != "anchor_n"})
+    assert without_anchor_n.anchor_n == 0
+    assert params.params_hash != without_anchor_n.params_hash
+    # The 2026-11-28 live contract was 3a3f6252...; trees without anchor fields
+    # computed bd7b9aee.... Other live fields may change, so compare dynamically.
+    for key in anchor_values:
+        assert key in Params.LEFT_OUT_AT_DEFAULT
+        assert key not in Params().to_dict()
+    assert Params().params_hash == "7eb09fa89387d1d2c5db2d8d0ffd627ad87ece8ef31bdfe93f3374f0c7bb1e50"
+    assert not {"max_stages", "train_tokens_per_s_floor"} & Params().to_dict().keys()
+    assert Params.from_public_dict(public | {"train_tokens_per_s_floor": 100_000}).train_tokens_per_s_floor == 100_000
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"anchor_n": -1}, {"anchor_n": True}, {"anchor_n": 1.5},
+        {"anchor_min_rollouts": -1}, {"anchor_min_rollouts": True},
+        {"anchor_min_scored": -1}, {"anchor_min_scored": 1.5},
+        {"anchor_min_p": -0.1}, {"anchor_hi_p": 1.1}, {"anchor_hi_share": 1.1},
+        {"anchor_z_veto": -1}, {"anchor_z_veto": float("nan")}, {"anchor_z_veto": float("inf")},
+        {"anchor_n": 300},
+        {"max_stages": 0}, {"max_stages": 6}, {"max_stages": True},
+        {"train_tokens_per_s_floor": -1}, {"train_tokens_per_s_floor": True},
+        {"train_tokens_per_s_floor": 5_000},
+    ],
+)
+def test_anchor_and_training_fields_fail_closed(change):
+    with pytest.raises(ConfigError):
+        Params(**change)
+
+
 def test_public_params_accept_known_rotation_rules_and_reject_unknown_rules():
     for rule in ("v1", "info", "info-guard"):
         assert Params.from_public_dict(Params().to_dict() | {"rotation_rule": rule}).rotation_rule == rule
