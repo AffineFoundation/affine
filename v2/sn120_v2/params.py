@@ -215,7 +215,7 @@ class Params(Record):
         "eval_merged", "null_prune_from_round", "min_kl_seq", "min_kl_tok", "kl_rollouts",
         "kl_max_tokens", "kl_time_limit_s", "confirm_next_round", "max_stages", "train_tokens_per_s_floor",
         "z_crown", "recite_max_share", "max_kl_tok", "anchor_n", "anchor_min_p", "anchor_min_rollouts", "anchor_hi_p",
-        "anchor_hi_share", "anchor_z_veto", "anchor_min_scored",
+        "anchor_hi_share", "anchor_z_veto", "anchor_min_scored", "merge_after_confirm",
     )
 
     netuid: int = 120
@@ -285,6 +285,9 @@ class Params(Record):
     min_cover: float = 0.95  # share of rollouts that must resolve; below it the entry is no_decision
     calibration_tol: float = 0.003  # multi-box guard on the null-M rate
     confirm_next_round: bool = False  # apply a crown now; pay it only after a fresh paired win in the next round
+    # With confirm_next_round: a crown is not merged into the head until its LoRA passes the next round's fresh paired
+    # re-test on the unchanged head (z >= z_bar). A crown that fails is discarded. Omitted from JSON while false.
+    merge_after_confirm: bool = False
     min_kl_seq: float = 0.0  # minimum mean KL(new||head) per sampled rollout; 0 = off
     min_kl_tok: float = 0.0  # minimum summed KL divided by measured completion tokens; 0 = off
     kl_rollouts: int = 128  # deterministic sample-0 subsample; capped completions included
@@ -487,6 +490,9 @@ class Params(Record):
         _need(self.fold_every_k >= 1, "fold_every_k must be at least 1")
         _need(type(self.confirm_next_round) is bool, "confirm_next_round must be true or false")
         _need(type(self.eval_merged) is bool, "eval_merged must be true or false")
+        _need(type(self.merge_after_confirm) is bool, "merge_after_confirm must be true or false")
+        _need(not self.merge_after_confirm or self.confirm_next_round, "merge_after_confirm needs confirm_next_round")
+        _need(not self.merge_after_confirm or self.fold_every_k == 1, "merge_after_confirm needs fold_every_k = 1")
         _need(not self.eval_merged or self.fold_every_k == 1, "merged-candidate evaluation needs fold_every_k = 1")
         _need(self.max_output_tokens < self.max_context_tokens, "max_output_tokens must be below max_context_tokens")
         _need(self.lease_timeout_s > 0 and self.max_infra_attempts >= 1, "lease settings must be positive")
