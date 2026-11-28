@@ -1111,6 +1111,7 @@ class Controller:
         else:
             data["king"] = king.to_dict()  # disabled mode is exactly the historical immediate apply-and-pay
         self._log(HEAD_APPLIED, data, now)
+        self._publish_head_now(now)
         return made
 
     def _fold_beside(self, record: RoundRecord, head: HeadVersion, artifact: LoRAArtifact, to_public: Callable[[], None], now: int, tested=None) -> FoldArtifact | None:
@@ -1172,6 +1173,7 @@ class Controller:
             return False
         manifest = HeadManifest(folded, fold.base_files, fold.master_files, {})
         self._log(HEAD_FOLDED, {"manifest": manifest.to_dict()}, now)
+        self._publish_head_now(now)
         if fold is not made:  # the delete of the round's prefix, at the close, removes the staged files of a fold made beside
             with timed(f"fold of {head.version_id[:12]}: the delete of its files in pending/"):
                 delete_pending(self.store, fold.prefix)
@@ -1325,6 +1327,7 @@ class Controller:
         self._log(HEAD_REVERTED, {"from_version_id": self.state.head.version_id, "to_version_id": to_version_id, "reason": reason}, now)
         self._retag_irt(to_version_id)
         self._sync_pointer()
+        self._publish_head_now(now)
         self._publish(now)
         return self.state.manifest
 
@@ -1342,6 +1345,18 @@ class Controller:
                 publish_head(self.store, manifest)
         except (InfraError, VerifyError) as exc:
             self.last_error = f"head pointer not published yet: {exc}"
+
+    def _publish_head_now(self, now: int) -> None:
+        """Publish the journal's head without rendering the decided, still-open round."""
+        if self.publisher is None or self.state.manifest is None or not hasattr(self.publisher, "publish_head_now"):
+            return
+        try:
+            self._sync_pointer()
+            chain = self.head.chain(self.state) if self.head.chain is not None and self.state.heads else None
+            self.publisher.publish_head_now(self.state.manifest, chain, now)
+        except Exception as exc:
+            self.last_error = f"publish failed: {exc}"
+            print(f"publish: {self.last_error}", file=sys.stderr, flush=True)
 
     def _shown(self) -> object:
         """What a snapshot shows of the queue, files and coarse service. A change here is a reason to publish between rounds."""

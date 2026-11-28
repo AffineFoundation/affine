@@ -556,6 +556,32 @@ def mining_document(snapshot: Mapping[str, Any], public_url: str = "", links_url
     return {"snapshot_digest": digest(plain), **plain, "contract": contract(params, public_url, links_url)}
 
 
+def head_now_document(manifest: HeadManifest, chain: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """The small public head document. Only journal-derived head facts belong here."""
+    head = manifest.head
+    doc = {
+        "schema": "sn120-head-now-v1",
+        "round_id": head.round_id,
+        "version_id": head.version_id,
+        "parent_version_id": head.parent_version_id,
+        "applied_at": head.applied_at,
+        "folded": head.folded,
+        "head": manifest.to_dict(),
+    }
+    if chain is not None:
+        doc["head_chain"] = to_jsonable(chain)
+    refuse_private(doc, "head-now")
+    return doc
+
+
+def head_now_preview(mining: Mapping[str, Any], manifest: HeadManifest) -> list[dict[str, Any]]:
+    """Move the current head to the end of the existing bounded preview, without exposing round state."""
+    head = manifest.head
+    row = {"version_id": head.version_id, "round_id": head.round_id, "applied_at": head.applied_at, "folded": head.folded}
+    previous = [dict(item) for item in mining.get("heads") or [] if item.get("version_id") != head.version_id]
+    return [*previous, row][-HISTORY_PREVIEW:]
+
+
 def _v4_recipe_lines(params: Params) -> list[str]:
     """The v4 stage recipe, distinct from the unchanged flat-batch rules."""
     if FORMAT_V4 not in FORMATS:
@@ -2284,6 +2310,8 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         *_weight_lines(doc, where),
         f"- This file and mining.json are also at {where}/{pair[0]} and {where}/{pair[1]}. There the two files are",
         "  always a matching pair.",
+        f"- The current head is also at {where}/head.json. It is updated when a head is applied, without waiting",
+        "  for the full close publish.",
         "- Send a client name of your own (the HTTP header `User-Agent`) with each read of a file under",
         f"  `{READ_LINKS.split('/')[0]}/` and of a link file (section 5). The site can answer HTTP 403 to a read with the default client",
         "  name of Python's `urllib` (`Python-urllib/<version>`), also for a file that exists. curl, wget and the Python",
@@ -2457,6 +2485,43 @@ class StorePublisher:
         if self.links_url:
             upload_entry(self.links_url)  # a bad address stops the start, not each publish
 
+    @staticmethod
+    def _put_checked(store: ObjectStore, key: str, data: bytes) -> None:
+        store.put(key, data)
+        if store.sha256(key) != sha256_hex(data):
+            raise InfraError(f"{key} does not read back as written")
+
+    def publish_head_now(self, manifest: HeadManifest, chain: Mapping[str, Any] | None, now: int) -> None:
+        """Publish only the new head, then patch the head fields of the last public contract pair.
+
+        This never receives or renders the open round. The rest of mining.json stays exactly as last published.
+        """
+        doc = head_now_document(manifest, chain)
+        try:
+            head_key = layout.head_manifest(manifest.head.version_id)
+            if not self.store.exists(head_key):
+                raise InfraError(f"head manifest {head_key} is not public yet; the current head may not be published")
+            writes = [(layout.HEAD_NOW, (json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8"))]
+            if self.store.exists(layout.MINING_JSON):
+                mining = json.loads(self.store.get(layout.MINING_JSON))
+                mining["head"] = manifest.to_dict()
+                mining["heads"] = head_now_preview(mining, manifest)
+                if chain is None:
+                    mining.pop("head_chain", None)
+                else:
+                    mining["head_chain"] = to_jsonable(chain)
+                mining["generated_at"] = now
+                mining["snapshot_digest"] = digest({key: value for key, value in mining.items() if key not in OWN_KEYS})
+                refuse_private({key: value for key, value in mining.items() if key not in OWN_KEYS}, "head-now-contract")
+                rendered = (json.dumps(mining, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+                writes.extend(((layout.MINING_JSON, rendered), (layout.LLMS_TXT, llms_text(mining).encode("utf-8"))))
+            for key, data in writes:
+                self._put_checked(self.store, key, data)
+        except V2Error:
+            raise
+        except Exception as exc:
+            raise InfraError(f"cannot publish the current head: {exc}") from exc
+
     def publish(self, snapshot: Mapping[str, Any]) -> None:
         """Publish the validated contract pair before optional winner-stats enrichment.
 
@@ -2473,6 +2538,8 @@ class StorePublisher:
                               self.public_url, self.links_url)
         refuse_private(stats, "winner-stats")
         head_key = layout.head_manifest(snapshot["head"]["head"]["version_id"])
+        head_now = head_now_document(HeadManifest.from_dict(snapshot["head"]), snapshot.get("head_chain"))
+        head_now_bytes = (json.dumps(head_now, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
         try:
             if not self.store.exists(head_key):
                 raise InfraError(f"head manifest {head_key} is not public yet; the contract may not name this head")
@@ -2482,7 +2549,7 @@ class StorePublisher:
                 verify_public_pool_snapshot(self.store, snapshot)
             except V2Error as exc:
                 raise InfraError(f"public pool verification failed: {exc}") from exc
-            for key, data in ((layout.MINING_JSON, mining), (layout.LLMS_TXT, llms), (layout.CONFIRMATION_STATS, confirmations_bytes)):
+            for key, data in ((layout.HEAD_NOW, head_now_bytes), (layout.MINING_JSON, mining), (layout.LLMS_TXT, llms), (layout.CONFIRMATION_STATS, confirmations_bytes)):
                 self.store.put(key, data)
                 if self.store.sha256(key) != sha256_hex(data):
                     raise InfraError(f"{key} does not read back as written")
