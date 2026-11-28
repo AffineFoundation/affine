@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import time
+import importlib.util
 import urllib.request
 import threading
 import uuid
@@ -22,7 +23,8 @@ from moto.server import ThreadedMotoServer
 
 from sn120_v2 import layout, links, sim
 from sn120_v2.errors import ConfigError, InfraError
-from sn120_v2.publisher import render
+from sn120_v2.publisher import StorePublisher, render
+from sn120_v2.public import winner_stats_from_snapshot
 from sn120_v2.r2 import R2Store
 from sn120_v2.r2_names import PLAIN_NAMES, store_env
 from sn120_v2.types import HeadManifest
@@ -32,7 +34,7 @@ URL = "https://site.example"
 SECRET = "fake-secret-value-never-shown"
 LINKS, INDEX = "public/read_links.json", "public/pull_index.json"
 BUILT = {"index.html", "v1.html", "pool.html", "pool/index.html", "pool.js", "site.css", "site.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf",
-         "generator.html", "generator/index.html", "generator.js", "generator.css", "generator-guide.md", "generator/generator-guide.md", "generator-guide.html", "generator-guide/index.html"}
+         "generator.html", "generator/index.html", "generator.js", "generator.css", "generator-guide.md", "generator/generator-guide.md", "generator-guide.html", "generator-guide/index.html", "confirmations.html"}
 FOREIGN = {  # what other software keeps under public/ of the same bucket, and keys that only look like v2's
     "public/41/current.json": b'{"epoch": 41}',
     "public/streams/main/current.json": b'{"stream": "main"}',
@@ -75,9 +77,8 @@ def store(env, tmp_path):
     store = R2Store.from_env(env, attempts=1)
     for key in world.store.list(""):
         store.put(key, world.store.get(key))
-    mining, llms = render(json.loads(json.dumps(world.publisher.snapshots[-1])), URL)
-    store.put(layout.MINING_JSON, mining)
-    store.put(layout.LLMS_TXT, llms)
+    snapshot = json.loads(json.dumps(world.publisher.snapshots[-1]))
+    StorePublisher(store, URL + "/").publish(snapshot)  # rich standalone object, transport-free mining.json
     for key, data in FOREIGN.items():
         store.put(key, data)
     return store
@@ -114,13 +115,16 @@ def test_one_run_copies_the_keys_of_the_layout_writes_the_links_and_builds_the_s
     mining = json.loads(files[layout.MINING_JSON])
     small = [key for key in store.list("public/") if key.startswith(("public/heads/", "public/rounds/")) and key not in FOREIGN]
     tables = {layout.irt_snapshot(mining["irt_snapshot_id"])} | {layout.irt_snapshot(row["irt_snapshot_id"]) for row in mining["history"]}
-    copied = {layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, *small, *tables, layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}
-    assert len(small) == 4 and set(files) == copied | {LINKS, INDEX, "llms.txt", "mining.json"} | BUILT
+    copied = {layout.MINING_JSON, layout.LLMS_TXT, layout.WINNER_STATS, layout.CONFIRMATION_STATS, layout.CURRENT, *small, *tables, layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}
+    assert len(small) == 4 and set(files) == copied | {LINKS, INDEX, "llms.txt", "mining.json", layout.WINNER_STATS_ALIAS} | BUILT
     for key in copied - {layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}:  # mirrored objects are byte-identical
         assert files[key] == store.get(key)
     assert json.loads(files[layout.ROLLOUT_INDEX]) == {"schema": "sn120-v2-rollouts-index-2", "backfill": None, "bench": [], "gate": [], "schema_doc": "SCHEMA.md"}
     assert (site / "public/rollouts/SCHEMA.md").read_bytes() == (PULL.parent / "static/rollouts/SCHEMA.md").read_bytes()
     assert files["llms.txt"] == files[layout.LLMS_TXT] and files["mining.json"] == files[layout.MINING_JSON]
+    assert files[layout.WINNER_STATS_ALIAS] == files[layout.WINNER_STATS] == store.get(layout.WINNER_STATS_ALIAS)
+    assert json.loads(files["site-data.json"])["winner_stats_url"] == f"{URL}/{layout.WINNER_STATS}"
+    assert [row["uid"] for row in json.loads(files[layout.WINNER_STATS])["winners"]] == [4]
     assert set(json.loads(files[INDEX])["files"]) == copied - {"public/rollouts/SCHEMA.md"} | {LINKS}
     assert not list(site.rglob(".tmp-*")) and "site-data.json" in files["index.html"].decode()
 
@@ -150,6 +154,139 @@ def test_one_run_copies_the_keys_of_the_layout_writes_the_links_and_builds_the_s
     assert {name for name in after if after[name] != before[name]} == {LINKS}
     new = json.loads((site / LINKS).read_text())
     assert new["generated_at"] > links["generated_at"] and new["expires_at"] == new["generated_at"] + 600
+
+
+def test_the_run_invokes_winner_stats_immediately_after_the_contract(env, tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(PULL.parent))
+    spec = importlib.util.spec_from_file_location("sn120_site_pull_test", PULL)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    called = []
+    monkeypatch.setattr(module.Pull, "step", lambda self, name, work: called.append((name, work)))
+    monkeypatch.setattr(module.build, "write", lambda *args: None)
+    assert module.run(store=None, site=tmp_path, public_url=URL, ttl_s=1, keep_rounds=2, max_bytes=1,
+                      v1_history=None, now=1) == 0
+    assert called[1][0] == "llms.txt and mining.json" and called[2][0] == "winner stats"
+    assert called[-1][0] == "site pages final refresh"
+    assert called[-2][0] == "confirmation stats final refresh"
+    assert called[-2][1].__func__ is module.Pull.confirmation_stats
+    assert called[-3][0] == "llms.txt and mining.json final refresh"
+    assert called[-3][1].__func__ is module.Pull.contract
+    assert called[2][1].__func__ is module.Pull.winner_stats
+    assert called[3][0] == "confirmation stats"
+    assert called[3][1].__func__ is module.Pull.confirmation_stats
+    assert layout.WINNER_STATS in module.FIXED and layout.CONFIRMATION_STATS in module.FIXED
+
+
+def test_a_contract_changed_during_pull_is_mirrored_before_exit(env, store, tmp_path):
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.syspath_prepend(str(PULL.parent))
+        spec = importlib.util.spec_from_file_location("sn120_site_pull_final_contract_test", PULL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        first = store.get(layout.MINING_JSON)
+        made = json.loads(first)
+        generated = made["generated_at"]
+        old_digest = made["snapshot_digest"]
+        import copy
+        from sn120_v2.publisher import render
+        snap = {key: value for key, value in copy.deepcopy(made).items() if key not in ("snapshot_digest", "contract")}
+        snap["generated_at"] = generated + 100
+        newer_confirmations = snap["confirmations"] | {"total": snap["confirmations"]["total"] | {"pending": 99}}
+        snap["confirmations"] = newer_confirmations
+        newer_mining, newer_llms = render(snap, URL)
+
+        def change_mid_run(self, ttl_s):
+            store.put(layout.MINING_JSON, newer_mining)
+            store.put(layout.LLMS_TXT, newer_llms)
+            store.put(layout.CONFIRMATION_STATS, json.dumps(newer_confirmations).encode())
+
+        monkeypatch.setattr(module.Pull, "head", change_mid_run)
+        assert module.run(store, tmp_path, URL, 1, 200, 128 << 20, None, 1) == 0
+        assert (tmp_path / layout.MINING_JSON).read_bytes() == newer_mining
+        assert (tmp_path / layout.LLMS_TXT).read_bytes() == newer_llms
+        assert (tmp_path / "mining.json").read_bytes() == newer_mining
+        assert (tmp_path / "llms.txt").read_bytes() == newer_llms
+        assert json.loads(newer_mining)["snapshot_digest"] != old_digest
+        assert json.loads((tmp_path / layout.CONFIRMATION_STATS).read_bytes())["total"]["pending"] == 99
+    finally:
+        monkeypatch.undo()
+
+
+def test_enriched_stats_strip_mismatched_optional_fields_and_mirror_core(env, store, tmp_path):
+    from sn120_v2.canonical import sha256_hex
+    from sn120_v2.envs.math_pool import load_pool
+    from sn120_v2.envs.reserve import Catalog, empty_manifest
+
+    mining = json.loads(store.get(layout.MINING_JSON))
+    mining["winner_stats"] = json.loads(store.get(layout.WINNER_STATS))
+    winner = mining["winner_stats"]["winners"][0]
+    task = load_pool().task(load_pool().task_ids[0])
+    raw = json.dumps({"version": "affine-batch-v2", "hotkey": winner["hotkey"], "groups": [
+        {"prompt": task.batch_prompt(), "rollouts": [{"output": "work \\boxed{1}", "reward": 1.0}]},
+        {"prompt": "custom public prompt", "rollouts": [{"output": "no box", "reward": 0.0}]},
+    ]}).encode()
+    winner["batch_sha256"] = sha256_hex(raw)
+    crowned = next(entry for entry in mining["history"][0]["entries"] if entry["status"] == "winner")
+    crowned["batch_sha256"] = winner["batch_sha256"]
+    store.put(layout.winner_batch(winner["round_id"]), raw)
+    store.put(layout.RESERVE_MANIFEST, empty_manifest())
+    store.put(layout.RESERVE_WITHDRAWN, b"")
+    mining.pop("snapshot_digest", None)
+    mining.pop("contract", None)
+    pool = Catalog(load_pool(), load_pool().__class__((), "no-reserve-fixture"))
+    StorePublisher(store, URL + "/", prompt_pool=pool).publish(mining)
+    stats = json.loads(store.get(layout.WINNER_STATS))
+    assert stats["winners"][0]["group_count"] == 2 and stats["winners"][0]["boxed_frac"] == 0.5
+    site = tmp_path / "fresh"
+    done = pull(env, site)
+    assert done.returncode == 0, done.stderr
+    assert "winner enrichment check deferred" in done.stderr
+    assert (site / layout.WINNER_STATS).read_bytes() == store.get(layout.WINNER_STATS_ALIAS) == store.get(layout.WINNER_STATS)
+    assert (site / layout.RESERVE_MANIFEST).read_bytes() == empty_manifest()
+
+    stats["winners"] = [dict(stats["winners"][0], group_count=999)]
+    core = {key: value for key, value in stats["winners"][0].items() if key != "group_count"}
+    store.put(layout.WINNER_STATS, json.dumps(stats).encode())
+    store.put(layout.WINNER_STATS_ALIAS, store.get(layout.WINNER_STATS))
+    done = pull(env, site)
+    assert done.returncode == 0, done.stderr
+    assert "winner enrichment stripped" in done.stderr and "group_count" in done.stderr
+    mirrored = json.loads((site / layout.WINNER_STATS).read_bytes())
+    assert mirrored["winners"] == [core]
+    assert (site / layout.WINNER_STATS).read_bytes() == (site / layout.WINNER_STATS_ALIAS).read_bytes()
+
+
+def test_unavailable_reserve_defers_enrichment_checks_even_after_the_mirror(env, store, tmp_path, monkeypatch):
+    stats = json.loads(store.get(layout.WINNER_STATS))
+    enriched = stats | {"winners": [dict(stats["winners"][0], group_count=1)]}
+    store.put(layout.WINNER_STATS, json.dumps(enriched).encode())
+
+    monkeypatch.syspath_prepend(str(PULL.parent))
+    import pull as pull_module
+    from sn120_v2.errors import ConfigError
+
+    checked = json.loads(json.dumps(enriched))
+    site = tmp_path / "direct"
+    site.mkdir()
+    instance = pull_module.Pull(store, site, 123)
+
+    def unavailable(*args, **kwargs):
+        raise ConfigError("reserve verification failed: public shard layout is unreadable")
+
+    monkeypatch.setattr("sn120_v2.envs.reserve.load_reserve", unavailable)
+    instance._check_enrichment({}, checked, required=True)
+    assert checked == enriched
+    assert instance.notes == ["winner enrichment check deferred until the public reserve catalog is readable (ConfigError)"]
+
+    done = pull(env, tmp_path / "fresh")
+    assert done.returncode == 0, done.stderr
+    assert "winner enrichment check deferred until the public reserve catalog is readable (ConfigError)" in done.stderr
+    assert "winner enrichment stripped" not in done.stderr
+    mirrored = (tmp_path / "fresh" / layout.WINNER_STATS).read_bytes()
+    assert json.loads(mirrored) == enriched
+    assert mirrored == (tmp_path / "fresh" / layout.WINNER_STATS_ALIAS).read_bytes()
 
 
 def test_only_keys_that_the_layout_names_are_read(env, store, tmp_path):
@@ -300,6 +437,72 @@ def test_the_reference_models_of_the_v1_history_are_in_the_table_from_the_first_
     assert layout.BENCHMARKS in json.loads((site / INDEX).read_text())["files"]
 
 
+def test_bad_winner_stats_keep_the_last_good_mirror_and_site_data(env, store, tmp_path):
+    site = tmp_path / "site"
+    assert pull(env, site).returncode == 0
+    good = (site / layout.WINNER_STATS).read_bytes()
+    good_data = (site / "site-data.json").read_bytes()
+    stats = json.loads(good)
+    for bad in (stats | {"schema": "other"},
+                stats | {"private": "pending/batch"},
+                stats | {"winners": [dict(stats["winners"][0], uid=999)]},
+                stats | {"winners": [dict(stats["winners"][0], z=999)]},
+                stats | {"winners": [dict(stats["winners"][0], batch_url="https://other.example/public/rounds/r000001/batch.json")]},
+                stats | {"winners": [dict(stats["winners"][0], train={"groups": ["private batch text"]})]}):
+        store.put(layout.WINNER_STATS, json.dumps(bad).encode())
+        done = pull(env, site)
+        assert done.returncode == 1 and "FAILED winner stats" in done.stderr
+        assert (site / layout.WINNER_STATS).read_bytes() == good
+        assert (site / "site-data.json").read_bytes() == good_data
+
+
+def test_confirmation_stats_mirror_validates_the_contract_and_supports_an_older_store(env, store, tmp_path):
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.syspath_prepend(str(PULL.parent))
+        spec = importlib.util.spec_from_file_location("sn120_site_pull_confirmation_test", PULL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        site = tmp_path / "site"
+        (site / "public").mkdir(parents=True)
+        mining = store.get(layout.MINING_JSON)
+        module.build.write(site / layout.MINING_JSON, mining)
+        instance = module.Pull(store, site, 123)
+        instance.confirmation_stats()
+        mirrored = site / layout.CONFIRMATION_STATS
+        good = mirrored.read_bytes()
+        assert json.loads(good) == json.loads(mining)["confirmations"]
+        assert good == store.get(layout.CONFIRMATION_STATS)
+
+        bad = json.loads(good) | {"total": json.loads(good)["total"] | {"pending": 99}}
+        store.put(layout.CONFIRMATION_STATS, json.dumps(bad).encode())
+        with pytest.raises(ValueError, match="same object"):
+            instance.confirmation_stats()
+        assert mirrored.read_bytes() == good
+
+        store.delete(layout.CONFIRMATION_STATS)
+        instance.confirmation_stats()
+        assert json.loads(mirrored.read_bytes()) == json.loads(mining)["confirmations"]
+    finally:
+        monkeypatch.undo()
+
+
+def test_a_legacy_store_without_winner_stats_gets_the_safe_public_projection(env, store, tmp_path):
+    """The old mining.json has no winner train/counts. Never invent them when introducing the new mirror."""
+    store.delete(layout.WINNER_STATS)
+    # A legacy publisher's mining.json carries no winner-only transport, unlike today's in-memory fixture.
+    mining = json.loads(store.get(layout.MINING_JSON))
+    store.put(layout.MINING_JSON, json.dumps({key: value for key, value in mining.items() if key != "winner_stats"}).encode())
+    site = tmp_path / "site"
+    done = pull(env, site)
+    assert done.returncode == 0, done.stderr
+    stats = json.loads((site / layout.WINNER_STATS).read_bytes())
+    assert stats["schema"] == "sn120-v2-winner-stats-1" and [row["uid"] for row in stats["winners"]] == [4]
+    assert stats["winners"][0]["batch_url"] == f"{URL}/{layout.winner_batch(stats['winners'][0]['round_id'])}"
+    assert all(stats["winners"][0][key] is None for key in ("batch_prompts", "batch_rollouts", "batch_format", "train"))
+    assert json.loads((site / "site-data.json").read_text())["winner_stats_url"] == f"{URL}/{layout.WINNER_STATS}"
+
+
 def test_a_round_with_no_result_is_on_the_site_after_one_run(env, tmp_path):
     """No training finished: the round has no result, and mining.json gives its entry no ``status``."""
     world = sim.SimWorld(tmp_path / "world", sim.sim_params())
@@ -312,9 +515,11 @@ def test_a_round_with_no_result_is_on_the_site_after_one_run(env, tmp_path):
     store = R2Store.from_env(env, attempts=1)
     for key in world.store.list(""):
         store.put(key, world.store.get(key))
-    mining, llms = render(json.loads(json.dumps(world.publisher.snapshots[-1])), URL)
+    snapshot = json.loads(json.dumps(world.publisher.snapshots[-1]))
+    mining, llms = render(snapshot, URL)
     store.put(layout.MINING_JSON, mining)
     store.put(layout.LLMS_TXT, llms)
+    store.put(layout.WINNER_STATS, json.dumps(winner_stats_from_snapshot(snapshot, URL)).encode())
     assert "status" not in json.loads(mining)["history"][-1]["entries"][0]
     site = tmp_path / "site"
     done = pull(env, site)

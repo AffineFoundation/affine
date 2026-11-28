@@ -10,9 +10,10 @@ import pytest
 
 from sn120_v2 import layout
 from sn120_v2.canonical import canonical_json, sha256_hex
+from sn120_v2.errors import VerifyError
 from sn120_v2.irt import IRTSampler, snapshot_digest
 from sn120_v2.params import Params
-from sn120_v2.pool_runtime import active_file, replay_rotation
+from sn120_v2.pool_runtime import active_file, replay_rotation, verify_public_pool_snapshot
 from sn120_v2.rotation import LOW, Reserve, Rotation, rotate_info
 from sn120_v2.store import LocalStore
 
@@ -173,6 +174,169 @@ def test_public_replay_checks_ranking_and_complete_state(tmp_path):
     store.put(layout.pool_ranking("r000070"), canonical_json(ranking | {"candidates": []}))
     with pytest.raises(Exception):
         replay_rotation(store, "r000070")
+
+
+def test_active_pool_reads_back_before_any_reference_is_published(tmp_path):
+    active = {f"a:{i}": [0.0, 0.25, 4] for i in range(4)}
+    decision = rotate_info("r000070", active, snapshot(active), {}, reserve({"r:0": 0.5}), info_params(rotation_active_size=5))
+
+    class ObservedStore(LocalStore):
+        def __init__(self, root, failure, present=False):
+            super().__init__(root)
+            self.failure = failure
+            self.active_read_back = False
+            self.active_puts = 0
+            self.reference_keys = {layout.pool_rotation(decision.round_id), layout.pool_ranking(decision.round_id),
+                                   layout.pool_rotation_state(decision.digest()), layout.POOL_SUMMARY}
+            if present:
+                super().put(layout.active_pool(decision.active_sha), canonical_json(list(decision.active_ids)))
+
+        def put(self, key, data):
+            if key == layout.active_pool(decision.active_sha):
+                self.active_puts += 1
+            if self.failure == "drop" and key == layout.active_pool(decision.active_sha):
+                return
+            assert self.active_read_back or key not in self.reference_keys, f"reference before verified active set: {key}"
+            super().put(key, data)
+
+        def get(self, key):
+            data = super().get(key)
+            if key == layout.active_pool(decision.active_sha):
+                if self.failure == "corrupt":
+                    return b"[]"
+                self.active_read_back = data == canonical_json(list(decision.active_ids))
+            return data
+
+    expected = canonical_json(list(decision.active_ids))
+    for failure, present in ((None, False), (None, True), ("drop", False), ("corrupt", False), ("corrupt", True)):
+        store = ObservedStore(tmp_path / f"{failure}-{present}", failure, present)
+        store.put(layout.active_pool(decision.initial_active_sha), canonical_json(sorted(active)))
+        if failure is None:
+            active_file(store, decision)
+            assert store.get(layout.active_pool(decision.active_sha)) == expected
+            assert sha256_hex(expected) == decision.active_sha
+            assert store.active_read_back
+            assert store.active_puts == 0 if present else store.active_puts == 1, "only a missing active object is uploaded"
+            assert json.loads(store.get(layout.POOL_SUMMARY))["active_sha"] == decision.active_sha
+            before = {key: store.get(key) for key in store.list("")}
+            active_file(store, decision)
+            assert {key: store.get(key) for key in store.list("")} == before, "repeat publication is byte-idempotent"
+        else:
+            with pytest.raises(VerifyError, match="readback|content id"):
+                active_file(store, decision)
+            assert not any(store.exists(key) for key in store.reference_keys), f"{failure}: an unverified active_sha was published"
+
+
+def test_mining_snapshot_repairs_only_missing_active_bytes_and_fails_closed(tmp_path):
+    active = {f"a:{i}": [0.0, 0.25, 4] for i in range(4)}
+    decision = rotate_info("r000070", active, snapshot(active), {}, reserve({"r:0": 0.5}), info_params(rotation_active_size=5))
+    from sn120_v2.envs.reserve import empty_manifest
+    manifest = empty_manifest()
+    decision = Rotation.from_dict(decision.to_dict() | {"reserve_manifest_sha": sha256_hex(manifest)})
+    store = LocalStore(tmp_path)
+    store.put(layout.active_pool(decision.initial_active_sha), canonical_json(sorted(active)))
+    # Standalone active_file callers normally mirror the public reserve first.
+    assert sha256_hex(manifest) == decision.reserve_manifest_sha
+    store.put(layout.RESERVE_MANIFEST, manifest)
+    store.put(layout.RESERVE_WITHDRAWN, b"")
+    active_file(store, decision)
+    pool = decision.pool_block()
+    snap = {"round": {"round_id": decision.round_id, "pool": pool}, "history": []}
+    key = layout.active_pool(decision.active_sha)
+    expected = canonical_json(list(decision.active_ids))
+
+    store.delete(key)
+    verify_public_pool_snapshot(store, snap)
+    assert store.get(key) == expected and sha256_hex(expected) == decision.active_sha
+
+    class RefusingStore(LocalStore):
+        def put(self, key, data):
+            if key == layout.active_pool(decision.active_sha):
+                return
+            super().put(key, data)
+
+    refused = RefusingStore(tmp_path)
+    for source in store.list(""):
+        if source != key:
+            refused.put(source, store.get(source))
+    refused.delete(key)
+    with pytest.raises(VerifyError, match="readback"):
+        verify_public_pool_snapshot(refused, snap)
+    assert not refused.exists(layout.MINING_JSON)
+
+    # A correct existing object is read, not replaced; corrupt deterministic artifacts are repaired.
+    for damaged in (layout.pool_ranking(decision.round_id), layout.POOL_SUMMARY):
+        broken = LocalStore(tmp_path / damaged.replace("/", "-"))
+        for source in store.list(""):
+            broken.put(source, store.get(source))
+        broken.put(damaged, b"not the referenced public bytes")
+        verify_public_pool_snapshot(broken, snap)
+        assert broken.get(damaged) == store.get(damaged)
+
+    for damaged in (layout.RESERVE_MANIFEST, layout.RETIRED_POOL):
+        broken = LocalStore(tmp_path / damaged.replace("/", "-"))
+        for source in store.list(""):
+            broken.put(source, store.get(source))
+        broken.put(damaged, b"not the referenced public bytes")
+        with pytest.raises(VerifyError):
+            verify_public_pool_snapshot(broken, snap)
+
+
+def test_mining_snapshot_compares_reserve_shards_without_the_withdrawn_pointer(tmp_path):
+    def manifest_bytes(shards, withdrawn=()):
+        raw = b"".join(canonical_json(row) + b"\n" for row in withdrawn)
+        rows = [*shards, {"withdrawn": {"sha256": sha256_hex(raw), "count": len(withdrawn)}}]
+        return b"".join(canonical_json(row) + b"\n" for row in rows)
+
+    shard_rows = [
+        {"shard": f"{i:04d}-test.jsonl", "sha256": sha256_hex(f"shard {i}".encode()), "count": 1, "added_at": "2026-11-19"}
+        for i in range(2)
+    ]
+    withdrawn_rows = [{"id": "old:0", "reason": "bad", "added_at": "2026-11-19"}]
+    manifest = manifest_bytes(shard_rows)
+    old_manifest = manifest_bytes(shard_rows[:1])
+    active = {"a:0": [0.0, 0.25, 4]}
+    decision = rotate_info("r000071", active, snapshot(active), {}, reserve(), info_params(rotation_active_size=1))
+    current = Rotation.from_dict(decision.to_dict() | {
+        "reserve_manifest_sha": sha256_hex(manifest), "opened_at": 71,
+        "reserve_history": {"shards": shard_rows, "withdrawn": []},
+    })
+    older = Rotation.from_dict(decision.to_dict() | {
+        "round_id": "r000070", "reserve_manifest_sha": sha256_hex(old_manifest), "opened_at": 70,
+        "reserve_history": {"shards": shard_rows[:1], "withdrawn": []},
+    })
+    store = LocalStore(tmp_path)
+    for row in shard_rows:
+        store.put(layout.reserve_shard(row["shard"], row["sha256"]), f"shard {shard_rows.index(row)}".encode())
+    for rotation in (older, current):
+        store.put(layout.pool_rotation(rotation.round_id), rotation.to_json())
+    store.put(layout.active_pool(current.active_sha), canonical_json(list(current.active_ids)))
+    store.put(layout.RESERVE_MANIFEST, manifest)
+    store.put(layout.RESERVE_WITHDRAWN, b"")
+    snap = {
+        "round": {"round_id": current.round_id, "pool": current.pool_block()},
+        "history": [{"round_id": older.round_id, "pool": older.pool_block()}],
+    }
+
+    # The old pointer follows its first shard; the new second shard is inserted before the new pointer.
+    verify_public_pool_snapshot(store, snap)
+
+    changed = dict(shard_rows[0], sha256=sha256_hex(b"changed"))
+    store.put(layout.RESERVE_MANIFEST, manifest_bytes([changed, shard_rows[1]]))
+    with pytest.raises(VerifyError, match="does not extend a referenced rotation"):
+        verify_public_pool_snapshot(store, snap)
+
+    # Withdrawal history must also remain append-only when the shard prefix is intact.
+    old_withdrawn = manifest_bytes(shard_rows[:1], withdrawn_rows)
+    older = Rotation.from_dict(older.to_dict() | {
+        "reserve_manifest_sha": sha256_hex(old_withdrawn),
+        "reserve_history": {"shards": shard_rows[:1], "withdrawn": withdrawn_rows},
+    })
+    store.put(layout.pool_rotation(older.round_id), older.to_json())
+    store.put(layout.RESERVE_MANIFEST, manifest)
+    snap["history"] = [{"round_id": older.round_id, "pool": older.pool_block()}]
+    with pytest.raises(VerifyError, match="does not extend a referenced rotation"):
+        verify_public_pool_snapshot(store, snap)
 
 
 def test_churn_max_and_empty_outside_are_safe():

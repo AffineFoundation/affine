@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import datetime
 import json
 from pathlib import Path
 
@@ -51,11 +52,375 @@ def test_the_controller_publishes_through_the_real_store(tmp_path):
     assert made.controller.last_error == ""  # each head manifest was public before the contract named the head
     doc, text = json.loads(made.store.get(layout.MINING_JSON)), made.store.get(layout.LLMS_TXT).decode()
     controller = made.controller
-    snap = public.snapshot(controller.state, made.params, doc["generated_at"], controller._verdicts, controller._verdicts_at)
-    assert {key: doc[key] for key in snap} == to_jsonable(snap)  # the website reads the snapshot's own keys
+    snap = public.snapshot(controller.state, made.params, doc["generated_at"], controller._verdicts, controller._verdicts_at,
+                           stop_asked=controller._stop_asked, close_publish_pending=controller._close_publish_pending,
+                           waiting_for_seats=controller._waiting_for_seats)  # the website reads the snapshot's own keys
     assert doc["snapshot_digest"] in text and doc["head"]["head"]["version_id"] in text and doc["irt_snapshot_id"] in text
     assert [king["uid"] for king in doc["kings"]] == [11] and "| 11 | hk11 |" in text
     assert doc["queue"]["length"] == 1 and "| 0 | 12 | hk12 | 1012 | no |" in text
+
+
+def test_contract_pair_reaches_the_store_before_winner_enrichment(tmp_path):
+    made = world(tmp_path, play=True)
+    snap = made.publisher.snapshots[-1]
+    store = MemStore({layout.head_manifest(snap["head"]["head"]["version_id"]): b"{}"})
+    calls = []
+    original = publisher.enrich_winner_stats
+
+    def enrich(snapshot, stats, *args):
+        calls.append((layout.MINING_JSON in store, layout.LLMS_TXT in store, layout.WINNER_STATS in store))
+        return original(snapshot, stats, *args)
+
+    publisher.enrich_winner_stats = enrich
+    try:
+        publisher.StorePublisher(store, "https://files.example/").publish(snap)
+    finally:
+        publisher.enrich_winner_stats = original
+    assert calls == [(True, True, False)]
+    assert publisher.check_pair(store[layout.MINING_JSON], store[layout.LLMS_TXT]) == []
+
+
+def test_winner_stats_contain_only_applied_crowns_with_public_batch_facts(tmp_path):
+    made = world(tmp_path)
+    made.register(11, 0.4, train={"lora_lr": 0.0001, "steps": 2})
+    first = made.round()
+    made.register(12, 0.0)
+    second = made.round()
+    made.register(13, 0.4)
+    third = made.round()
+    assert [record.outcome for record in (first, second, third)] == ["applied", "null", "applied"]
+    snap = made.publisher.snapshots[-1]
+    doc, _, store = published(snap)
+    stats = json.loads(store[layout.WINNER_STATS])
+    assert "winner_stats" not in doc
+    assert stats["schema"] == public.WINNER_STATS_SCHEMA and type(stats["generated_at"]) is int
+    assert stats["generated_at"] == snap["generated_at"] and [row["uid"] for row in stats["winners"]] == [13, 11]
+    for row in stats["winners"]:
+        expected = next(king for king in made.controller.state.kings if king.round_id == row["round_id"])
+        assert row["head"] == expected.head_version_id and row["applied_at"] == expected.applied_at
+        assert row["batch_url"] == f"https://files.example/{layout.winner_batch(row['round_id'])}"
+        assert row["batch_prompts"] == 1 and row["batch_rollouts"] == 1 and row["batch_format"] == "sim-batch"
+        assert (row["confirmed"], row["paid"], row["payout_status"]) == (True, True, "paid")
+        assert set(row) <= public.WINNER_FIELDS | {"batch_url"} | public.ENRICHMENT_FIELDS
+    assert store[layout.WINNER_STATS_ALIAS] == store[layout.WINNER_STATS]
+    assert stats["winners"][1]["train"] == {"lora_lr": 0.0001, "steps": 2}
+    assert second.round_id not in json.dumps(stats) and "hk12" not in json.dumps(stats)
+    assert all(word not in json.dumps(stats) for word in ("private/", "pending/", "put_url", '"groups"', '"rollouts": ['))
+    external = json.loads(store[layout.MINING_JSON])
+    assert "winner_stats" not in external
+    public.validate_winner_stats(external, stats, "https://files.example")
+    before = json.dumps(external, sort_keys=True)
+    public.winner_stats_from_snapshot(external, "https://files.example")
+    assert json.dumps(external, sort_keys=True) == before
+
+
+def crowned_public_batch_fixture(tmp_path):
+    """A real admitted batch, real IRT bytes, and the controller's crowned-only public transport."""
+    from sn120_v2.envs.math_pool import MathPool, Task
+    from sn120_v2.irt import IRTSampler
+    from sn120_v2.params import Params
+
+    made = world(tmp_path)
+    made.register(11, 0.4)
+    made.register(12, 0.0)  # loser: its private batch must never be read
+    made.round()
+    snapshot = json.loads(json.dumps(made.publisher.snapshots[-1]))
+    tasks = (Task("gen:a", "affine_math", "public reserve A", "1"),
+             Task("math:b", "affine_math", "public base B", "2"),
+             Task("other:c", "affine_math", "public other C", "3"))
+    pool = MathPool(tasks, "fixture-catalog")
+    groups = [
+        {"prompt": tasks[0].batch_prompt(), "rollouts": [{"output": "work \\boxed{1}", "reward": 1.0},
+                                                          {"output": "no box", "reward": 0.0}]},
+        {"prompt": tasks[1].problem, "rollouts": [{"output": "abcdef", "reward": 1.0}]},
+        {"prompt": "custom unmapped prompt", "rollouts": [{"output": "abcdefghij", "reward": 0.0}]},
+        {"prompt": tasks[2].batch_prompt(), "rollouts": [{"output": "\\boxed{3} trailing", "reward": 1.0}]},
+    ]
+    raw = json.dumps({"version": "affine-batch-v2", "hotkey": "hk11", "groups": groups}).encode()
+    winner = snapshot["winner_stats"]["winners"][0]
+    winner["batch_sha256"] = sha256_hex(raw)
+    snapshot["history"][0]["entries"][0]["batch_sha256"] = winner["batch_sha256"]
+    irt = IRTSampler([task.task_id for task in tasks], Params(irt_draw_rule="band")).public_snapshot()
+    snapshot["history"][0]["irt_snapshot_id"] = irt["snapshot_id"]
+    store = MemStore({layout.winner_batch(winner["round_id"]): raw,
+                      layout.irt_snapshot(irt["snapshot_id"]): json.dumps(irt).encode()})
+    return snapshot, winner, store, pool
+
+
+def test_crowned_public_batch_enrichment_and_privacy(tmp_path, caplog):
+    snapshot, winner, store, pool = crowned_public_batch_fixture(tmp_path)
+    reads = []
+
+    class PublicOnly(MemStore):
+        def get(self, key):
+            reads.append(key)
+            assert not key.startswith(("private/", "pending/"))
+            if "/batch.json" in key:
+                assert key == layout.winner_batch(winner["round_id"])
+            return super().get(key)
+
+    store = PublicOnly(store)
+    stats = {"schema": public.WINNER_STATS_SCHEMA, "generated_at": snapshot["generated_at"], "winners": [winner]}
+    enriched = public.enrich_winner_stats(snapshot, stats, store, pool)["winners"][0]
+    assert enriched["group_count"] == 4 and enriched["boxed_frac"] == 0.2 and enriched["output_chars_p50"] == 10
+    assert enriched["prompt_sources"] == {"gen": 1, "dapo": 0, "math": 1, "nmv2": 0, "other": 1, "unmapped": 1}
+    assert sum(enriched["prompt_band"].values()) == 3  # only mapped prompts, from the crown round's real IRT
+    assert reads == [layout.winner_batch(winner["round_id"]), layout.irt_snapshot(snapshot["history"][0]["irt_snapshot_id"])]
+    public.validate_winner_enrichment(snapshot, enriched, store, pool)
+    forged = dict(enriched, group_count=999)
+    with pytest.raises(ValueError, match="group_count"):
+        public.validate_winner_enrichment(snapshot, forged, store, pool)
+    irt_key = layout.irt_snapshot(snapshot["history"][0]["irt_snapshot_id"])
+    irt = json.loads(store[irt_key])
+    store[irt_key] = b"not an IRT snapshot"
+    basic = public.enrich_winner_stats(snapshot, stats, store, pool)["winners"][0]
+    assert "prompt_band" not in basic and basic["group_count"] == 4 and "prompt_band omitted" in caplog.text
+    store[irt_key] = json.dumps(irt | {"snapshot_id": "forged"}).encode()
+    basic = public.enrich_winner_stats(snapshot, stats, store, pool)["winners"][0]
+    assert "prompt_band" not in basic and basic["group_count"] == 4  # VerifyError also preserves the basic fields
+
+
+def test_v4_crowned_batch_enriches_grpo_groups_and_sft_without_admission_caps(tmp_path):
+    snapshot, winner, store, pool = crowned_public_batch_fixture(tmp_path)
+    tasks = [pool.task(task_id) for task_id in pool.task_ids]
+    document = {
+        "version": "affine-batch-v4", "hotkey": winner["hotkey"],
+        "stages": [
+            {"train": {"steps": 2}, "groups": [
+                {"prompt": tasks[0].batch_prompt(), "rollouts": [{"output": "work \\boxed{1}", "reward": 1.0}]},
+            ]},
+            {"sft": [
+                {"prompt": tasks[1].problem, "output": "abcdef"},
+                {"prompt": "custom public prompt", "output": "no box"},
+            ]},
+        ],
+    }
+    raw = json.dumps(document).encode()
+    winner["batch_sha256"] = sha256_hex(raw)
+    store[layout.winner_batch(winner["round_id"])] = raw
+    stats = {"schema": public.WINNER_STATS_SCHEMA, "generated_at": snapshot["generated_at"], "winners": [winner]}
+    enriched = public.enrich_winner_stats(snapshot, stats, store, pool)["winners"][0]
+    assert enriched["group_count"] == 3
+    assert enriched["boxed_frac"] == 1 / 3 and enriched["output_chars_p50"] == 6
+    assert enriched["prompt_sources"] == {"gen": 1, "dapo": 0, "math": 1, "nmv2": 0, "other": 0, "unmapped": 1}
+    assert sum(enriched["prompt_band"].values()) == 2
+    public.validate_winner_enrichment(snapshot, enriched, store, pool)
+
+
+def test_real_controller_enriches_only_its_crowned_public_batch(tmp_path):
+    from sn120_v2.envs.math_pool import MathPool
+
+    made = world(tmp_path)
+    reads = []
+    winner_batch = layout.winner_batch("r000001")
+
+    # A real public crowned batch has already exercised enrichment above.
+    # Here the real controller publishes one winner beside one loser. Their
+    # simulator batches are deliberately non-affine; only the crowned public
+    # object may be read, and its malformed shape must not stop publication.
+    class GuardedStore:
+        def __init__(self, inner):
+            self.inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self.inner, name)
+
+        def get(self, key):
+            reads.append(key)
+            assert not key.startswith(("private/", "pending/"))
+            if "/batch.json" in key:
+                assert key == winner_batch
+            return self.inner.get(key)
+
+    guarded = GuardedStore(made.store)
+    made.controller.publisher = publisher.StorePublisher(guarded, "https://files.example/", prompt_pool=MathPool((), "fixture"))
+    made.register(11, 0.4)
+    made.register(12, 0.0)
+    made.round()
+    assert made.controller.last_error == ""
+    stats = json.loads(made.store.get(layout.WINNER_STATS))
+    assert len(stats["winners"]) == 1 and stats["winners"][0]["hotkey"] == "hk11"
+    assert not set(stats["winners"][0]) & public.ENRICHMENT_FIELDS
+    assert made.store.get(layout.WINNER_STATS_ALIAS) == made.store.get(layout.WINNER_STATS)
+    assert reads.count(winner_batch) == 1
+    assert all(not key.startswith(("private/", "pending/")) and (key == winner_batch or "/batch.json" not in key) for key in reads)
+
+
+def test_unreadable_crowned_batch_never_blocks_publication(tmp_path, caplog):
+    snapshot, winner, source, pool = crowned_public_batch_fixture(tmp_path)
+    _, _, store = published(snapshot)  # head manifest and all ordinary public artifacts
+    store[layout.winner_batch(winner["round_id"])] = source[layout.winner_batch(winner["round_id"])]
+    reads = []
+
+    class Guarded(MemStore):
+        def get(self, key):
+            reads.append(key)
+            assert not key.startswith(("private/", "pending/"))
+            if key == layout.winner_batch(winner["round_id"]):
+                raise RuntimeError("public winner object temporarily unreadable")
+            return super().get(key)
+
+    guarded = Guarded(store)
+    publisher.StorePublisher(guarded, "https://files.example/", prompt_pool=pool).publish(snapshot)
+    stats = json.loads(guarded[layout.WINNER_STATS])
+    assert not set(stats["winners"][0]) & public.ENRICHMENT_FIELDS
+    assert guarded[layout.WINNER_STATS_ALIAS] == guarded[layout.WINNER_STATS]
+    assert layout.MINING_JSON in guarded and layout.LLMS_TXT in guarded
+    assert all(not key.startswith(("private/", "pending/")) for key in reads)
+    assert "enrichment omitted" in caplog.text
+
+
+def test_winner_transport_is_matched_and_reduced_to_safe_fields(tmp_path):
+    made = world(tmp_path)
+    made.register(11, 0.4)
+    made.register(12, 0.0)
+    made.round()
+    snap = json.loads(json.dumps(made.publisher.snapshots[-1]))
+    row = snap["winner_stats"]["winners"][0]
+    loser = next(entry for entry in snap["history"][0]["entries"] if entry["status"] != "winner")
+    snap["winner_stats"]["winners"] += [
+        dict(row, uid=loser["uid"], hotkey=loser["hotkey"], batch_sha256=loser["batch_sha256"]),
+        {"round_id": "r999999", "uid": 99, "hotkey": "hk99", "batch_sha256": "f" * 64},
+    ]
+    row |= {"uri": "private/rounds/r000001/batches/hk11.json", "reason": "private waiting verdict", "train": {"lora_lr": 0.00005}}
+    doc, _, store = published(snap)
+    stats = json.loads(store[layout.WINNER_STATS])
+    assert len(stats["winners"]) == 1 and stats["winners"][0]["train"] == {"lora_lr": 0.00005}
+    assert "uri" not in stats["winners"][0] and "reason" not in stats["winners"][0]
+    assert "private/" not in json.dumps(stats) and "hk99" not in json.dumps(stats) and "r999999" not in json.dumps(stats)
+    assert "winner_stats" not in doc
+    external = {key: value for key, value in snap.items() if key != "winner_stats"}
+    fallback = public.winner_stats_from_snapshot(external, "https://files.example")
+    assert fallback["winners"][0]["batch_prompts"] is None and fallback["winners"][0]["train"] is None
+    public.validate_winner_stats(external, fallback, "https://files.example")
+
+
+def test_winner_file_validation_rejects_forged_or_extra_public_content(tmp_path):
+    made = world(tmp_path)
+    made.register(11, 0.4, train={"steps": 2})
+    made.round()
+    snap = json.loads(json.dumps(made.publisher.snapshots[-1]))
+    _, _, store = published(snap)
+    stats = json.loads(store[layout.WINNER_STATS])
+    good = stats["winners"][0]
+    bad_rows = [
+        dict(good, uri="private/a-batch"),
+        dict(good, z=999),
+        dict(good, confirmed=False),
+        dict(good, batch_url="https://attacker.example/public/rounds/r000001/batch.json"),
+        dict(good, batch_url="/public/rounds/r000001/batch.json"),
+        dict(good, train={"steps": 2, "uri": "private/a-batch"}),
+        dict(good, train={"groups": ["private prompt"]}),
+        {name: value for name, value in good.items() if name != "lora"},
+    ]
+    for bad in (
+        stats | {"private": "pending/batch"},
+        *(stats | {"winners": [row]} for row in bad_rows),
+    ):
+        with pytest.raises(ValueError):
+            public.validate_winner_stats(snap, bad, "https://files.example")
+    external = {key: value for key, value in snap.items() if key != "winner_stats"}
+    fallback = public.winner_stats_from_snapshot(external, "https://files.example")
+    public.validate_winner_stats(external, fallback, "https://files.example")
+    rich = stats | {"winners": [good]}
+    public.validate_winner_stats(external, rich, "https://files.example")
+    for name, value in (("batch_prompts", "one"), ("batch_rollouts", True), ("batch_format", 1), ("train", [])):
+        with pytest.raises(ValueError):
+            public.validate_winner_stats(external, stats | {"winners": [good | {name: value}]}, "https://files.example")
+
+
+def test_standalone_stats_accept_real_public_heads_and_type_checked_crowned_batch_facts(tmp_path):
+    made = world(tmp_path)
+    made.register(11, 0.4, train={"steps": 2})
+    made.round()
+    made.register(12, 0.4)
+    made.round()
+    doc, _, store = published(made.publisher.snapshots[-1])
+    stats = json.loads(store[layout.WINNER_STATS])
+    row = next(row for row in stats["winners"] if row["uid"] == 11)
+    actual = row["head"]
+    other = next(head["version_id"] for head in doc["heads"] if head["round_id"] != row["round_id"])
+    row["head"] = other
+    public.validate_winner_stats(doc, stats, "https://files.example")
+    for name, value in (("batch_prompts", "one"), ("batch_rollouts", True), ("batch_format", 1), ("train", [])):
+        bad = stats | {"winners": [dict(item, **{name: value}) if item["round_id"] == row["round_id"] else item for item in stats["winners"]]}
+        with pytest.raises(ValueError):
+            public.validate_winner_stats(doc, bad, "https://files.example")
+    with pytest.raises(ValueError):
+        public.validate_winner_stats(doc, stats | {"winners": [dict(item, head="not-a-public-head") for item in stats["winners"]]}, "https://files.example")
+
+
+def test_standalone_stats_accept_an_aged_out_well_formed_head_only_without_projection_contradiction(tmp_path):
+    made = world(tmp_path)
+    made.register(11, 0.4)
+    made.round()
+    snapshot = json.loads(json.dumps(made.publisher.snapshots[-1]))
+    snapshot.pop("heads")
+    snapshot["kings"][0]["head_version_id"] = None
+    row = snapshot["winner_stats"]["winners"][0]
+    aged_out = sha256_hex(b"aged-out-parent-version")
+    assert aged_out not in {head["version_id"] for head in snapshot.get("heads", [])}
+    external = {key: value for key, value in snapshot.items() if key != "winner_stats"}
+    assert public.winner_stats_from_snapshot(external)["winners"][0]["head"] is None
+    row["head"] = aged_out
+    stats = {"schema": public.WINNER_STATS_SCHEMA, "generated_at": snapshot["generated_at"], "winners": [row]}
+    public.validate_winner_stats(external, stats)
+
+    for projected_head in (None, ""):
+        snapshot["kings"][0]["head_version_id"] = projected_head
+        public.validate_winner_stats(external, stats)
+
+    for bad in ("not-a-public-head", "A" * 64):
+        row["head"] = bad
+        with pytest.raises(ValueError, match="winner stats head is not a version in the public head history"):
+            public.validate_winner_stats(external, stats)
+
+    other = sha256_hex(b"another-head-not-in-the-public-window")
+    row["head"] = other
+    snapshot["kings"][0]["head_version_id"] = sha256_hex(b"projected-head-not-in-the-public-window")
+    with pytest.raises(ValueError, match="winner stats head is not a version in the public head history"):
+        public.validate_winner_stats(external, stats)
+
+
+def test_pending_crown_is_not_reported_as_confirmed_or_paid(tmp_path):
+    made = world(tmp_path, confirm_next_round=True)
+    made.register(11, 0.4)
+    made.round()
+    assert made.controller.state.pending_king is not None and not made.controller.state.kings
+    stats = json.loads(published(made.publisher.snapshots[-1])[2][layout.WINNER_STATS])
+    row = stats["winners"][0]
+    assert row["head"] == made.controller.state.pending_king.new_version_id
+    external = {key: value for key, value in made.publisher.snapshots[-1].items() if key != "winner_stats"}
+    public.validate_winner_stats(external, stats, "https://files.example")
+    assert row["applied_at"] == made.controller.state.pending_king.applied_at
+    assert (row["confirmed"], row["paid"], row["payout_status"]) == (None, False, "unpaid")
+    legacy = json.loads(json.dumps(stats))
+    legacy["winners"][0]["confirmed"] = False  # the already-written live object, before the next-publish writer fix
+    public.validate_winner_stats(external, legacy, "https://files.example")
+    legacy["winners"][0]["confirmed"] = True
+    with pytest.raises(ValueError):
+        public.validate_winner_stats(external, legacy, "https://files.example")
+
+
+def test_a_failed_resolved_confirmation_is_unpaid_in_winner_stats_and_fallback(tmp_path):
+    made = world(tmp_path, confirm_next_round=True)
+    made.register(11, 0.4)
+    first = made.round()
+    made.evaluator.parent_quality = 0.5
+    made.register(12, 0.0)
+    second = made.round()
+    assert second.confirmation is not None and not second.confirmation.confirmed
+    assert not made.controller.state.kings and made.controller.state.pending_king is None
+    stats = json.loads(published(made.publisher.snapshots[-1])[2][layout.WINNER_STATS])
+    row = next(row for row in stats["winners"] if row["round_id"] == first.round_id)
+    assert (row["confirmed"], row["paid"], row["payout_status"]) == (False, False, "unpaid")
+    external = {key: value for key, value in made.publisher.snapshots[-1].items() if key != "winner_stats"}
+    fallback = public.winner_stats_from_snapshot(external, "https://files.example")
+    assert [(row["round_id"], row["uid"]) for row in fallback["winners"]] == [(row["round_id"], row["uid"]) for row in stats["winners"]]
+    projected = next(row for row in fallback["winners"] if row["round_id"] == first.round_id)
+    assert (projected["confirmed"], projected["paid"], projected["payout_status"]) == (False, False, "unpaid")
+    public.validate_winner_stats(external, fallback, "https://files.example")
+
 
 
 def test_both_files_come_from_one_snapshot_and_change_together(tmp_path):
@@ -66,6 +431,88 @@ def test_both_files_come_from_one_snapshot_and_change_together(tmp_path):
     doc2, text2, _ = published(idle, store)
     assert doc2["snapshot_digest"] != doc["snapshot_digest"] and doc2["snapshot_digest"] in text2
     assert "- phase: IDLE" in text2 and doc["snapshot_digest"] not in text2
+
+
+def test_local_delta_se_is_measured_and_bounded(tmp_path):
+    """One stable docs line, sourced from public history, plus a UTC-only changelog."""
+    doc, text, _ = published(world(tmp_path).publisher.snapshots[-1])
+    flat = " ".join(text.split())
+    assert flat.count(publisher.LOCAL_DELTA_SE) == 1
+    assert "about 5.3 percentage points" in publisher.LOCAL_DELTA_SE
+    assert "public 2000-task SE scaled by √(n/100)" in publisher.LOCAL_DELTA_SE
+    changelog = next(line for line in publisher.RULE_CHANGELOG if "local-delta measurement guidance" in line)
+    assert "2026-11-25" in changelog and "5.3 percentage points" in changelog
+    assert "Costa Rica" not in changelog and "UTC-6" not in changelog
+
+
+def test_service_state_reasons_coarse_utc_and_public_vocabulary(tmp_path):
+    made = world(tmp_path, play=True)
+    running, idle = made.publisher.snapshots[-2:]
+    doc, text, _ = published(running)
+    assert doc["phase"] == "RUNNING"
+    assert doc["service"] == {"state": "running", "reason": None, "next_open_at": None}
+    assert idle["phase"] == "IDLE"
+    assert idle["service"] == {"state": "idle", "reason": "between rounds", "next_open_at": idle["service"]["next_open_at"]}
+    closed = made.controller.state.rounds[-1]
+    made.controller.state.round = dataclasses.replace(closed, closed_at=0)
+    assert public.service_view(made.controller.state, made.now) == {"state": "applying", "reason": None, "next_open_at": None}
+    made.controller.state.round = None
+
+    cases = [
+        ({}, ("idle", "waiting for seats", None)),
+        ({"waiting_for_seats": False}, ("idle", "between rounds", "2023-11-14T22:20:00Z")),
+        ({"close_publish_pending": True}, ("stalled", "publish retrying", "2023-11-14T22:20:00Z")),
+        ({"stop_asked": True}, ("idle", "deploying fix", "2023-11-14T22:20:00Z")),
+        ({"stop_asked": True, "close_publish_pending": True, "waiting_for_seats": False}, ("stalled", "deploying fix", "2023-11-14T22:20:00Z")),
+        ({"close_publish_pending": True, "waiting_for_seats": False}, ("stalled", "publish retrying", "2023-11-14T22:20:00Z")),
+    ]
+    for flags, expected in cases:
+        shown = public.snapshot(made.controller.state, made.params, 1_700_000_001, **flags)["service"]
+        assert set(shown) == {"state", "reason", "next_open_at"}
+        assert (shown["state"], shown["reason"], shown["next_open_at"]) == expected
+        if shown["next_open_at"] is not None:
+            parsed = datetime.datetime.strptime(shown["next_open_at"], "%Y-%m-%dT%H:%M:%SZ")
+            assert int(parsed.replace(tzinfo=datetime.UTC).timestamp()) % 300 == 0
+        assert shown["state"] in public.SERVICE_STATES
+        assert shown["reason"] in public.SERVICE_REASONS | {None}
+        assert not set(shown) & {"idle_sleep", "max_idle", "retry", "tries", "stop_file", "last_error", "n_valid"}
+    assert public.service_view(made.controller.state, 1_700_000_000, waiting_for_seats=False)["next_open_at"] == "2023-11-14T22:20:00Z"
+    assert "service.state" in text and "deploying fix" in text and "publish retrying" in text
+    assert "2026-11-25 / `service`" in text
+
+
+def test_service_seats_and_close_retry_use_actual_controller_facts(tmp_path):
+    made = world(tmp_path, n_min_start=2, batch_cap=4)
+    made.register(1, 0.0)  # one valid file is insufficient at n_min_start=2, even though batch_cap is four
+    assert not made.controller.open_round(made.clock(), "entropy")
+    assert made.controller.publish(made.clock())
+    assert made.publisher.snapshots[-1]["service"]["reason"] == "waiting for seats"
+    assert made.publisher.snapshots[-1]["service"]["next_open_at"] is None
+    made.register(2, 0.0)
+    assert made.controller.run_round(made.runner, made.clock, "entropy")
+    assert made.publisher.snapshots[-1]["service"]["reason"] == "between rounds"
+
+    controller = made.reopen()  # an already-published close needs no write; this fresh controller has not published it
+    real, attempted = controller.publisher.publish, []
+
+    def down(snapshot):
+        attempted.append(snapshot)
+        raise InfraError("store down")
+
+    controller.publisher.publish = down
+    problem = controller.close_in_public(made.clock())
+    assert problem and controller._close_publish_pending
+    assert attempted[-1]["service"]["state"] == "stalled"
+    assert attempted[-1]["service"]["reason"] == "publish retrying"
+    assert "store down" not in json.dumps(attempted[-1]["service"])
+    controller.publisher.publish = real
+    assert controller.close_in_public(made.clock()) == ""
+    assert made.publisher.snapshots[-1]["service"]["state"] == "stalled"  # the successful retry exposes its last status
+    assert not controller._close_publish_pending
+    assert controller.publish(made.clock())
+    assert made.publisher.snapshots[-1]["service"]["state"] == "idle"
+    assert controller.close_in_public(made.clock()) == ""
+    assert not controller._close_publish_pending
 
 
 def test_every_miner_bound_is_published_from_the_records(tmp_path):
@@ -88,20 +535,24 @@ def test_every_miner_bound_is_published_from_the_records(tmp_path):
     assert doc["contract"]["recipe_id"] == recipe.recipe_id and recipe.recipe_id in text
 
 
-def test_training_scoring_and_sampler_render_are_published_as_identical(tmp_path):
+def test_stored_prompt_contract_and_recommendation_are_published(tmp_path):
     text = published(world(tmp_path).publisher.snapshots[-1])[1]
     flat = " ".join(text.split())
-    assert "Training and scoring render a pool task identically" in flat
-    assert "user = `prompt` with a leading instruction + blank line removed" in flat
-    assert "enable_thinking=True" in flat and "add_generation_prompt=True" in flat
-    assert "Rollouts sampled under the old one-user-message render are now slightly off-policy for the trainer" in flat
+    assert "Validator training uses exactly the stored `prompt` field of each batch row" in flat
+    assert "Sampling context such as a separate system message is not kept unless it was written into that stored `prompt` field" in flat
+    assert "official instruction of section 6 (`MANDATE`), a blank line, then the problem, both in that one `prompt` field, as recent crowned kings do" in flat
+    assert '`MathPool.task.batch_prompt()` = `MANDATE + "\\n\\n" + problem`' in flat
+    assert "For your sampler, match the trainer's render: strip a leading official instruction + blank line from the stored `prompt` if present; render system = the official instruction, user = the problem; then apply the head's chat template with `add_generation_prompt=True` and `enable_thinking=True`" in flat
+    assert "The template is not applied to the raw stored `prompt` as a single user message" in flat
+    assert "Prompt input: exactly the stored `prompt` field" not in flat
+    assert "Both are the same task for the grader and give exactly the same model tokens" not in flat
     assert "Scoring renders a task in another way than training" not in flat
 
 
 def test_the_pool_drop_list_and_non_pool_meaning_are_published(tmp_path):
     _, text, _ = published(world(tmp_path).publisher.snapshots[-1])
     flat = " ".join(text.split())
-    assert "Task pool: 20,120 tasks" in flat
+    assert "Base task-body catalog: 20,120 tasks" in flat
     assert "1,454 tasks of the earlier pool" in flat and POOL_V2_0_SHA256[:8] in flat
     assert "https://github.com/AffineFoundation/affine/blob/v2/v2/sn120_v2/envs/math_pool_v2_1.dropped.json" in flat
     assert "removed tasks is no longer a pool task" in flat and "min_pool_prompt_frac" in flat
@@ -163,7 +614,7 @@ def test_every_number_follows_the_pinned_params(tmp_path):
     for field in dataclasses.fields(made.params) + dataclasses.fields(recipe):  # the full table and the full recipe
         # Optional king-count, confirmation and default rotation fields are deliberately absent;
         # a selected king count and every dedup/seed field are stated.
-        assert f"`{field.name}`" in text or field.name.startswith("_") or field.name in ("recipe", "miner_bounds") or (field.name in made.params.LEFT_OUT_AT_DEFAULT and (field.name == "null_samples_per_task" or field.name.startswith("rotation_") or field.name == "confirm_next_round") and getattr(made.params, field.name) == field.default)
+        assert f"`{field.name}`" in text or field.name.startswith("_") or field.name in ("recipe", "miner_bounds") or (field.name in made.params.LEFT_OUT_AT_DEFAULT and (field.name == "null_samples_per_task" or field.name == "min_kl_tok" or field.name.startswith("rotation_") or field.name == "confirm_next_round") and getattr(made.params, field.name) == field.default)
     selected = world(tmp_path / "selected", null_samples_per_task=2)
     selected_text = published(selected.publisher.snapshots[-1])[1]
     assert "`null_samples_per_task`" in selected_text
@@ -184,7 +635,7 @@ def test_the_trainer_rules_and_the_batch_rule_are_stated_from_the_recipe(tmp_pat
     assert "`max_grad_norm` | 1 | gradient clip of each update; it does not cap the size of an update" in flat and "step-size cap" not in flat
     assert "The clip does not cap the size of an update." in flat and "The one cap on it is `global_norm_cap`." in flat
     assert "Row k of the shuffled list (k from 0) goes to minibatch k modulo N." in flat and "steps x N updates in all" in flat
-    assert "The cost does not count `minibatches`." in flat and "each update has a fixed cost of its own, about 0.1 s" in flat
+    assert "The cost does not count `minibatches`" in flat and "Each update also has a fixed cost of its own, about 0.1 s" in flat
     old = dataclasses.replace(recipe, global_norm_cap=None, miner_bounds=tuple(bound for bound in recipe.miner_bounds if bound.key not in ("minibatches", "global_norm_cap")))
     before = " ".join(published(world(tmp_path / "before", recipe=old).publisher.snapshots[-1])[2].get(layout.LLMS_TXT).decode().split())
     assert "This recipe has none: there is no cap. A file may not set a cap of its own now." in before, "a set from before the two new bounds"
@@ -216,7 +667,7 @@ def test_the_times_of_a_round_and_the_queue_place_follow_the_params(tmp_path):
     assert "Training time: the first 25 minutes." in flat and "Batches train longest-expected-first" in flat
     assert "Such a batch is `not_trained`: you are not charged, your seat is first in the next round" in flat
     assert "the training time of the round (25 minutes for all batches, section 3) and this cost cap for one file (123456 token-steps)" in flat
-    assert "`train_cost`: cost = steps x the tokens" in flat and "A file with a cost above 123456 token-steps is invalid." in flat
+    assert "`train_cost`: for v1-v3, cost = steps x the tokens" in flat and "A file with a cost above 123456 token-steps is invalid." in flat
     no_cap = " ".join(published(world(tmp_path / "no-cap", max_train_token_steps=0).publisher.snapshots[-1])[1].split())
     assert "There is no cap on the cost now" in no_cap and "this cost cap for one file (no cap now)" in no_cap
     assert "Scoring streams over the draw with no chunk barrier." in flat
@@ -324,11 +775,35 @@ def test_the_public_address_of_the_link_files_is_a_setting(tmp_path):
     upload = doc["contract"]["upload"]
     assert doc["contract"]["links_url"] == "https://site.example/ff/links" and upload == links.upload_entry("https://site.example/ff/links")
     assert "Where to get the link: https://site.example/ff/links/<hotkey>.json." in flat
-    assert f"A new file is written every {upload['reissue_every_seconds'] // 60} minutes. Each link works for {upload['link_ttl_seconds'] // 3600} hours." in flat
+    assert f"The links job runs every minute. Each link works for {upload['link_ttl_seconds'] // 3600} hours." in flat
+    assert f"The live index {upload['index']} gives the authoritative `reissue_every_seconds`." in flat
+    assert "A new registration gets its sealed link within about 5 minutes of the registration showing on chain (after activation), also while a round is open." in flat
+    assert "The validator checks the waiting files once per round, right after the previous round closes and registrations are synced (`queue.files_checked_at` in mining.json); a file must be uploaded before that check to be judged for the next round." in flat
+    assert "A file uploaded after the check waits for the next round's check." in flat
+    assert "After a new registration or activation, wait for the next link file, within about 5 minutes." in flat
+    assert "A newly paid king first gets weights from the next hourly write (:05 UTC); with commit-reveal that shows in incentive one to two epochs later (about 1–2.5 h after the round closes)." in flat
+    assert "- A king is a round winner that was applied. The window is the last 10 distinct king UIDs. A UID that wins - A king is a round winner that was applied and then confirmed" not in flat
     assert "links open --hotkey <ss58> --key <seed file> --links-url https://site.example/ff/links)" in flat
     assert "links activate --wallet <wallet name> --hotkey <hotkey name>" in flat and "The opened URL is a secret." in flat
     with pytest.raises(ConfigError):
         publisher.StorePublisher(store, "", "site.example/ff/links")
+
+
+@pytest.mark.parametrize("confirm_next_round", [False, True])
+def test_the_king_definition_is_one_bullet_for_either_confirmation_setting(tmp_path, confirm_next_round):
+    text = published(world(tmp_path, confirm_next_round=confirm_next_round).publisher.snapshots[-1])[1]
+    payout = text.split("## 7. Payout\n", 1)[1].split("\n## 8.", 1)[0]
+    bullets = [line for line in payout.splitlines() if line.startswith("- A king is a round winner")]
+    assert len(bullets) == 1
+    flat = " ".join(payout.split())
+    if confirm_next_round:
+        assert "applied and then confirmed in the next round" in flat
+        assert "Pending and failed crowns are never paid." in flat
+        assert "A UID that wins again has one place" not in flat
+    else:
+        assert "A UID that wins again has one place in the window, with its newest win." in flat
+        assert "applied and then confirmed in the next round" not in flat
+        assert "Pending and failed crowns are never paid." not in flat
 
 
 def test_the_head_names_the_genesis_model_only_while_its_base_is_that_model(tmp_path):
@@ -401,7 +876,7 @@ def test_private_or_malformed_content_never_reaches_the_public_files(tmp_path, b
     store = MemStore()
     with pytest.raises(ContractError):
         published(world(tmp_path).publisher.snapshots[-1] | bad, store)
-    assert layout.MINING_JSON not in store and layout.LLMS_TXT not in store
+    assert layout.MINING_JSON not in store and layout.LLMS_TXT not in store and layout.WINNER_STATS not in store
 
 
 def test_a_head_is_named_only_after_its_manifest_is_public(tmp_path):

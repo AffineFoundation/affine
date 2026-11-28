@@ -24,6 +24,7 @@ from .canonical import Record, _hints, from_jsonable, is_sha256, to_jsonable
 from .errors import BatchRejected, ConfigError
 
 SEED_SCOPES = ("round", "batch")
+MINER_UPGRADE_COMMAND = "git fetch origin affine/king4-kltok && git checkout affine/king4-kltok && git pull && python -m pip install -e './v2[miner,envs,links,chain]'"
 
 # Identity of the launch model. The base hash is the manifest digest of the
 # published checkpoint files (see canonical.manifest_digest).
@@ -91,6 +92,8 @@ class MinerBound(Record):
 # and sampling temperature; LoRA rank and alpha; target modules; the cap on
 # the norm of the whole update.
 # PLACEHOLDER marks a bound the spec does not give. It is not a decision.
+SFT_MINER_BOUND = MinerBound("sft_weight", 0.0, 1.0, decided=True)
+
 DEFAULT_MINER_BOUNDS = (
     MinerBound("lora_lr", 1e-6, 1e-4),  # PLACEHOLDER
     MinerBound("adam_eps", 1e-10, 1e-4, decided=True),
@@ -118,7 +121,7 @@ class Recipe(Record):
     # ``minibatches`` and ``adam_eps`` came after the first rounds. While at their defaults they are not written
     # (``canonical.to_jsonable``): a stored recipe keeps its JSON form and ``recipe_id``, and code from before the
     # fields can read it.
-    LEFT_OUT_AT_DEFAULT = ("minibatches", "adam_eps")
+    LEFT_OUT_AT_DEFAULT = ("minibatches", "adam_eps", "sft_weight")
 
     method: str = "grpo-lora"
     steps: int = 1  # passes over the whole file
@@ -129,6 +132,7 @@ class Recipe(Record):
     global_norm_cap: float | None = 6.0  # cap on the norm of the whole adapter update; None = no cap
     group_size: int = 0  # PLACEHOLDER: rollouts per GRPO group; 0 = use each prompt's rollouts as the file groups them
     sample_temperature: float = 1.0  # temperature the batch's rollouts were sampled at
+    sft_weight: float = 1.0  # multiplier of each supervised trace's token-mean cross-entropy
     rank: int = 16
     alpha: float = 32.0
     dropout: float = 0.0
@@ -147,21 +151,28 @@ class Recipe(Record):
     code_digest: str = ""  # sha256 of the training code, set by the train/eval workstream
     image_digests: tuple[str, ...] = ()  # worker images allowed to produce LoRAs and scores
 
+    @property
+    def settable_fields(self) -> frozenset[str]:
+        """Fields a bound may name; also the public compatibility filter's allowlist."""
+        return frozenset(f.name for f in dataclasses.fields(self)) - {"miner_bounds", "code_digest", "image_digests", "method"}
+
     def __post_init__(self) -> None:
         _need(self.steps >= 1, "recipe.steps must be at least 1")
         _need(self.minibatches >= 1, "recipe.minibatches must be at least 1")
         _need(self.rank >= 1, "recipe.rank must be at least 1")
         _need(math.isfinite(self.lora_lr) and self.lora_lr > 0, "recipe.lora_lr must be a positive number")
         _need(math.isfinite(self.adam_eps) and self.adam_eps > 0, "recipe.adam_eps must be a finite positive number")
+        _need(_unit(self.sft_weight), "recipe.sft_weight must be in [0, 1]")
         _need(math.isfinite(self.max_grad_norm) and self.max_grad_norm > 0, "recipe.max_grad_norm must be positive")
         cap = self.global_norm_cap
         _need(cap is None or (math.isfinite(cap) and cap > 0), "recipe.global_norm_cap must be positive, or null for no cap")
         _need(bool(self.target_modules), "recipe.target_modules must not be empty")
         for name, needed in TARGET_MODULE_NEEDS:
             _need(name not in self.target_modules or needed in self.target_modules, f"recipe.target_modules with {name} must hold {needed} too")
-        settable = {f.name for f in dataclasses.fields(self)} - {"miner_bounds", "code_digest", "image_digests", "method"}
+        settable = self.settable_fields
         keys = [bound.key for bound in self.miner_bounds]
-        _need(len(set(keys)) == len(keys) and set(keys) <= settable, "miner_bounds must name distinct recipe fields")
+        _need(len(set(keys)) == len(keys) and set(keys) <= settable,
+              f"miner_bounds must name distinct recipe fields; an unknown or duplicate key needs newer miner tools. Upgrade with: {MINER_UPGRADE_COMMAND}")
         for bound in self.miner_bounds:
             _need(bool(bound.choices) or bound.low <= bound.high, f"bad miner bound for {bound.key!r}")
         # The high end of the miner bound is the ceiling for every file: the value of a file that sets none may not be above it.
@@ -202,8 +213,10 @@ class Params(Record):
         "rotation_enabled", "rotation_k", "rotation_retire_p", "rotation_n_min",
         "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
-        "eval_merged", "null_prune_from_round", "min_kl_seq", "kl_rollouts",
-        "kl_max_tokens", "kl_time_limit_s", "confirm_next_round",
+        "eval_merged", "null_prune_from_round", "min_kl_seq", "min_kl_tok", "kl_rollouts",
+        "kl_max_tokens", "kl_time_limit_s", "confirm_next_round", "max_stages", "train_tokens_per_s_floor",
+        "z_crown", "recite_max_share", "max_kl_tok", "anchor_n", "anchor_min_p", "anchor_min_rollouts", "anchor_hi_p",
+        "anchor_hi_share", "anchor_z_veto", "anchor_min_scored", "merge_after_confirm",
     )
 
     netuid: int = 120
@@ -252,7 +265,7 @@ class Params(Record):
     rotation_retire_low_p: float = 0.0  # zero: no empirical low-pass retirement
     rotation_n_min_low: int = 8
     rotation_active_size: int = 0  # zero: size of the initial base-pool active set
-    rotation_rule: str = "v1"  # "info": score every candidate by p * (1 - p)
+    rotation_rule: str = "v1"  # "info": score every candidate by p * (1 - p). "info-guard": the same ranking, plus the fail-closed admission gate
     rotation_churn_frac: float = 0.10  # maximum steady-state swaps: floor(frac * target)
     rotation_prior_p: float = 0.5  # when neither an IRT row nor a reserve prior is known
     rotation_queue_publish: int = 2000  # ranked upcoming candidates in the public rotation decision
@@ -261,6 +274,9 @@ class Params(Record):
     # Judging. The field-median gate adds a second, final-look z test against
     # the per-task median of the post-dedup candidates plus the king.
     z_bar: float = 1.0  # the paired king bar; a winner needs z strictly above this
+    # None = the crown bar is z_bar. Set, it is the crown/accept bar only (argmax_symmetric); the confirmation
+    # test always uses z_bar. Omitted from JSON while None, so existing params_hash values do not change.
+    z_crown: float | None = None
     crown_gate: str = "field_median"
     z_field_bar: float = 1.0  # finite; calibrated values may be negative
     cap_hit_floor: float = 0.33  # reject only when cap rate > max(cap_hit_floor, null cap rate + cap_hit_margin)
@@ -269,10 +285,28 @@ class Params(Record):
     min_cover: float = 0.95  # share of rollouts that must resolve; below it the entry is no_decision
     calibration_tol: float = 0.003  # multi-box guard on the null-M rate
     confirm_next_round: bool = False  # apply a crown now; pay it only after a fresh paired win in the next round
+    # With confirm_next_round: a crown is not merged into the head until its LoRA passes the next round's fresh paired
+    # re-test on the unchanged head (z >= z_bar). A crown that fails is discarded. Omitted from JSON while false.
+    merge_after_confirm: bool = False
     min_kl_seq: float = 0.0  # minimum mean KL(new||head) per sampled rollout; 0 = off
+    min_kl_tok: float = 0.0  # minimum summed KL divided by measured completion tokens; 0 = off
     kl_rollouts: int = 128  # deterministic sample-0 subsample; capped completions included
     kl_max_tokens: int = 0  # first N completion tokens per rollout; 0 = the full completion
     kl_time_limit_s: int = 1200  # independent hard cap, also bounded by the promotion deadline
+    max_kl_tok: float = 0.0  # behaviour KL ceiling: kl_tok above it cannot crown or confirm; 0 = off
+    recite_max_share: float = 0.0  # anti-recitation: share of target 10-grams found in active-pool task text; 0 = off
+
+    # Anchors: an easy-task regression check. ``anchor_n`` retired tasks the head solved (measured record pass rate
+    # >= anchor_min_p over >= anchor_min_rollouts head rollouts while active) are scored next to the gate draw.
+    # They never count toward delta, IRT, rotation or confirmation. A crown is vetoed when the paired anchor z is
+    # below -anchor_z_veto over at least anchor_min_scored scored anchors. 0 = off; every default is omitted from JSON.
+    anchor_n: int = 0
+    anchor_min_p: float = 0.8
+    anchor_min_rollouts: int = 4
+    anchor_hi_p: float = 0.95  # stratum boundary: round(anchor_n * anchor_hi_share) anchors come from records >= this
+    anchor_hi_share: float = 0.25
+    anchor_z_veto: float = 1.645  # one-sided: veto when anchor z < -anchor_z_veto
+    anchor_min_scored: int = 100  # fewer scored anchors: the check is not evaluated and does not veto
 
     recipe: Recipe = field(default_factory=Recipe)
 
@@ -305,6 +339,10 @@ class Params(Record):
     # PLACEHOLDER: cap on steps x the tokens the trainer runs through the model for one file; 0 = no limit.
     # The cap does not count minibatches: each optimizer update has a fixed cost that no admission rule counts.
     max_train_token_steps: int = 16_000_000
+    max_stages: int = 5  # affine-batch-v4: one to five ordered GRPO/SFT stages
+    # When positive, reserve enough wall time for the configured token-step
+    # floor plus the ten-minute post-training reserve. 0 leaves old params off.
+    train_tokens_per_s_floor: int = 0
 
     # Queue and leases.
     round_time_limit_s: int = 100 * 60  # launch rule: at most this long from the lease to the promotion of the winner
@@ -369,6 +407,12 @@ class Params(Record):
                 args = [arg for arg in typing.get_args(tp) if arg is not type(None)]
                 tp = args[0] if len(args) == 1 else Any
             if dataclasses.is_dataclass(tp) and isinstance(value, Mapping):
+                if tp is Recipe and isinstance(value.get("miner_bounds"), list):
+                    # A future bound is not a local training permission. Drop it only on this public-read path;
+                    # canonical journals, tickets and stored Params keep the strict Recipe constructor.
+                    known_keys = Recipe().settable_fields
+                    value = value | {"miner_bounds": [bound for bound in value["miner_bounds"]
+                                                       if not isinstance(bound, Mapping) or bound.get("key") in known_keys]}
                 return {key: known(hint, value[key]) for key, hint in _hints(tp).items()
                         if not key.startswith("_") and key in value}
             origin, args = typing.get_origin(tp), typing.get_args(tp)
@@ -402,6 +446,8 @@ class Params(Record):
         _need(bool(self.looks) and self.looks[-1] == 1.0, "looks must end at 1.0")
         _need(all(0 < a < b for a, b in zip(self.looks, self.looks[1:])) and self.looks[0] > 0, "looks must rise from above 0")
         _need(math.isfinite(self.z_bar) and self.z_bar >= 0, "z_bar must be zero or more")
+        _need(self.z_crown is None or (math.isfinite(self.z_crown) and self.z_crown >= 0), "z_crown must be None or zero or more")
+        _need(self.z_crown is None or self.crown_gate == "argmax_symmetric", "z_crown applies only to crown_gate argmax_symmetric")
         _need(self.crown_gate in ("king", "field_median", "argmax_symmetric"), "crown_gate must be 'king', 'field_median' or 'argmax_symmetric'")
         _need(math.isfinite(self.z_field_bar), "z_field_bar must be finite")
         _need(self.train_seed_scope in SEED_SCOPES, "train_seed_scope must be 'round' or 'batch'")
@@ -411,9 +457,22 @@ class Params(Record):
         _need(self.min_signal_rollouts >= 1, "min_signal_rollouts must be at least 1")
         _need(math.isfinite(self.min_step_norm) and self.min_step_norm >= 0, "min_step_norm must be finite and nonnegative")
         _need(math.isfinite(self.min_kl_seq) and self.min_kl_seq >= 0, "min_kl_seq must be finite and nonnegative")
+        _need(math.isfinite(self.min_kl_tok) and self.min_kl_tok >= 0, "min_kl_tok must be finite and nonnegative")
+        _need(math.isfinite(self.max_kl_tok) and self.max_kl_tok >= 0, "max_kl_tok must be finite and nonnegative")
+        _need(self.max_kl_tok <= 0 or self.max_kl_tok > self.min_kl_tok, "max_kl_tok must be above min_kl_tok")
+        _need(self.max_kl_tok <= 0 or self.kl_floor_on, "max_kl_tok needs the KL measurement")
+        _need(isinstance(self.recite_max_share, (int, float)) and not isinstance(self.recite_max_share, bool)
+              and 0 <= self.recite_max_share < 1, "recite_max_share must be in [0, 1)")
         _need(type(self.kl_rollouts) is int and self.kl_rollouts >= 8, "kl_rollouts must be an integer of at least 8")
         _need(type(self.kl_max_tokens) is int and self.kl_max_tokens >= 0, "kl_max_tokens must be a nonnegative integer")
         _need(type(self.kl_time_limit_s) is int and self.kl_time_limit_s > 0, "kl_time_limit_s must be a positive integer")
+        _need(type(self.anchor_n) is int and self.anchor_n >= 0, "anchor_n must be an integer of at least 0")
+        _need(type(self.anchor_min_rollouts) is int and self.anchor_min_rollouts >= 0, "anchor_min_rollouts must be an integer of at least 0")
+        _need(type(self.anchor_min_scored) is int and self.anchor_min_scored >= 0, "anchor_min_scored must be an integer of at least 0")
+        _need(_unit(self.anchor_min_p) and _unit(self.anchor_hi_p) and _unit(self.anchor_hi_share), "anchor_min_p, anchor_hi_p and anchor_hi_share must be in [0, 1]")
+        _need(math.isfinite(self.anchor_z_veto) and self.anchor_z_veto >= 0, "anchor_z_veto must be zero or more")
+        # Anchors live only on the argmax path: it has no early drops, so no anchor can enter a drop test.
+        _need(self.anchor_n == 0 or self.crown_gate == "argmax_symmetric", "anchor_n applies only to crown_gate argmax_symmetric")
         _need(0.0 < self.drop_alpha < 1.0, "drop_alpha must be between 0 and 1")
         _need(_unit(self.cap_hit_floor) and _unit(self.cap_hit_margin), "cap-hit settings must be in [0, 1]")
         _need(_unit(self.min_cover) and self.min_cover > 0, "min_cover must be in (0, 1]")
@@ -424,13 +483,16 @@ class Params(Record):
         _need(_unit(self.irt_explore_frac), "irt_explore_frac must be in [0, 1]")
         _need(self.rotation_k >= 0 and self.rotation_n_min >= 0 and self.rotation_n_min_low >= 0, "rotation counts must be >= 0")
         _need(self.rotation_active_size >= 0, "rotation_active_size must be >= 0")
-        _need(self.rotation_rule in ("v1", "info"), "rotation_rule must be 'v1' or 'info'")
+        _need(self.rotation_rule in ("v1", "info", "info-guard"), "rotation_rule must be 'v1', 'info' or 'info-guard'")
         _need(_unit(self.rotation_churn_frac) and _unit(self.rotation_prior_p), "rotation churn fraction and prior must be in [0, 1]")
         _need(self.rotation_queue_publish >= 0 and self.rotation_churn_max >= 0, "rotation queue and churn cap must be >= 0")
         _need(_unit(self.rotation_retire_p) and _unit(self.rotation_retire_low_p), "rotation pass rates must be in [0, 1]")
         _need(self.fold_every_k >= 1, "fold_every_k must be at least 1")
         _need(type(self.confirm_next_round) is bool, "confirm_next_round must be true or false")
         _need(type(self.eval_merged) is bool, "eval_merged must be true or false")
+        _need(type(self.merge_after_confirm) is bool, "merge_after_confirm must be true or false")
+        _need(not self.merge_after_confirm or self.confirm_next_round, "merge_after_confirm needs confirm_next_round")
+        _need(not self.merge_after_confirm or self.fold_every_k == 1, "merge_after_confirm needs fold_every_k = 1")
         _need(not self.eval_merged or self.fold_every_k == 1, "merged-candidate evaluation needs fold_every_k = 1")
         _need(self.max_output_tokens < self.max_context_tokens, "max_output_tokens must be below max_context_tokens")
         _need(self.lease_timeout_s > 0 and self.max_infra_attempts >= 1, "lease settings must be positive")
@@ -440,6 +502,10 @@ class Params(Record):
             0 < self.train_time_budget_s < self.round_time_limit_s - self.promote_reserve_s,
             "train_time_budget_s must leave time for the scoring inside round_time_limit_s",
         )
+        _need(type(self.max_stages) is int and 1 <= self.max_stages <= 5, "max_stages must be an integer from 1 to 5")
+        _need(type(self.train_tokens_per_s_floor) is int and self.train_tokens_per_s_floor >= 0, "train_tokens_per_s_floor must be a nonnegative integer")
+        _need(self.train_tokens_per_s_floor <= 0 or self.train_time_budget_s >= math.ceil(self.max_train_token_steps / self.train_tokens_per_s_floor) + 600,
+              "train_time_budget_s must cover max_train_token_steps / train_tokens_per_s_floor, rounded up, plus 600 seconds")
         _need(self.eval_chunk_tasks >= 1, "eval_chunk_tasks must be at least 1")
         _need(self.apply_retry_s > 0 and self.apply_max_attempts >= 1, "apply retry settings must be positive")
         _need(self.kings_window >= 1 and self.burn_uid >= 0, "kings_window >= 1 and burn_uid >= 0")
@@ -448,8 +514,18 @@ class Params(Record):
         _need(math.isfinite(self.budget_usd_per_hour) and self.budget_usd_per_hour > 0, "budget must be positive")
 
     @property
+    def crown_bar(self) -> float:
+        """The bar a crown needs (strict z above it). Confirmation never uses this; it uses ``z_bar``."""
+        return self.z_bar if self.z_crown is None else self.z_crown
+
+    @property
     def null_samples(self) -> int:
         return self.samples_per_task if self.null_samples_per_task is None else self.null_samples_per_task
+
+    @property
+    def kl_floor_on(self) -> bool:
+        """KL is measured: a floor or the ``max_kl_tok`` ceiling is on."""
+        return self.min_kl_seq > 0 or self.min_kl_tok > 0 or self.max_kl_tok > 0
 
     @property
     def params_hash(self) -> str:

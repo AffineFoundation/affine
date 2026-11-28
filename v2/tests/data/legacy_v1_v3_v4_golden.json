@@ -1,0 +1,611 @@
+{
+  "base": "1bc2cc6ce3c4e7e93f01baeca1dbc414f880ede1",
+  "cases": [
+    {
+      "name": "affine-batch-v1",
+      "raw": "{\"version\":\"affine-batch-v1\",\"hotkey\":\"5Legacy\",\"groups\":[{\"prompt\":\"one two\",\"rollouts\":[{\"output\":\"step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\\\boxed{1}\",\"reward\":1.0},{\"output\":\"step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\\\boxed{0}\",\"reward\":0.0}]}]}",
+      "expected": {
+        "valid": true,
+        "batch": {
+          "format": "affine-batch-v1",
+          "groups": [
+            [
+              "one two",
+              [
+                [
+                  "step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\boxed{1}",
+                  1.0
+                ],
+                [
+                  "step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\boxed{0}",
+                  0.0
+                ]
+              ]
+            ]
+          ],
+          "train": {},
+          "checked": [
+            "format",
+            "tokens",
+            "grader"
+          ],
+          "train_token_steps": 88,
+          "n_prompts": 1,
+          "n_rollouts": 2
+        },
+        "frozen": {
+          "hotkey": "5Legacy",
+          "batch_sha256": "26323b6b49ac6430fbd82aa183aefa26a1bb20fe60a8e6449abdc954bed635de",
+          "uri": "private/batch.json",
+          "format": "affine-batch-v1",
+          "n_prompts": 1,
+          "n_rollouts": 2,
+          "train": {}
+        },
+        "job": {
+          "base_dir": "/base",
+          "base_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "dtype": "float32",
+          "recipe": {
+            "method": "grpo-lora",
+            "steps": 1,
+            "lora_lr": 1e-05,
+            "max_grad_norm": 1.0,
+            "global_norm_cap": 6.0,
+            "group_size": 0,
+            "sample_temperature": 1.0,
+            "rank": 16,
+            "alpha": 32.0,
+            "dropout": 0.0,
+            "target_modules": [
+              "q_proj",
+              "k_proj",
+              "v_proj",
+              "o_proj",
+              "gate_proj",
+              "up_proj",
+              "down_proj"
+            ],
+            "ppo_clip": 0.2,
+            "dual_clip": 3.0,
+            "kl": 0.0,
+            "support_top_k": 20,
+            "support_top_p": 0.95,
+            "derail_window": 32,
+            "derail_threshold": -3.0,
+            "derail_tail": 64,
+            "train_max_output_tokens": 32768,
+            "train_max_context_tokens": 36864,
+            "miner_bounds": [
+              {
+                "key": "lora_lr",
+                "low": 1e-06,
+                "high": 0.0001,
+                "integer": false,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "adam_eps",
+                "low": 1e-10,
+                "high": 0.0001,
+                "integer": false,
+                "choices": [],
+                "decided": true
+              },
+              {
+                "key": "steps",
+                "low": 1.0,
+                "high": 4.0,
+                "integer": true,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "minibatches",
+                "low": 1.0,
+                "high": 8000.0,
+                "integer": true,
+                "choices": [],
+                "decided": true
+              },
+              {
+                "key": "group_size",
+                "low": 2.0,
+                "high": 64.0,
+                "integer": true,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "sample_temperature",
+                "low": 0.5,
+                "high": 1.5,
+                "integer": false,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "rank",
+                "low": 8.0,
+                "high": 64.0,
+                "integer": true,
+                "choices": [],
+                "decided": true
+              },
+              {
+                "key": "alpha",
+                "low": 8.0,
+                "high": 128.0,
+                "integer": false,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "target_modules",
+                "low": 0.0,
+                "high": 0.0,
+                "integer": false,
+                "choices": [
+                  "q_proj",
+                  "k_proj",
+                  "v_proj",
+                  "o_proj",
+                  "gate_proj",
+                  "up_proj",
+                  "down_proj",
+                  "in_proj_qkv",
+                  "in_proj_z",
+                  "out_proj"
+                ],
+                "decided": true
+              },
+              {
+                "key": "global_norm_cap",
+                "low": 0.01,
+                "high": 6.0,
+                "integer": false,
+                "choices": [],
+                "decided": true
+              }
+            ],
+            "code_digest": "",
+            "image_digests": []
+          },
+          "seed": 7,
+          "rows": [
+            {
+              "prompt": "one two",
+              "output": "step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\boxed{1}",
+              "reward": 1.0,
+              "advantage": 0.5
+            },
+            {
+              "prompt": "one two",
+              "output": "step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\boxed{0}",
+              "reward": 0.0,
+              "advantage": -0.5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "affine-batch-v1-wrong-reward",
+      "raw": "{\"version\":\"affine-batch-v1\",\"hotkey\":\"5Legacy\",\"groups\":[{\"prompt\":\"one two\",\"rollouts\":[{\"output\":\"step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\\\boxed{1}\",\"reward\":0.5},{\"output\":\"step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\\\boxed{0}\",\"reward\":0.0}]}]}",
+      "expected": {
+        "valid": false,
+        "rule": "grader",
+        "reason": "groups[0].rollouts[0].reward is not the official grade (submitted 0.5, official 1); the output has 41 tokens, below params.max_output_tokens (65536), so it is not an official cap-hit: a shorter local cap such as 8192 does not force reward 0, and a correct boxed answer can grade 1.0"
+      }
+    },
+    {
+      "name": "affine-batch-v2",
+      "raw": "{\"version\":\"affine-batch-v2\",\"hotkey\":\"5Legacy\",\"groups\":[{\"prompt\":\"one two\",\"rollouts\":[{\"output\":\"step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\\\boxed{1}\",\"reward\":1.0},{\"output\":\"step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\\\boxed{0}\",\"reward\":0.0}]}],\"train\":{\"steps\":2,\"minibatches\":1}}",
+      "expected": {
+        "valid": true,
+        "batch": {
+          "format": "affine-batch-v2",
+          "groups": [
+            [
+              "one two",
+              [
+                [
+                  "step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\boxed{1}",
+                  1.0
+                ],
+                [
+                  "step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\boxed{0}",
+                  0.0
+                ]
+              ]
+            ]
+          ],
+          "train": {
+            "steps": 2,
+            "minibatches": 1
+          },
+          "checked": [
+            "format",
+            "tokens",
+            "grader"
+          ],
+          "train_token_steps": 176,
+          "n_prompts": 1,
+          "n_rollouts": 2
+        },
+        "frozen": {
+          "hotkey": "5Legacy",
+          "batch_sha256": "36ee771764446d659a782f82335a91a79a8efdc4d0b92dad4c84eca4fc926e0a",
+          "uri": "private/batch.json",
+          "format": "affine-batch-v2",
+          "n_prompts": 1,
+          "n_rollouts": 2,
+          "train": {
+            "steps": 2,
+            "minibatches": 1
+          }
+        },
+        "job": {
+          "base_dir": "/base",
+          "base_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "dtype": "float32",
+          "recipe": {
+            "method": "grpo-lora",
+            "steps": 2,
+            "lora_lr": 1e-05,
+            "max_grad_norm": 1.0,
+            "global_norm_cap": 6.0,
+            "group_size": 0,
+            "sample_temperature": 1.0,
+            "rank": 16,
+            "alpha": 32.0,
+            "dropout": 0.0,
+            "target_modules": [
+              "q_proj",
+              "k_proj",
+              "v_proj",
+              "o_proj",
+              "gate_proj",
+              "up_proj",
+              "down_proj"
+            ],
+            "ppo_clip": 0.2,
+            "dual_clip": 3.0,
+            "kl": 0.0,
+            "support_top_k": 20,
+            "support_top_p": 0.95,
+            "derail_window": 32,
+            "derail_threshold": -3.0,
+            "derail_tail": 64,
+            "train_max_output_tokens": 32768,
+            "train_max_context_tokens": 36864,
+            "miner_bounds": [
+              {
+                "key": "lora_lr",
+                "low": 1e-06,
+                "high": 0.0001,
+                "integer": false,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "adam_eps",
+                "low": 1e-10,
+                "high": 0.0001,
+                "integer": false,
+                "choices": [],
+                "decided": true
+              },
+              {
+                "key": "steps",
+                "low": 1.0,
+                "high": 4.0,
+                "integer": true,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "minibatches",
+                "low": 1.0,
+                "high": 8000.0,
+                "integer": true,
+                "choices": [],
+                "decided": true
+              },
+              {
+                "key": "group_size",
+                "low": 2.0,
+                "high": 64.0,
+                "integer": true,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "sample_temperature",
+                "low": 0.5,
+                "high": 1.5,
+                "integer": false,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "rank",
+                "low": 8.0,
+                "high": 64.0,
+                "integer": true,
+                "choices": [],
+                "decided": true
+              },
+              {
+                "key": "alpha",
+                "low": 8.0,
+                "high": 128.0,
+                "integer": false,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "target_modules",
+                "low": 0.0,
+                "high": 0.0,
+                "integer": false,
+                "choices": [
+                  "q_proj",
+                  "k_proj",
+                  "v_proj",
+                  "o_proj",
+                  "gate_proj",
+                  "up_proj",
+                  "down_proj",
+                  "in_proj_qkv",
+                  "in_proj_z",
+                  "out_proj"
+                ],
+                "decided": true
+              },
+              {
+                "key": "global_norm_cap",
+                "low": 0.01,
+                "high": 6.0,
+                "integer": false,
+                "choices": [],
+                "decided": true
+              }
+            ],
+            "code_digest": "",
+            "image_digests": []
+          },
+          "seed": 7,
+          "rows": [
+            {
+              "prompt": "one two",
+              "output": "step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\boxed{1}",
+              "reward": 1.0,
+              "advantage": 0.5
+            },
+            {
+              "prompt": "one two",
+              "output": "step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\boxed{0}",
+              "reward": 0.0,
+              "advantage": -0.5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "affine-batch-v2-wrong-reward",
+      "raw": "{\"version\":\"affine-batch-v2\",\"hotkey\":\"5Legacy\",\"groups\":[{\"prompt\":\"one two\",\"rollouts\":[{\"output\":\"step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\\\boxed{1}\",\"reward\":0.5},{\"output\":\"step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\\\boxed{0}\",\"reward\":0.0}]}],\"train\":{\"steps\":2,\"minibatches\":1}}",
+      "expected": {
+        "valid": false,
+        "rule": "grader",
+        "reason": "groups[0].rollouts[0].reward is not the official grade (submitted 0.5, official 1); the output has 41 tokens, below params.max_output_tokens (65536), so it is not an official cap-hit: a shorter local cap such as 8192 does not force reward 0, and a correct boxed answer can grade 1.0"
+      }
+    },
+    {
+      "name": "affine-batch-v3",
+      "raw": "{\"version\":\"affine-batch-v3\",\"hotkey\":\"5Legacy\",\"groups\":[{\"prompt\":\"one two\",\"rollouts\":[{\"output\":\"step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\\\boxed{1}\",\"reward\":1.0},{\"output\":\"step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\\\boxed{0}\",\"reward\":0.0}]}],\"train\":{\"steps\":2,\"minibatches\":1}}",
+      "expected": {
+        "valid": true,
+        "batch": {
+          "format": "affine-batch-v3",
+          "groups": [
+            [
+              "one two",
+              [
+                [
+                  "step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\boxed{1}",
+                  1.0
+                ],
+                [
+                  "step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\boxed{0}",
+                  0.0
+                ]
+              ]
+            ]
+          ],
+          "train": {
+            "steps": 2,
+            "minibatches": 1
+          },
+          "checked": [
+            "format",
+            "tokens",
+            "grader"
+          ],
+          "train_token_steps": 176,
+          "n_prompts": 1,
+          "n_rollouts": 2
+        },
+        "frozen": {
+          "hotkey": "5Legacy",
+          "batch_sha256": "536bb6c903e578b885118e32129829188f8a04336effe73726d5f8cb3333b6db",
+          "uri": "private/batch.json",
+          "format": "affine-batch-v3",
+          "n_prompts": 1,
+          "n_rollouts": 2,
+          "train": {
+            "steps": 2,
+            "minibatches": 1
+          }
+        },
+        "job": {
+          "base_dir": "/base",
+          "base_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "dtype": "float32",
+          "recipe": {
+            "method": "grpo-lora",
+            "steps": 2,
+            "lora_lr": 1e-05,
+            "max_grad_norm": 1.0,
+            "global_norm_cap": 6.0,
+            "group_size": 0,
+            "sample_temperature": 1.0,
+            "rank": 16,
+            "alpha": 32.0,
+            "dropout": 0.0,
+            "target_modules": [
+              "q_proj",
+              "k_proj",
+              "v_proj",
+              "o_proj",
+              "gate_proj",
+              "up_proj",
+              "down_proj"
+            ],
+            "ppo_clip": 0.2,
+            "dual_clip": 3.0,
+            "kl": 0.0,
+            "support_top_k": 20,
+            "support_top_p": 0.95,
+            "derail_window": 32,
+            "derail_threshold": -3.0,
+            "derail_tail": 64,
+            "train_max_output_tokens": 32768,
+            "train_max_context_tokens": 36864,
+            "miner_bounds": [
+              {
+                "key": "lora_lr",
+                "low": 1e-06,
+                "high": 0.0001,
+                "integer": false,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "adam_eps",
+                "low": 1e-10,
+                "high": 0.0001,
+                "integer": false,
+                "choices": [],
+                "decided": true
+              },
+              {
+                "key": "steps",
+                "low": 1.0,
+                "high": 4.0,
+                "integer": true,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "minibatches",
+                "low": 1.0,
+                "high": 8000.0,
+                "integer": true,
+                "choices": [],
+                "decided": true
+              },
+              {
+                "key": "group_size",
+                "low": 2.0,
+                "high": 64.0,
+                "integer": true,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "sample_temperature",
+                "low": 0.5,
+                "high": 1.5,
+                "integer": false,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "rank",
+                "low": 8.0,
+                "high": 64.0,
+                "integer": true,
+                "choices": [],
+                "decided": true
+              },
+              {
+                "key": "alpha",
+                "low": 8.0,
+                "high": 128.0,
+                "integer": false,
+                "choices": [],
+                "decided": false
+              },
+              {
+                "key": "target_modules",
+                "low": 0.0,
+                "high": 0.0,
+                "integer": false,
+                "choices": [
+                  "q_proj",
+                  "k_proj",
+                  "v_proj",
+                  "o_proj",
+                  "gate_proj",
+                  "up_proj",
+                  "down_proj",
+                  "in_proj_qkv",
+                  "in_proj_z",
+                  "out_proj"
+                ],
+                "decided": true
+              },
+              {
+                "key": "global_norm_cap",
+                "low": 0.01,
+                "high": 6.0,
+                "integer": false,
+                "choices": [],
+                "decided": true
+              }
+            ],
+            "code_digest": "",
+            "image_digests": []
+          },
+          "seed": 7,
+          "rows": [
+            {
+              "prompt": "one two",
+              "output": "step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\boxed{1}",
+              "reward": 1.0,
+              "advantage": 0.5
+            },
+            {
+              "prompt": "one two",
+              "output": "step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\boxed{0}",
+              "reward": 0.0,
+              "advantage": -0.5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "affine-batch-v3-wrong-reward",
+      "raw": "{\"version\":\"affine-batch-v3\",\"hotkey\":\"5Legacy\",\"groups\":[{\"prompt\":\"one two\",\"rollouts\":[{\"output\":\"step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\\\boxed{1}\",\"reward\":0.5},{\"output\":\"step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step step \\\\boxed{0}\",\"reward\":0.0}]}],\"train\":{\"steps\":2,\"minibatches\":1}}",
+      "expected": {
+        "valid": false,
+        "rule": "grader",
+        "reason": "groups[0].rollouts[0].reward is not the official grade (submitted 0.5, official 1); the output has 41 tokens, below params.max_output_tokens (65536), so it is not an official cap-hit: a shorter local cap such as 8192 does not force reward 0, and a correct boxed answer can grade 1.0"
+      }
+    }
+  ]
+}

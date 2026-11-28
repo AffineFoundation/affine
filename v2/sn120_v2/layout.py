@@ -31,6 +31,11 @@ _PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 CURRENT = "public/head.json"
 LLMS_TXT = "public/llms.txt"
 MINING_JSON = "public/mining.json"
+WINNER_STATS = "public/winner-stats.json"  # crowned winners only; no waiting or losing batch facts
+CONFIRMATION_STATS = "public/confirmation-stats.json"  # applied crowns' original z/delta and later paired test
+# Public aliases at the bucket root; R2 preflight reads this separate namespace.
+PUBLIC_ALIASES = {"winner-stats.json": WINNER_STATS}  # same bytes at the site root, with the canonical object
+WINNER_STATS_ALIAS = next(iter(PUBLIC_ALIASES))
 BENCHMARKS = "public/benchmarks.json"  # written by the benchmark service, read by the website
 # The upload link files, only when the link job runs with ``--to-store`` (``links.py`` builds the same two keys).
 LINK_FILES = "public/ff/links"

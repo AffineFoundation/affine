@@ -20,8 +20,11 @@ The sealed box holds JSON with ``put_url``, ``put_headers``, ``get_url``,
 secret key opens it. ``ff/links.json`` lists the hotkeys that have a link now.
 
 Who gets a link: every hotkey with a seat in the queue (its entry is not
-evaluated yet), except the burn UID, that has a valid activation. The miner may
-upload again as often as it likes; the object is overwritten each time.
+evaluated yet), and every new registration or rehotkey that the next sync would
+seat, except the burn UID, that has a valid activation. A chain registration
+gets its link before that sync, also while a round is open. A failed chain
+registration read leaves the queue-only list intact. The miner may upload again
+as often as it likes; the object is overwritten each time.
 
 There is no inbound service. ``python -m sn120_v2.links issue`` runs on a timer
 and writes static files: into a local web directory (``--site-dir``) or into the
@@ -43,7 +46,7 @@ a timer for the job.
 Commands:
 ``issue``     the operator's job: write the link files (see ``--help``)
 ``activate``  the miner's one-time chain write (dry run without ``--execute``)
-``open``      the miner opens its link and prints the upload address
+``open``      the miner opens its link and prints the upload address (also ``open_link``)
 """
 
 from __future__ import annotations
@@ -61,15 +64,16 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from . import layout
+from . import layout, queue
 from .admission import FORMATS
-from .chain import SubtensorClient
+from .chain import Reader, SubtensorClient
 from .errors import ConfigError, ContractError, InfraError, V2Error
 from .journal import JOURNAL_FILE
 from .r2_names import PLAIN_NAMES
 from .seams import ObjectStore, Presigner
 from .state import State, load_from_store
 from .store import LocalStore
+from .types import ChainSnapshot
 
 try:
     from nacl.exceptions import CryptoError
@@ -287,6 +291,22 @@ def eligible(state: State, burn_uid: int) -> list[str]:
     return sorted({reg.hotkey for reg in seats if reg.uid != burn_uid and reg.hotkey not in state.served_hotkeys})
 
 
+def eligible_with_chain(state: State, snapshot: ChainSnapshot | None, netuid: int, burn_uid: int) -> list[str]:
+    """Queued hotkeys plus those that the next registration sync would seat, without changing the journal.
+
+    ``None`` is the queue-only fallback after a failed snapshot read.
+    """
+    waiting = set(eligible(state, burn_uid))
+    if snapshot is not None:
+        try:
+            plan = queue.plan_sync(state.queue, state.served_regs, state.served_hotkeys, snapshot, netuid, burn_uid, force=True)
+        except Exception as exc:  # the registration read is advisory: a bad one never removes a link
+            print(f"links: cannot use chain registrations ({type(exc).__name__}: {exc}); using queue-only waiting hotkeys", file=sys.stderr, flush=True)
+        else:
+            waiting.update(reg.hotkey for reg in plan.added + plan.rehotkeyed)
+    return sorted(waiting)
+
+
 def link_files(
     hotkeys: Iterable[str], presigner: Presigner, now: int, links_url: str, ttl_s: int = LINK_TTL_S, reissue_s: int = REISSUE_S
 ) -> dict[str, bytes]:
@@ -320,8 +340,7 @@ def link_files(
             continue  # not an Ed25519 hotkey: nobody could open a link sealed to it, so it gets none
         files[f"{LINKS_DIR}{hotkey}.json"] = as_json(outer)
     names = sorted(Path(name).stem for name in files)
-    local = time.strftime("%Y-%m-%d %H:%M:%S CR (UTC-6)", time.gmtime(now - 6 * 3600))
-    index = {"issued_at_cr": local, "hotkeys": names, "reissue_every_seconds": reissue_s, "link_file": link_file}
+    index = {"hotkeys": names, "reissue_every_seconds": reissue_s, "link_file": link_file}
     files[INDEX] = as_json(stamp | index)
     return files
 
@@ -363,13 +382,17 @@ def upload_entry(links_url: str, ttl_s: int = LINK_TTL_S, reissue_s: int = REISS
 # ---- commands ----
 
 
-def _chain_activated(network: str, hotkeys: Iterable[str], netuid: int) -> set[str]:
+def _chain_connect(netuid: int, network: str) -> SubtensorClient:
     try:
-        client = SubtensorClient.connect(netuid, network)  # no wallet: it can only read
+        return SubtensorClient.connect(netuid, network)  # no wallet: it can only read
     except V2Error:
         raise
     except Exception as exc:  # the SDK raises many types; each one means "no connection"
         raise InfraError(f"cannot connect to the chain: {type(exc).__name__}: {exc}") from exc
+
+
+def _chain_activated(network: str, hotkeys: Iterable[str], netuid: int) -> set[str]:
+    client = _chain_connect(netuid, network)
     try:
         return read_activated(client, hotkeys, netuid)
     finally:
@@ -412,18 +435,40 @@ def _issue_once(args: argparse.Namespace) -> int:
         raise ConfigError(f"cannot use {args.state_dir} for the local copy of the journal: {type(exc).__name__}") from exc
     if state.genesis is None:  # an empty journal would look like "nobody waits" and remove every link file
         raise ConfigError("the store holds no journal with a genesis: are these the controller's store settings?")
-    waiting = eligible(state, args.burn_uid)
+    queue_waiting = eligible(state, args.burn_uid)
+    waiting, new_registrations = queue_waiting, 0
     hotkeys = waiting
-    if not args.no_activation_check:
-        ready = _chain_activated(args.network, waiting, args.netuid)
-        hotkeys = [hotkey for hotkey in waiting if hotkey in ready]
+    client = None
+    try:
+        if not args.no_chain_regs and args.network:
+            try:
+                client = _chain_connect(args.netuid, args.network)
+            except Exception as exc:  # a failed registration read never removes a link
+                print(f"links: cannot read chain registrations ({type(exc).__name__}: {exc}); using queue-only waiting hotkeys", file=sys.stderr, flush=True)
+            else:
+                try:
+                    snapshot = Reader(client, args.netuid).snapshot()
+                    waiting = eligible_with_chain(state, snapshot, args.netuid, args.burn_uid)
+                    new_registrations = len(set(waiting) - set(queue_waiting))
+                except Exception as exc:  # InfraError, a malformed snapshot, or an SDK failure: keep the queue-only list
+                    print(f"links: cannot read chain registrations ({type(exc).__name__}: {exc}); using queue-only waiting hotkeys", file=sys.stderr, flush=True)
+        if not args.no_activation_check:
+            if client is None:
+                client = _chain_connect(args.netuid, args.network)
+            ready = read_activated(client, waiting, args.netuid)
+            hotkeys = [hotkey for hotkey in waiting if hotkey in ready]
+    finally:
+        if client is not None:
+            with contextlib.suppress(Exception):
+                close = getattr(client, "close", None) or client.chain.close
+                close()
     files = link_files(hotkeys, store, int(time.time()), args.links_url, args.ttl_s, args.reissue_s)
     if args.site_dir and not Path(args.site_dir).is_dir():  # LocalStore would make it: a site reset that moved it away would find a new one
         raise ConfigError(f"the site directory {args.site_dir} does not exist; this job never makes it")
     sink, prefix = (LocalStore(args.site_dir), "") if args.site_dir else (store, PUBLIC_PREFIX)
     removed = write_files(files, sink, prefix)
     issued = len(files) - 1  # every file but the index
-    skipped = f"not activated {len(waiting) - len(hotkeys)}, not Ed25519 {len(hotkeys) - issued}"
+    skipped = f"queue {len(queue_waiting)}, new registrations {new_registrations}, not activated {len(waiting) - len(hotkeys)}, not Ed25519 {len(hotkeys) - issued}"
     print(f"links: issued {issued} of {len(waiting)} waiting hotkeys ({skipped}), removed {removed}, valid {args.ttl_s} s")
     return 0
 
@@ -494,7 +539,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     where = issue.add_mutually_exclusive_group(required=True)
     where.add_argument("--site-dir", help=f"write {LINKS_DIR}<hotkey>.json and {INDEX} under this local directory: the root of the public website")
     where.add_argument("--to-store", action="store_true", help=f"write the same two paths under {PUBLIC_PREFIX} in the object store instead")
-    issue.add_argument("--network", default="", help="the chain to read the activations from: finney, or the address of a node")
+    issue.add_argument("--network", default="", help="the chain to read registrations and activations from: finney, or the address of a node")
+    issue.add_argument("--no-chain-regs", action="store_true", help="issue only for the journal queue, not for registrations and rehotkeys waiting for the next sync")
     issue.add_argument("--no-activation-check", action="store_true", help="issue to every waiting hotkey; use only when the chain cannot be read")
     issue.add_argument("--netuid", type=int, default=120, help="the subnet (default 120)")
     issue.add_argument("--burn-uid", type=int, default=0, help="the UID that never gets a link (default 0)")
@@ -512,7 +558,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     act.add_argument("--execute", action="store_true", help="write the activation to the chain; without it, only print it")
     act.set_defaults(run=_activate)
 
-    opened = commands.add_parser("open", help="miner: open your link and print the upload address (a secret: do not share it)")
+    open_help = (
+        "miner: open your link and print the upload address (a secret: do not share it); "
+        "open_link is an alias, also the name of the Python function that opens the sealed link"
+    )
+    opened = commands.add_parser("open", aliases=["open_link"], help=open_help, description=open_help)
     opened.add_argument("--hotkey", required=True, help="your hotkey, as an SS58 address")
     opened.add_argument("--key", required=True, help="a file with the hotkey's Ed25519 seed (64 hex characters), or the bittensor hotkey file")
     opened.add_argument("--links-url", default="", help="the public address of the link files, as llms.txt gives it")

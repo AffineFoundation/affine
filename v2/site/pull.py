@@ -26,7 +26,9 @@ One run does this, in this order:
 
 1. Copies ``public/mining.json`` and ``public/llms.txt`` to the path of their
    key, and also to ``mining.json`` and ``llms.txt`` at the root of the site.
-   The two files are taken only as a pair of the same snapshot.
+   The two files are taken only as a pair of the same snapshot. The crowned-only
+   ``public/winner-stats.json`` is then checked against that snapshot and copied
+   byte-for-byte to both its canonical key and root ``winner-stats.json``.
 2. Copies the head pointer (``layout.CURRENT``), and writes ``LINKS``: signed
    read links for the weight files of the current head, with the expiry time
    and the sha256 and size of each file. Weight files are never copied.
@@ -73,12 +75,14 @@ from sn120_v2 import layout
 from sn120_v2.errors import ContractError, V2Error
 from sn120_v2.headchain import chain_links, check_chain, heads_of
 from sn120_v2.r2 import MAX_PRESIGN_S, R2Store
+from sn120_v2.public import validate_confirmation_stats, validate_winner_stats, winner_enrichment, winner_stats_from_snapshot
+from sn120_v2.publisher import refuse_private
 from sn120_v2.r2_names import store_env
 from sn120_v2.types import HeadManifest
 
 LINKS = "public/read_links.json"  # not an object of the store: this command makes it
 INDEX = "public/pull_index.json"  # the files under public/ that this command wrote
-ROOT_COPIES = {"llms.txt": layout.LLMS_TXT, "mining.json": layout.MINING_JSON}
+ROOT_COPIES = {"llms.txt": layout.LLMS_TXT, "mining.json": layout.MINING_JSON, **layout.PUBLIC_ALIASES}
 LINKS_SCHEMA = "sn120-v2-read-links-1"
 INDEX_SCHEMA = "sn120-v2-pull-index-1"
 HEADS, ROUNDS, IRT = (make("x").partition("x")[0] for make in (layout.head_manifest, layout.round_file, layout.irt_snapshot))
@@ -91,7 +95,7 @@ ROLLOUT_INDEX = layout.ROLLOUT_INDEX  # the one adoptable hand-written path
 BACKFILL_INDEX = "public/rollouts/backfill_index.json"  # never read from the store, never owned
 ROLLOUT_INDEX_SCHEMA = "sn120-v2-rollouts-index-2"
 ROUND_FILES = (layout.round_file, layout.round_scores, layout.winner_batch)
-FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN,
+FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.WINNER_STATS, layout.CONFIRMATION_STATS, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN,
          layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS, layout.POOL_SUMMARY)
 RECHECK_ROUNDS = 2  # the newest round files are read again: a restart of the controller may write one twice
 PAIR_TRIES, PAIR_WAIT_S = 3, 1.0
@@ -174,8 +178,9 @@ class Pull:
     """One run. ``store`` is any ``ObjectStore`` that can also sign read links (``Presigner``)."""
 
     def __init__(self, store: Any, site: Path, now: int, keep_rounds: int = 200, max_bytes: int = 128 << 20,
-                 max_rollout_bytes: int = 512 << 20, keep_rollout_rounds: int = 0) -> None:
+                 max_rollout_bytes: int = 512 << 20, keep_rollout_rounds: int = 0, public_url: str = "") -> None:
         self.store, self.site, self.now, self.keep, self.max_bytes = store, site, now, keep_rounds, max_bytes
+        self.public_url = public_url.rstrip("/")
         self.max_rollout_bytes, self.keep_rollout_rounds = max_rollout_bytes, keep_rollout_rounds
         self.owned = self._load_index()
         self.saved = set(self.owned)
@@ -312,6 +317,81 @@ class Pull:
         for name, data in (("mining.json", mining), ("llms.txt", llms)):
             self.put(ROOT_COPIES[name], data)
             build.write(self.site / name, data)
+
+    def confirmation_stats(self) -> None:
+        """Mirror only the exact confirmations object of the contract pair; no private journal is read."""
+        mining = json.loads((self.site / layout.MINING_JSON).read_bytes())
+        try:
+            data = self.store.get(layout.CONFIRMATION_STATS)
+            validate_confirmation_stats(json.loads(data), mining)
+        except KeyError:
+            # A legacy publisher has no standalone file yet; the contract pair already carries this public object.
+            if "confirmations" not in mining:
+                raise
+            data = json.dumps(mining["confirmations"], indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()
+        refuse_private(json.loads(data), "confirmation-stats")
+        self.put(layout.CONFIRMATION_STATS, data)
+
+    def winner_stats(self) -> None:
+        """Crowned-only history, checked before its first mirror. A legacy store gets the safe public projection."""
+        mining = json.loads((self.site / layout.MINING_JSON).read_bytes())
+        try:
+            data = self.store.get(layout.WINNER_STATS)
+        except KeyError:
+            # An older publisher has no separate file yet. Do not stall its public site; never
+            # invent batch counts or train knobs which are absent from the public snapshot.
+            data = json.dumps(winner_stats_from_snapshot(mining, self.public_url)).encode()
+        else:
+            checked = json.loads(data)
+            validate_winner_stats(mining, checked, self.public_url)
+            before = json.dumps(checked).encode()
+            self._check_enrichment(mining, checked)
+            refuse_private(checked, "winner-stats")
+            if json.dumps(checked).encode() != before:
+                data = json.dumps(checked).encode()
+        self.put(layout.WINNER_STATS, data)
+        build.write(self.site / layout.WINNER_STATS_ALIAS, data)
+
+    def _check_enrichment(self, mining: dict, stats: dict, *, required: bool = False) -> None:
+        """Check optional fields in place; a disagreement never discards core-validated stats.
+
+        A first pass before mirroring the reserve defers. The post-pool pass strips only
+        fields it cannot reproduce, so a newer publisher reserve cannot stall the site.
+        """
+        from sn120_v2.envs.reserve import load_reserve
+        from sn120_v2.public import ENRICHMENT_FIELDS
+
+        if not any(set(row) & ENRICHMENT_FIELDS for row in stats["winners"]):
+            return
+        root = self.site / layout.RESERVE_MANIFEST.rsplit("/", 1)[0]
+        try:
+            _, catalog = load_reserve(root, with_catalog=True, allow_retired=True)
+        except V2Error as exc:
+            # The public reserve on the site uses content-addressed shard names that
+            # load_reserve may not be able to read. Do not discard producer-validated
+            # enrichment when the catalog simply cannot be loaded; only strip when
+            # the catalog is readable and a field cannot be reproduced.
+            self.notes.append(
+                "winner enrichment check deferred until the public reserve catalog is readable "
+                f"({type(exc).__name__})"
+            )
+            return
+        for row in stats["winners"]:
+            fields = set(row) & ENRICHMENT_FIELDS
+            if not fields:
+                continue
+            try:
+                derived = winner_enrichment(mining, row, self.store, catalog)
+                bad = {name for name in fields if name not in derived or row[name] != derived[name]}
+                if bad:
+                    self._strip_enrichment(row, fields=bad, reason="does not match the public crowned batch and crown-round IRT")
+            except FAILURES as exc:
+                self._strip_enrichment(row, fields=fields, reason=f"{type(exc).__name__}: {exc}")
+
+    def _strip_enrichment(self, row: dict, *, fields: set[str], reason: str) -> None:
+        for name in fields:
+            row.pop(name, None)
+        self.notes.append(f"winner enrichment stripped for {row['round_id']} ({', '.join(sorted(fields))}): {reason}")
 
     def head(self, ttl_s: int) -> None:
         """The head pointer, and the signed read links for the weight files of that head."""
@@ -621,14 +701,27 @@ def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, m
         ready()
         build.build_static(site, link)
 
-    pull = Pull(store, site, now, keep_rounds, max_bytes, max_rollout_bytes, keep_rollout_rounds)
+    pull = Pull(store, site, now, keep_rounds, max_bytes, max_rollout_bytes, keep_rollout_rounds, public_url)
     pull.step("clean", pull.clean)
     pull.step("llms.txt and mining.json", pull.contract)
+    pull.step("winner stats", pull.winner_stats)
+    pull.step("confirmation stats", pull.confirmation_stats)
     pull.step("head and read links", lambda: pull.head(ttl_s))
     pull.step("heads", pull.heads)
     pull.step("rounds", pull.rounds)
     pull.step("task tables", pull.tables)
     pull.step("pool", pull.pool)
+
+    def enriched_fields() -> None:
+        stats = json.loads((site / layout.WINNER_STATS).read_bytes())
+        before = json.dumps(stats).encode()
+        pull._check_enrichment(json.loads((site / layout.MINING_JSON).read_bytes()), stats, required=True)
+        data = json.dumps(stats).encode()
+        if data != before:
+            pull.put(layout.WINNER_STATS, data)
+            build.write(site / layout.WINNER_STATS_ALIAS, data)
+
+    pull.step("winner stats enriched fields", enriched_fields)
     pull.step("benchmarks", pull.benchmarks)
     pull.step("rollouts", pull.rollouts)
     if (site / ROLLOUT_INDEX).is_file():
@@ -640,6 +733,10 @@ def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, m
         pull.step("v1 history", v1_page_data)
     pull.step("site data", site_data)
     pull.step("site pages", site_pages)
+    # A contract that changed while the long pull ran still gets mirrored before this locked run exits.
+    pull.step("llms.txt and mining.json final refresh", pull.contract)
+    pull.step("confirmation stats final refresh", pull.confirmation_stats)
+    pull.step("site pages final refresh", site_pages)
     for note in pull.notes:
         print(f"pull: note: {note}", file=sys.stderr)
     for problem in pull.problems:

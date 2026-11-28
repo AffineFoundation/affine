@@ -8,8 +8,9 @@ What these tests hold:
 * the counts over the whole line, against files that are valid, not valid and not there;
 * a file that is replaced after the check shows the verdict of the check until the next check;
 * the time of the list is the start of the check, and no check runs inside a round;
-* every key that the snapshot had before is the same, byte for byte;
-* the id of the params is the same, and nothing else about a waiting file or a seat is published.
+* the id of the params is unchanged, and waiting publication remains SHA256 + verdict check time only;
+* the full ordered line gives valid-file seats ahead and a coarse public-parameter round bound;
+* pending chain registrations have identity only, never file fields or URLs.
 """
 
 from __future__ import annotations
@@ -24,13 +25,15 @@ from sn120_v2.params import ATTENTION_AND_MLP_PROJECTIONS, MinerBound, Params, R
 from sn120_v2.public import NOT_JUDGED, NOT_VALID, VALID, file_verdict, files_view
 from sn120_v2.queue import waiting
 from sn120_v2.sim import SimWorld, sim_params
+from sn120_v2.state import State
 from sn120_v2.store import LocalStore
-from sn120_v2.types import Verdict
+from sn120_v2.types import ChainSnapshot, Registration, Verdict
 
 SEATS = 60  # more than ``public.QUEUE_PREVIEW``
-ROW = ("uid", "hotkey", "file_valid", "file_verdict")
+ROW = ("uid", "hotkey", "file_valid", "file_verdict", "batch_sha256", "checked_at", "valid_ahead", "eta_rounds")
 FILES = ("checked_at", "seats", "hotkeys", VALID, NOT_VALID, NOT_JUDGED, "verdicts")
-ROW_OF_NEXT = ("position", "uid", "hotkey", "registration_block", "file_valid", "front", "demoted", "held")
+ROW_OF_NEXT = ("position", "uid", "hotkey", "registration_block", "file_valid", "file_verdict", "batch_sha256", "checked_at",
+               "front", "demoted", "held", "valid_ahead", "eta_rounds")
 
 # Both values are from the code of v2 at 580aee91, the commit before ``queue.files``. This change adds one key and
 # changes nothing else. A later change that changes a param or the snapshot on purpose puts its new value here.
@@ -88,6 +91,12 @@ def test_a_reader_counts_the_valid_files_of_the_whole_line(tmp_path):
     assert {row["hotkey"]: row["file_verdict"] for row in files["verdicts"]} == {f"hk{uid}": kind(uid) for uid in range(1, SEATS + 1)}
     assert all(row["file_valid"] is (row["file_verdict"] == VALID) for row in files["verdicts"]), "file_valid is true only with a valid file"
     assert len(queue["next"]) == public.QUEUE_PREVIEW and sum(row["file_valid"] for row in queue["next"]) == 17, "the first 50 seats alone give a smaller count"
+    assert queue["line"][:public.QUEUE_PREVIEW] == queue["next"] and len(queue["line"]) == SEATS
+    assert [row["position"] for row in queue["line"]] == list(range(SEATS))
+    assert [row["valid_ahead"] for row in queue["line"][:6]] == [0, 1, 1, 1, 2, 2]
+    assert queue["line"][-1]["position"] == 59 and queue["line"][-1]["valid_ahead"] == 20
+    assert queue["line"][-1]["eta_rounds"] == 5  # ceil(20 / sim batch_cap=4), no private scheduling input
+    assert all(row["eta_rounds"] == (row["valid_ahead"] + 3) // 4 for row in queue["line"])
     assert files["checked_at"] == queue["files_checked_at"] is not None
 
 
@@ -99,24 +108,38 @@ def test_the_three_verdicts():
     assert file_verdict(Verdict("hk", False, "the grader gave no answer", rule="grader_fault")) == NOT_VALID
 
 
-def test_the_rows_are_in_uid_order_and_show_no_place_and_no_flag_of_a_seat(build):
-    """The queue order puts a seat at the front first and a demoted seat last. The rows do not follow it."""
+def test_the_rows_are_in_uid_order_while_valid_ahead_uses_real_queue_order(build):
+    """The queue order puts a seat at the front first and a demoted seat last; files stay UID ordered."""
     line = waiting(build.queue(build.seat(7, front=True), build.seat(2, demoted=True), build.seat(5, held=True), build.seat(3)))
     assert [seat.reg.uid for seat in line] == [7, 3, 5, 2], "the queue order"
-    flagged = files_view(line, build.verdicts("hk3", "hk7"), 9)
-    plain = files_view(waiting(build.queue(*(build.seat(uid) for uid in (7, 2, 5, 3)))), build.verdicts("hk3", "hk7"), 9)
+    flagged = files_view(line, build.verdicts("hk3", "hk7"), 9, 4)
+    plain = files_view(waiting(build.queue(*(build.seat(uid) for uid in (7, 2, 5, 3)))), build.verdicts("hk3", "hk7"), 9, 4)
     assert [row["uid"] for row in flagged["verdicts"]] == [2, 3, 5, 7]
-    assert canonical_json(flagged) == canonical_json(plain), "the flags and the places of the seats change no byte of queue.files"
+    assert [row["valid_ahead"] for row in flagged["verdicts"]] == [2, 1, 2, 0]
+    assert [row["valid_ahead"] for row in plain["verdicts"]] == [0, 0, 1, 1]
     assert counts(flagged) == (2, 0, 2) and flagged["checked_at"] == 9
+
+
+def test_a_waiting_row_has_only_its_own_sha_and_verdict_time(build):
+    valid = Verdict("hk1", True, "never public", format="v2", n_prompts=8, n_rollouts=16, batch_sha256="a" * 64, checked_at=123, rule="")
+    invalid = Verdict("hk2", False, "never public", format="v2", n_prompts=8, n_rollouts=16, batch_sha256="b" * 64, checked_at=124, rule="json")
+    files = files_view(waiting(build.queue(build.seat(1), build.seat(2), build.seat(3))), {"hk1": valid, "hk2": invalid}, 124, 2)
+    assert files["verdicts"] == [
+        {"uid": 1, "hotkey": "hk1", "file_valid": True, "file_verdict": VALID, "batch_sha256": "a" * 64, "checked_at": 123, "valid_ahead": 0, "eta_rounds": 0},
+        {"uid": 2, "hotkey": "hk2", "file_valid": False, "file_verdict": NOT_VALID, "batch_sha256": "b" * 64, "checked_at": 124, "valid_ahead": 1, "eta_rounds": 1},
+        {"uid": 3, "hotkey": "hk3", "file_valid": False, "file_verdict": NOT_JUDGED, "batch_sha256": None, "checked_at": None, "valid_ahead": 1, "eta_rounds": 1},
+    ]
+    text = json.dumps(files)
+    assert all(value not in text for value in ("never public", "format", "n_prompts", "n_rollouts", "reason", "rule", "uri", "url"))
 
 
 def test_a_hotkey_with_two_waiting_seats_has_one_row_and_its_file_is_counted_once(build):
     line = waiting(build.queue(build.seat(4, hotkey="same"), build.seat(1, hotkey="same"), build.seat(3)))
-    files = files_view(line, build.verdicts("same"), 9)
+    files = files_view(line, {"same": Verdict("same", True, batch_sha256="c" * 64, checked_at=9)}, 9, 4)
     assert files["seats"] == 3 and files["hotkeys"] == 2 and counts(files) == (1, 0, 1)
     assert files["verdicts"] == [
-        {"uid": 1, "hotkey": "same", "file_valid": True, "file_verdict": VALID},
-        {"uid": 3, "hotkey": "hk3", "file_valid": False, "file_verdict": NOT_JUDGED},
+        {"uid": 1, "hotkey": "same", "file_valid": True, "file_verdict": VALID, "batch_sha256": "c" * 64, "checked_at": 9, "valid_ahead": 0, "eta_rounds": 0},
+        {"uid": 3, "hotkey": "hk3", "file_valid": False, "file_verdict": NOT_JUDGED, "batch_sha256": None, "checked_at": None, "valid_ahead": 1, "eta_rounds": 1},
     ]
 
 
@@ -156,11 +179,52 @@ def test_the_counts_from_the_verdicts_of_the_real_checker(build, tmp_path):
     store.put(layout.miner_object("hk1"), b"{ not json")  # the file is replaced after the check
     assert files_view(line, checked, 5) == files, "the verdicts of the check: a snapshot reads no file"
     after = files_view(line, dict(admission.verdicts(hotkeys)), 6)
-    assert counts(after) == (0, 3, 1) and after["verdicts"][0] == {"uid": 1, "hotkey": "hk1", "file_valid": False, "file_verdict": NOT_VALID}
+    assert counts(after) == (0, 3, 1) and after["verdicts"][0]["file_verdict"] == NOT_VALID
+    assert after["verdicts"][0]["checked_at"] == 5 and after["verdicts"][-1]["checked_at"] is None
 
     text = json.dumps(files) + json.dumps(after)
-    assert not any(verdict.batch_sha256 in text for verdict in checked.values() if verdict.batch_sha256), "no sha256 of a waiting file"
+    assert all(verdict.batch_sha256 in text for verdict in checked.values() if verdict.batch_sha256), "the authorized SHA of each judged file"
     assert checked["hk2"].rule not in text.replace("hotkey", "") and "reason" not in text
+    assert '"checked_at":5' in text.replace(" ", "") and '"checked_at":6' in text.replace(" ", "")  # outer second check starts at 6; its verdict clock is 5
+
+
+# ------------------------------------------------------------ pending chain registrations
+
+
+def test_pending_is_from_the_existing_chain_read_and_has_no_file_fields(tmp_path):
+    world = SimWorld(tmp_path, sim_params(batch_cap=1))
+    world.register(1, 0.0)
+    tickets = world.controller.open_round(world.clock(), "entropy")
+    assert tickets and world.controller.state.queue[(1, 1001)].leased
+    chain = ChainSnapshot(world.params.netuid, 9, world.now, (
+        Registration(0, "burn", 1, coldkey="private-owner"),
+        Registration(1, "hk1", 1001, coldkey="private-owner"),  # leased, not pending
+        Registration(2, "hk2", 1002, registered_at=123, coldkey="private-owner"),
+    ))
+    before = len(world.publisher.snapshots)
+    # Before the ordinary registration sync seats UID 2, the existing validated chain read gives
+    # exactly the identity-only pending projection; it adds no chain query or second queue.
+    pending = public.pending_registrations(world.controller.state, chain, world.params)
+    assert pending == [{"uid": 2, "hotkey": "hk2", "registration_block": 1002, "status": "pending"}]
+    assert list(pending[0]) == ["uid", "hotkey", "registration_block", "status"]
+    assert not any(key in json.dumps(pending) for key in ("file", "sha", "checked", "coldkey", "registered_at", "url", "uri"))
+    world.controller.sync_registrations(chain, world.clock())
+    assert len(world.publisher.snapshots) == before, "sync does not add a publication or change publication timing"
+    assert world.controller.publish(world.clock())
+    assert world.publisher.snapshots[-1]["queue"]["pending"] == []  # the ordinary sync seated UID 2
+    assert public.snapshot(world.controller.state, world.params, world.now)["queue"]["pending"] == []
+    assert public.pending_registrations(world.controller.state, chain, world.params) == []  # the ordinary sync seated UID 2
+    world.controller.state.served_hotkeys.update(("hk1", "hk2"))
+    world.controller.state.queue.clear()
+    assert public.pending_registrations(world.controller.state, chain, world.params) == []
+
+
+def test_pending_does_not_count_leased_seats_or_change_valid_ahead(tmp_path, build):
+    state = State(queue=build.queue(build.seat(1), build.seat(2)))
+    state.queue = build.queue(build.seat(1), build.seat(2))
+    state.queue[(1, 101)] = build.seat(1, leased=True)
+    rows = public.line_view(waiting(state.queue), {"hk1": Verdict("hk1", True), "hk2": Verdict("hk2", True)}, 4)
+    assert [row["uid"] for row in rows] == [2] and rows[0]["valid_ahead"] == 0
 
 
 # ------------------------------------------------------------ the time of the list
@@ -238,30 +302,12 @@ def test_a_new_process_shows_no_verdict_before_its_first_check(tmp_path):
 # ------------------------------------------------------------ what does not change
 
 
-def test_every_key_that_the_snapshot_had_before_is_the_same_byte_for_byte(tmp_path):
-    world = line_world(tmp_path, params_before())  # the hash below is of a snapshot with the params of that time
-    snap = json.loads(json.dumps(last(world)))
-    files = snap["queue"].pop("files")
-    assert list(snap["queue"]) == ["length", "files_checked_at", "next"]
-    assert sha256_hex(canonical_json(snap)) == SNAPSHOT_BEFORE, "the snapshot without queue.files is the snapshot of the code before"
-
-    # The same for the queue alone, from the state: the rows as the code before made them.
-    valid = {row["hotkey"]: row["file_verdict"] == VALID for row in files["verdicts"]}
-    before = [
-        {
-            "position": position,
-            "uid": seat.reg.uid,
-            "hotkey": seat.reg.hotkey,
-            "registration_block": seat.reg.registration_block,
-            "file_valid": valid[seat.reg.hotkey],
-            "front": seat.front,
-            "demoted": seat.demoted,
-            "held": seat.held,
-        }
-        for position, seat in enumerate(waiting(world.controller.state.queue)[: public.QUEUE_PREVIEW])
-    ]
-    assert json.dumps(snap["queue"]["next"]) == json.dumps(before)
-    assert all(tuple(row) == ROW_OF_NEXT == publisher.QUEUE_COLUMNS for row in snap["queue"]["next"]), "no new key in a row of queue.next"
+def test_the_snapshot_keeps_its_schema_and_explicit_safe_queue_keys(tmp_path):
+    snap = last(line_world(tmp_path, params_before()))
+    assert snap["schema"] == public.SCHEMA and list(snap["queue"]) == ["length", "files_checked_at", "next", "line", "pending", "files"]
+    assert snap["queue"]["pending"] == [] and snap["queue"]["line"][:50] == snap["queue"]["next"]
+    assert all(tuple(row) == ROW_OF_NEXT == publisher.QUEUE_COLUMNS for row in snap["queue"]["next"])
+    assert all(tuple(row) == ROW for row in snap["queue"]["files"]["verdicts"])
 
 
 def test_the_id_of_the_params_is_the_same(tmp_path):
@@ -270,17 +316,25 @@ def test_the_id_of_the_params_is_the_same(tmp_path):
     world = line_world(tmp_path)
     snap = last(world)
     assert snap["params_hash"] == world.params.params_hash == Params.from_dict(snap["params"]).params_hash
-    assert snap["params"] == world.params.to_dict(), "queue.files is no part of the params"
+    assert snap["params"]["max_stages"] == 5 and snap["params"]["recipe"]["sft_weight"] == 1.0
+    assert {key: value for key, value in snap["params"].items() if key not in ("max_stages", "recipe")} == {
+        key: value for key, value in world.params.to_dict().items() if key not in ("max_stages", "recipe")
+    }, "queue.files is no part of the params"
+    assert {key: value for key, value in snap["params"]["recipe"].items() if key != "sft_weight"} == world.params.recipe.to_dict()
 
 
 def test_nothing_else_about_a_waiting_file_or_a_seat_is_published(tmp_path):
     world = line_world(tmp_path)
-    files = last(world)["queue"]["files"]
+    snap = last(world)
+    files = snap["queue"]["files"]
     text = json.dumps(files)
     stored = [sha256_hex(world.store.get(layout.miner_object(f"hk{uid}"))) for uid in range(1, SEATS + 1) if kind(uid) != NOT_JUDGED]
-    assert len(stored) == 40 and not any(sha in text for sha in stored), "the sha256 of a waiting file is not public"
-    assert not any(key in text for key in ("batch_sha256", "rule", "reason", "position", "registration_block", "front", "demoted", "held"))
+    assert len(stored) == 40 and all(sha in text for sha in stored), "only the explicitly authorized stored-file SHA"
+    assert not any(key in text for key in ("rule", "reason", "position", "registration_block", "front", "demoted", "held", "uri", "url", "train"))
     assert [row["uid"] for row in files["verdicts"]] == list(range(1, SEATS + 1)), "UID order"
+    assert all(row["batch_sha256"] is None and row["checked_at"] is None for row in files["verdicts"] if row["file_verdict"] == NOT_JUDGED)
+    assert all(row["batch_sha256"] is None and row["checked_at"] is None for row in snap["queue"]["line"] if row["file_verdict"] == NOT_JUDGED)
+    publisher.refuse_private(snap["queue"])
 
 
 def test_mining_json_has_the_list_and_llms_txt_uses_no_value_of_it(tmp_path):
@@ -293,8 +347,10 @@ def test_mining_json_has_the_list_and_llms_txt_uses_no_value_of_it(tmp_path):
     text = llms.decode()
     words = " ".join(text.split())
     assert "under `queue.files`" in words and "`file_verdict` is `valid`, `not_valid` or `not_judged`" in words
-    assert "| position | uid | hotkey | registration_block | file_valid | front | demoted | held |" in text, "the table of llms.txt has the columns of before"
-    assert "file_verdict |" not in text
+    assert "| position | uid | hotkey | registration_block | file_valid | file_verdict | batch_sha256 | checked_at | front | demoted | held | valid_ahead | eta_rounds |" in text
+    assert "Waiting-file publication is SHA256 + check time only." in words and "queue.pending" in words
+    assert "ceil(valid_ahead / 4)" in words and "not a scheduler prediction" in words
+    assert "The validator does not publish the sha256 of a waiting file" not in words
 
     # Without the key, only the digest of the snapshot differs in llms.txt.
     without = {**snap, "queue": {key: value for key, value in snap["queue"].items() if key != "files"}}

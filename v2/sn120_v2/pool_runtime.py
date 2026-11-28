@@ -21,7 +21,7 @@ from .envs.math_pool import MathPool, Task, load_pool
 from .envs.reserve import (
     Catalog, atomic_write, candidate_metadata, extends_reserve, ingest_lock, load_reserve, prepare_live_reserve, read_raw, reserve_dir,
 )
-from .errors import ConfigError, VerifyError
+from .errors import ConfigError, InfraError, VerifyError
 from .irt import IRTSampler
 from .params import Params
 from .rotation import INFO_RULE_VERSION, Reserve, Rotation, fold_ledger, rotate, rotate_info
@@ -94,39 +94,219 @@ def append_only(previous: Rotation | None, current: Rotation) -> None:
         raise ConfigError("reserve withdrawn.jsonl shrank or changed an earlier row")
 
 
+def checked_put(store: ObjectStore, key: str, data: bytes, *, missing_only: bool = False) -> None:
+    """Upload when needed, then require exact stored bytes before a pointer can name the object.
+
+    Content-addressed active sets are never needlessly rewritten. An already-correct active file
+    is only read; a missing one is uploaded from its public rotation decision. Other public pool
+    artifacts remain deterministic and byte-idempotent. Every read-back failure fails closed.
+    """
+    try:
+        stored = store.get(key)
+    except KeyError:
+        store.put(key, data)
+    else:
+        if missing_only and stored == data:
+            return
+        if not missing_only and stored != data:
+            store.put(key, data)
+    try:
+        stored = store.get(key)
+    except (KeyError, ValueError, InfraError) as exc:
+        raise VerifyError(f"public pool object {key} failed readback") from exc
+    if stored != data or sha256_hex(stored) != sha256_hex(data):
+        raise VerifyError(f"public pool object {key} failed readback")
+
+
+def _ranking_bytes(rotation: Rotation) -> bytes:
+    return canonical_json({
+        "schema": "affine-pool-ranking-v1", "round_id": rotation.round_id,
+        "rule_version": rotation.rule_version, "active_sha": rotation.active_sha,
+        "source_snapshot_id": rotation.source_snapshot_id, "reserve_manifest_sha": rotation.reserve_manifest_sha,
+        "rule_params": rotation.rule_params, "candidates": list(rotation.candidate_ranking)})
+
+
+def _summary_recent(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {"round_id": row["round_id"], "opened_at": row.get("opened_at", 0),
+            "active_size": len(row["active_ids"]), "admitted": len(row["admitted"]),
+            "retired": len(row["retired"]), "retire_reason_counts": row["retire_reason_counts"],
+            "rotation": layout.pool_rotation(row["round_id"])}
+
+
+def _public_summary(store: ObjectStore, rotation: Rotation) -> bytes:
+    summary = pool_summary(rotation, rotation.opened_at)
+    history = [json.loads(store.get(key)) for key in store.list("public/pool/rotation/")]
+    recent = [row for row in history if row.get("rule_version") == INFO_RULE_VERSION][-20:]
+    summary["recent_rounds"] = [_summary_recent(row) for row in recent]
+    return canonical_json(summary)
+
+
+def _json_lines(raw: bytes) -> list[dict[str, Any]]:
+    rows = json.loads("[" + b",".join(raw.splitlines()).decode("utf-8") + "]") if raw else []
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise VerifyError("public reserve is not a JSON-lines object sequence")
+    return rows
+
+
+def _reserve_bytes(rotation: Rotation) -> tuple[bytes, bytes] | None:
+    """Reconstruct public reserve bytes when the rotation retained the full manifest history."""
+    history = rotation.reserve_history
+    if "shards" not in history or "withdrawn" not in history:
+        return None
+    shards = history["shards"]
+    withdrawn = history["withdrawn"]
+    if not isinstance(shards, list) or not isinstance(withdrawn, list):
+        raise VerifyError("rotation reserve history is malformed")
+    manifest_rows = [{"shard": row["shard"], "sha256": row["sha256"], "count": row["count"], "added_at": row["added_at"]}
+                     for row in shards]
+    manifest_rows.append({"withdrawn": {"sha256": sha256_hex(b"".join(canonical_json(row) + b"\n" for row in withdrawn)),
+                                        "count": len(withdrawn)}})
+    manifest = b"".join(canonical_json(row) + b"\n" for row in manifest_rows)
+    withdrawn_raw = b"".join(canonical_json(row) + b"\n" for row in withdrawn)
+    if history.get("withdrawn_sha") not in (None, "", sha256_hex(withdrawn_raw)):
+        raise VerifyError("rotation reserve withdrawals do not match their public hash")
+    if history.get("withdrawn_count", len(withdrawn)) != len(withdrawn):
+        raise VerifyError("rotation reserve withdrawals do not match their public count")
+    if sha256_hex(manifest) != rotation.reserve_manifest_sha:
+        raise VerifyError("rotation reserve history does not match its public manifest hash")
+    return manifest, withdrawn_raw
+
+
+def _reference(pool: Mapping[str, Any], name: str, expected: str) -> None:
+    if pool.get(name, expected) != expected:
+        raise VerifyError(f"mining snapshot names a nonstandard pool {name} object")
+
+
+def verify_public_pool_snapshot(store: ObjectStore, snapshot: Mapping[str, Any]) -> None:
+    """Resolve every public pool reference before ``mining.json`` may name it.
+
+    Only public rotations and their public reserve inputs are used. Missing deterministic artifacts are
+    restored and read back; correct content-addressed active bytes are never rewritten. Current global
+    objects belong to the newest rotation, while older rotations require append-only prefixes. Missing
+    source bytes that cannot be derived from public data fail closed rather than being invented.
+    """
+    records = [record for record in (snapshot.get("round"), *(snapshot.get("history") or ())) if record]
+    referenced: list[tuple[Mapping[str, Any], Rotation]] = []
+    try:
+        for record in records:
+            pool = record.get("pool")
+            if not isinstance(pool, Mapping):
+                continue
+            active_sha = pool["active_sha"]
+            if not isinstance(active_sha, str) or len(active_sha) != 64 or any(c not in "0123456789abcdef" for c in active_sha):
+                raise VerifyError("snapshot active pool reference is not a lowercase sha256")
+            rotation_key = layout.pool_rotation(record["round_id"])
+            _reference(pool, "rotation", rotation_key)
+            _reference(pool, "active", layout.active_pool(active_sha))
+            _reference(pool, "reserve_manifest", layout.RESERVE_MANIFEST)
+            _reference(pool, "retired_archive", layout.RETIRED_POOL)
+            rotation = Rotation.from_json(store.get(rotation_key))
+            if rotation.round_id != record["round_id"] or rotation.active_sha != active_sha:
+                raise VerifyError("public pool rotation does not match its mining snapshot")
+            if rotation.reserve_manifest_sha != pool["reserve_manifest_sha"]:
+                raise VerifyError("public reserve reference does not match its mining snapshot")
+            if pool.get("rule_version", rotation.rule_version) != rotation.rule_version:
+                raise VerifyError("public pool rule version does not match its rotation")
+            if rotation.rule_version == INFO_RULE_VERSION:
+                _reference(pool, "ranking", layout.pool_ranking(rotation.round_id))
+                _reference(pool, "summary", layout.POOL_SUMMARY)
+            referenced.append((pool, rotation))
+        if not referenced:
+            return
+
+        # Resolve public reserve dependencies before any active object can be repaired or referenced.
+        source = next((rotation for _, rotation in reversed(referenced) if _reserve_bytes(rotation) is not None), None)
+        if source is not None:
+            rebuilt = _reserve_bytes(source)
+            assert rebuilt is not None
+            reserve_bytes, withdrawn_bytes = rebuilt
+            for row in source.reserve_history["shards"]:
+                shard = store.get(layout.reserve_shard(row["shard"], row["sha256"]))
+                if sha256_hex(shard) != row["sha256"]:
+                    raise VerifyError("public reserve shard does not match its content id")
+            for key, data in ((layout.RESERVE_WITHDRAWN, withdrawn_bytes), (layout.RESERVE_MANIFEST, reserve_bytes)):
+                if not store.exists(key):
+                    checked_put(store, key, data)
+        elif not store.exists(layout.RESERVE_MANIFEST):
+            raise VerifyError("public reserve manifest is missing and cannot be reconstructed")
+        reserve = store.get(layout.RESERVE_MANIFEST)
+        reserve_rows = _json_lines(reserve)
+        if not reserve_rows or "withdrawn" not in reserve_rows[-1]:
+            raise VerifyError("public reserve manifest lacks its withdrawn pointer")
+        withdrawn = store.get(layout.RESERVE_WITHDRAWN)
+        withdrawn_rows = _json_lines(withdrawn)
+        pointer = reserve_rows[-1]["withdrawn"]
+        if pointer != {"sha256": sha256_hex(withdrawn), "count": len(withdrawn_rows)}:
+            raise VerifyError("public reserve withdrawals do not match their manifest")
+
+        # Public history is chronological; opened_at breaks any nonstandard ordering without using local time.
+        latest = max(enumerate(referenced), key=lambda item: (item[1][1].opened_at, item[0]))[1][1]
+        for _, rotation in referenced:
+            rebuilt = _reserve_bytes(rotation)
+            if rebuilt is None:
+                if rotation.round_id == latest.round_id and sha256_hex(reserve) != rotation.reserve_manifest_sha:
+                    raise VerifyError("current public reserve does not match its mining snapshot")
+            else:
+                old_manifest, old_withdrawn = rebuilt
+                old_rows, old_withdrawn_rows = _json_lines(old_manifest), _json_lines(old_withdrawn)
+                old_shards = old_rows[:-1]
+                if reserve_rows[:-1][:len(old_shards)] != old_shards or withdrawn_rows[:len(old_withdrawn_rows)] != old_withdrawn_rows:
+                    raise VerifyError("public reserve does not extend a referenced rotation")
+            checked_put(store, layout.active_pool(rotation.active_sha), canonical_json(list(rotation.active_ids)), missing_only=True)
+            if load_active(store, rotation.active_sha) != rotation.active_ids:
+                raise VerifyError("snapshot active pool differs from its public rotation")
+            if rotation.rule_version == INFO_RULE_VERSION:
+                checked_put(store, layout.pool_ranking(rotation.round_id), _ranking_bytes(rotation))
+        if store.exists(layout.RETIRED_POOL):
+            current_retired = json.loads(store.get(layout.RETIRED_POOL))
+            if not isinstance(current_retired, list):
+                raise VerifyError("public retired pool is not a list")
+            for _, rotation in referenced:
+                old = list(rotation.retired_archive)
+                if current_retired[:len(old)] != old:
+                    raise VerifyError("public retired pool does not extend a referenced rotation")
+        else:
+            checked_put(store, layout.RETIRED_POOL, canonical_json(list(latest.retired_archive)))
+        if latest.rule_version == INFO_RULE_VERSION:
+            checked_put(store, layout.POOL_SUMMARY, _public_summary(store, latest))
+    except VerifyError:
+        raise
+    except (KeyError, ValueError, TypeError, InfraError) as exc:
+        raise VerifyError("a public pool reference failed readback") from exc
+
+
 def active_file(store: ObjectStore, rotation: Rotation, catalog: MathPool | None = None, *, decision_record: Rotation | None = None) -> None:
+    """Verify every referenced public pool object before publishing a rotation or summary.
+
+    Callers mirror and read back the reserve before this function. No reference is allowed to
+    repair or outrun a missing dependency; a failed active read-back prevents all pointer writes.
+    """
     opened_at = rotation.opened_at
-    store.put(layout.active_pool(rotation.active_sha), canonical_json(list(rotation.active_ids)))
+    active = layout.active_pool(rotation.active_sha)
+    active_bytes = canonical_json(list(rotation.active_ids))
+    checked_put(store, active, active_bytes, missing_only=True)
+    try:
+        published = load_active(store, rotation.active_sha)
+    except (KeyError, ValueError, InfraError, VerifyError) as exc:
+        raise VerifyError("published active pool failed readback") from exc
+    if published != rotation.active_ids:
+        raise VerifyError("published active pool ids differ from the rotation decision")
     if rotation.initial_active_sha:
-        # A pure Rotation stores the initial active list in its previous-round
-        # artifact when there is no preceding decision; the production open
-        # path writes it explicitly before this function.
-        if not store.exists(layout.active_pool(rotation.initial_active_sha)):
-            raise VerifyError("initial active pool artifact is missing")
-    store.put(layout.pool_rotation(rotation.round_id), (decision_record or rotation).to_json())
-    store.put(layout.pool_rotation_state(rotation.digest()), rotation.to_json())
+        # The production open path uploads this before the decision. It is public and content-addressed.
+        try:
+            load_active(store, rotation.initial_active_sha)
+        except (KeyError, ValueError, InfraError, VerifyError) as exc:
+            raise VerifyError("initial active pool artifact is missing or failed readback") from exc
     if rotation.rule_version == INFO_RULE_VERSION:
-        ranking = {"schema": "affine-pool-ranking-v1", "round_id": rotation.round_id,
-                   "rule_version": rotation.rule_version, "active_sha": rotation.active_sha,
-                   "source_snapshot_id": rotation.source_snapshot_id, "reserve_manifest_sha": rotation.reserve_manifest_sha,
-                   "rule_params": rotation.rule_params, "candidates": list(rotation.candidate_ranking)}
-        store.put(layout.pool_ranking(rotation.round_id), canonical_json(ranking))
-        store.put(layout.POOL_SUMMARY, canonical_json(pool_summary(rotation, opened_at)))
-        if decision_record is None:
-            history = [json.loads(store.get(key)) for key in store.list("public/pool/rotation/")]
-            recent = [row for row in history if row.get("rule_version") == INFO_RULE_VERSION][-20:]
-            summary = pool_summary(rotation, opened_at)
-            summary["recent_rounds"] = [{"round_id": row["round_id"], "opened_at": row.get("opened_at", 0),
-                                          "active_size": len(row["active_ids"]), "admitted": len(row["admitted"]),
-                                          "retired": len(row["retired"]), "retire_reason_counts": row["retire_reason_counts"],
-                                          "rotation": layout.pool_rotation(row["round_id"])} for row in recent]
-            store.put(layout.POOL_SUMMARY, canonical_json(summary))
+        checked_put(store, layout.pool_ranking(rotation.round_id), _ranking_bytes(rotation))
+    checked_put(store, layout.pool_rotation(rotation.round_id), (decision_record or rotation).to_json())
+    checked_put(store, layout.pool_rotation_state(rotation.digest()), rotation.to_json())
     if store.exists(layout.RETIRED_POOL):
         previous = json.loads(store.get(layout.RETIRED_POOL))
         current = list(rotation.retired_archive)
         if current[:len(previous)] != previous:
             raise VerifyError("retired archive would change an earlier row")
-    store.put(layout.RETIRED_POOL, canonical_json(list(rotation.retired_archive)))
+    checked_put(store, layout.RETIRED_POOL, canonical_json(list(rotation.retired_archive)))
     if catalog is not None:
         rows = []
         for row in rotation.retired_archive:
@@ -135,7 +315,15 @@ def active_file(store: ObjectStore, rotation: Rotation, catalog: MathPool | None
             except Exception:
                 continue
             rows.append({"id": task.task_id, "env": task.slice, "problem": task.problem, "answer": task.answer})
-        store.put(layout.RETIRED_TASKS, canonical_json(rows))
+        checked_put(store, layout.RETIRED_TASKS, canonical_json(rows))
+    if rotation.rule_version == INFO_RULE_VERSION:
+        checked_put(store, layout.POOL_SUMMARY, canonical_json(pool_summary(rotation, opened_at)))
+        if decision_record is None:
+            history = [json.loads(store.get(key)) for key in store.list("public/pool/rotation/")]
+            recent = [row for row in history if row.get("rule_version") == INFO_RULE_VERSION][-20:]
+            summary = pool_summary(rotation, opened_at)
+            summary["recent_rounds"] = [_summary_recent(row) for row in recent]
+            checked_put(store, layout.POOL_SUMMARY, canonical_json(summary))
 
 
 def unscored_rotation(previous: Rotation | None, snapshot: Mapping[str, Any], record: Any = None) -> bool:
@@ -420,7 +608,7 @@ class PoolRuntime:
                    if previous is None or previous.rule_version != INFO_RULE_VERSION else {}),
             })
         if not previous:
-            self.store.put(layout.active_pool(decision.prev_active_sha), canonical_json(list(a_prev)))
+            checked_put(self.store, layout.active_pool(decision.prev_active_sha), canonical_json(list(a_prev)), missing_only=True)
         append_only(previous, decision)
         meta = {"active_sha": decision.active_sha, "reserve_manifest_sha": decision.reserve_manifest_sha, "round_id": round_id}
         ability = float(snapshot.get("head_ability", snapshot["heads"].get(snapshot["head_version_id"], {}).get("ability", 0.0)))
@@ -433,11 +621,11 @@ class PoolRuntime:
         """Artifacts strictly before ROUND_OPENED; repeat is byte-idempotent."""
         if decision.rule_version == INFO_RULE_VERSION:
             decision = Rotation.from_dict(decision.to_dict() | {"opened_at": opened_at})
-        active_file(self.store, decision, self.catalog)
         root = Path(self.root or reserve_dir())
         if decision.reserve_manifest_sha != sha256_hex((root / "MANIFEST.jsonl").read_bytes()):
             raise VerifyError("reserve changed between rotation decision and publication")
         mirror_reserve(self.store, self.root)
+        active_file(self.store, decision, self.catalog)
         self._publish_retired_local(decision)
         block = decision.journal_block()
         block["state_sha"], block["size"] = decision.digest(), len(decision.active_ids)
@@ -454,7 +642,7 @@ class PoolRuntime:
             tasks.append({"id": task.task_id, "env": task.slice, "problem": task.problem, "answer": task.answer})
         (root / "retired.json").write_bytes(canonical_json(list(decision.retired_archive)))
         (root / "retired_tasks.json").write_bytes(canonical_json(tasks))
-        self.store.put(layout.RETIRED_TASKS, canonical_json(tasks))
+        checked_put(self.store, layout.RETIRED_TASKS, canonical_json(tasks))
 
     def commit(self, decision: Rotation) -> None:
         """Advance the in-process boundary only after the close is computed."""

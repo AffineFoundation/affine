@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import layout
-from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMATS, MIN_ROLLOUTS, NO_SIGNAL, RULES, TIME_LIMIT, TRAIN_COST, TRANSIENT
+from .admission import CONTROL_TOKENS, FAULT_HOLD_S, FAULT_TRIES, FORMAT_V4, FORMATS, MIN_ROLLOUTS, NO_SIGNAL, RULES, STAGE_TRAIN_KEYS, TIME_LIMIT, TRAIN_COST, TRANSIENT
 from .canonical import digest, sha256_hex, to_jsonable
 from .envs.math_pool import ENV_ID, POOL_FILE, POOL_SHA256, POOL_V2_0_SHA256, Task, load_pool
 from .errors import ConfigError, ContractError, InfraError, V2Error
@@ -54,6 +54,7 @@ from .dedup import (
     STAGE_LORA,
     STAGE_ROLLOUT,
 )
+from .pool_runtime import verify_public_pool_snapshot
 from .params import (
     GENESIS_BASE_HASH,
     GENESIS_MODEL_REPO,
@@ -64,7 +65,7 @@ from .params import (
     Params,
     Recipe,
 )
-from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, NOT_JUDGED, NOT_VALID, TEXT_LIMIT, VALID
+from .public import CUT_ADDRESS, CUT_LOGIN, CUT_QUERY, CUT_SECRET, HISTORY_PREVIEW, NOT_JUDGED, NOT_VALID, QUEUE_PREVIEW, TEXT_LIMIT, VALID, WINNER_STATS_SCHEMA, enrich_winner_stats, validate_confirmation_stats, validate_winner_stats, winner_stats_from_snapshot
 from .queue import SECONDS_PER_DAY
 from .sampling import SEED_BITS
 from .seams import ObjectStore
@@ -88,6 +89,20 @@ REBUILD_COST = (
     "time of one weight shape). `--device cuda:0` runs the product on a GPU; that time is not measured."
 )
 LORA_TABLE = "<batches of the round>"  # what llms.txt prints for --max-loras
+# Worked arithmetic for the train-cost rule, not a per-installation contract value.
+# The current contract's cap and the bounds table remain the authority for a miner.
+TRAIN_COST_EXAMPLE = (
+    "Worked example of the live cap 22,130,000: with steps=16 the token budget is 1,383,125 (integer floor). "
+    "Official check --tokenizer rejects a large/long mixed-reward batch whose steps × kept trained tokens exceeds "
+    "that cap, even if the same file would pass at default steps=1. Do not add long rollouts for KL margin without "
+    "rechecking train_cost with your chosen steps."
+)
+LOCAL_INSTALL = (
+    "In a clean Python 3.12 venv, `python -m pip install -e './v2[gpu,envs,r2]'`. "
+    "If an old torch pin conflicts, use a clean venv: `vllm==0.32.0` requires torch 2.13."
+)
+LOCAL_MINER_BOUNDS = "**Current bounds (2026-11-27 UTC):** `train.rank` 8–64, `train.alpha` 8–128, `train.lora_lr` 1e-06–0.01, `train.steps` 1–64, `recite_max_share=0.05`, and `max_kl_tok=0.25`. KL rises with rank, alpha, lr and steps. Measure `kl_tok` locally with `python -m sn120_v2.replicate run` before submitting; an SFT-only r64/a128 lr3e-4 run measured about 0.5, double the cap."
+LOCAL_KL_DEFAULTS = "the first scored sample of each task (default `kl_rollouts` 128 and, with `kl_max_tokens=0`, the full completion)"
 LOCAL_OPTIONS = ("--host", "--port")  # options of the vLLM server that llms.txt does not print: the local address of the box
 # Two texts of modules that the publisher may not import: the training job needs torch and the grader needs sympy,
 # and the publisher runs with the standard library alone. Each is typed here; a test compares it with its source.
@@ -97,6 +112,16 @@ RETIRED_KING_Z_BAR = 1.5
 # A measured planning example, not a guarantee of a miner's sample.
 SAMPLING_GUIDANCE = ("With 2 rollouts per prompt, one official-head sample of 960 prompts produced 97 mixed-reward groups, a yield of about 10%; "
                      "plan on about 5–8 times as many prompts as the mixed-reward groups you need, and the file needs 80 mixed groups.")
+# Measured on 2026-11-25 from the 103 scored entries in the 20 closed rounds
+# of public mining.json history (every row had n_tasks=2000).
+LOCAL_DELTA_SE = "A 100-task local delta has a standard error of about 5.3 percentage points, estimated from the public 2000-task SE scaled by √(n/100)."
+SFT_SIZING_GUIDANCE = (
+    "Start small: SFT is strong. Prefer a lower `sft_weight`, for example 0.1–0.3, and few SFT traces relative to "
+    "GRPO rollouts. Measure `kl_tok` locally with `python -m sn120_v2.replicate run` and the arguments in section 10 before submission. "
+    "One anonymized, unattributed public observation: 120 SFT traces + 80x2 GRPO at `sft_weight=1.0` produced "
+    "`kl_tok=0.088` and −7 percentage points, versus GRPO-only +1.7 percentage points. This is only a caution "
+    "that a large SFT term at weight 1.0 can move the policy too far, not a predicted result."
+)
 MERGED_EXPLANATION = (
     "Each candidate is tested as the merged model round_bf16(fp32 king master + your LoRA update), "
     "built with the same arithmetic as the install fold; the model that is tested is bit-for-bit the model that is installed. "
@@ -109,7 +134,9 @@ UPDATE_COST_S = 0.1
 BOX_TRIES = inspect.signature(LocalRunner.__init__).parameters["attempts"].default
 TRAIN_FORMATS = FORMATS[1:]  # the first format may not carry "train"
 # Batch content and non-public store zones. A snapshot that holds one of these is refused.
-PRIVATE_KEYS = frozenset({"groups", "rollouts", "put_url", "put_headers"})
+# ``stages`` is also the name of public, constant v4 contract documentation below. Only state can carry a private
+# stage plan; that documentation is added after the state has passed this fail-closed filter.
+PRIVATE_KEYS = frozenset({"groups", "rollouts", "sft", "stages", "stage_count", "sft_count", "n_stages", "n_sft", "put_url", "put_headers"})
 PRIVATE_ZONES = ("private/", "pending/")
 OWN_KEYS = ("snapshot_digest", "contract")
 # A presigned upload link signs these headers (``Presigner.presign_put``). An upload without them is refused.
@@ -120,7 +147,8 @@ ENTRY_COLUMNS = ("queue_pos", "uid", "hotkey", "batch_sha256", "status", "delta"
 # after these, in sorted order.
 ROUND_FIELDS = ("round_id", "head_version_id", "params_hash", "recipe_id", "round_seed", "irt_snapshot_id", "n_tasks", "opened_at", "closed_at")
 ROUND_FIELDS += ("outcome", "seats", "skipped", "winner_uid", "reason", "null_pass_rate", "null_cap_rate")
-QUEUE_COLUMNS = ("position", "uid", "hotkey", "registration_block", "file_valid", "front", "demoted", "held")
+QUEUE_COLUMNS = ("position", "uid", "hotkey", "registration_block", "file_valid", "file_verdict", "batch_sha256", "checked_at",
+                 "front", "demoted", "held", "valid_ahead", "eta_rounds")
 KING_COLUMNS = ("uid", "hotkey", "round_id", "head_version_id", "applied_at", "z")
 DUPLICATE_MEMBER_COLUMNS = ("queue_pos", "uid", "hotkey", "batch_sha256", "stage", "similarity", "first_seen_unix")
 DUPLICATE_STAGES = {
@@ -131,11 +159,34 @@ DUPLICATE_STAGES = {
     STAGE_LORA: "LoRA update cosine with a keeper in this round",
 }
 PARAMS_HEADING = "Every parameter"  # the section whose table states each parameter; ``stated_params`` reads it back
+RULE_CHANGELOG = (
+    "## Rule changelog",
+    "",
+    "Date (UTC) / field / old → new. Dates identify shipped commits; the parameter table is the current contract.",
+    "- 2026-11-24 / `min_kl_seq` + `min_kl_tok` / `min_kl_seq=10` → `min_kl_seq=0`, `min_kl_tok=0.0014` nats per token.",
+    "- 2026-11-24 / `z_bar` + paired next-round confirmation / no z bar → crown and paid confirmation both require strict `z > 1`.",
+    "- 2026-11-24 / squat trim / queue-rate-stretched wait → flat 6h cap (`squat_min_wait_s=10800`, `squat_age_factor=2`), retaining the zero-turn guard.",
+    "- 2026-11-24 / confirming-round king + old-parent samples / inherited `1` → matched `2` per task (`null_samples_per_task=2`).",
+    "- 2026-11-25 / `service` / phase alone → phase plus coarse public service state, reason and next-open estimate.",
+    "- 2026-11-25 / local-delta measurement guidance / undocumented → a 100-task local delta has an SE of about 5.3 percentage points.",
+    "- 2026-11-25 / per-round seating / the one-entry-per-round rule is hotkey-only; there is no coldkey seat limit.",
+    "- 2026-11-25 / `z_bar` / `z_bar=1` → `z_bar=0.5`: crown needs strict `z > 0.5`, pending the paired next-round confirmation (fresh paired `z > 0.5`) before any payout.",
+    "- 2026-11-25 / miner pool guidance / local `math_pool_v2_1.jsonl` presented as the pool → sample from the live official-active pool (`public/pool/summary.json` → `public/pool/active/<sha>.json`); reference generator defaults to it; `check` warns when most prompts are outside it.",
+    "- 2026-11-25 / winner stats / canonical-only → byte-identical root `winner-stats.json` alias and optional per-crown fields derived only from crowned winners' public batches.",
+    "- 2026-11-25 / miner walkthrough / scattered stale guidance → live-pool, reserve, checking, upload, confirmation and payout walkthrough in llms.txt and the miner quickstarts.",
+    "- 2026-11-25 / miner-visible v4 edges / `check --grade` now uses the full verified live catalog including `gen:`; public params visibly show `max_stages` and the `sft_weight` default without changing hashes; older checkers name the upgrade command and `from_public_dict` tolerates future bounds; mining.json publication lag is shortened on the producer and at the end of site pull.",
+)
+
+V4_RULE_CHANGELOG = (
+    "- 2026-11-25 / `affine-batch-v4` / flat GRPO batches only → 1–`max_stages` ordered GRPO/SFT stages, official SFT verification and summed per-stage training cost.",
+)
+RULE_CHANGELOG += V4_RULE_CHANGELOG
 
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
-    "steps": "passes over your batch; each pass makes `minibatches` updates",
-    "minibatches": "updates in each pass; 1 = one update from all rows of your batch",
+    "steps": "epochs (full passes) over the batch or each v4 stage; each pass makes `minibatches` updates",
+    "minibatches": "updates in each pass; 1 = one update from all rows of your batch or v4 stage",
+    "sft_weight": "multiplier of each v4 supervised trace's token-mean cross-entropy",
     "lora_lr": "learning rate of each update",
     "adam_eps": "epsilon of each Adam update; larger values damp small-gradient weights",
     "max_grad_norm": "gradient clip of each update; it does not cap the size of an update (the training procedure, below)",
@@ -243,6 +294,8 @@ def object_keys() -> dict[str, str]:
     return {
         "llms_txt": layout.LLMS_TXT,
         "mining_json": layout.MINING_JSON,
+        "winner_stats": layout.WINNER_STATS,
+        "confirmation_stats": layout.CONFIRMATION_STATS,
         "current_head": layout.CURRENT,
         "head_manifest": layout.head_manifest("VERSION_ID"),
         "base_file": layout.public_base_prefix("BASE_HASH") + "/FILE",
@@ -255,14 +308,22 @@ def object_keys() -> dict[str, str]:
 
 
 def kl_rule(params: Params) -> str:
-    if params.min_kl_seq <= 0:
+    if not params.kl_floor_on:
         return "measured KL gate off"
-    cap = f" at the first {params.kl_max_tokens} completion tokens" if params.kl_max_tokens else ""
-    return (
-        f"Your LoRA must change the model: the mean KL(new||head){cap} over {params.kl_rollouts} of its own eval rollouts "
-        f"must be at least {show(params.min_kl_seq)} nats per sequence, else the entry is a charged null_update. "
-        "The public round output publishes every entry's kl_seq, kl_seq_se, kl_tok, kl_k and kl_tokens."
-    )
+    rules = []
+    if params.min_kl_seq > 0:
+        cap = f" at the first {params.kl_max_tokens} completion tokens" if params.kl_max_tokens else ""
+        rules.append(
+            f"Your LoRA must change the model: the mean KL(new||head){cap} over {params.kl_rollouts} of its own eval rollouts "
+            f"must be at least {show(params.min_kl_seq)} nats per sequence, else the entry is a charged null_update."
+        )
+    if params.min_kl_tok > 0:
+        scope = f"the first {params.kl_max_tokens} completion tokens" if params.kl_max_tokens else "the full completion"
+        rules.append(
+            f"KL(new||head) summed over {scope} of each of the kl_k sampled rollouts, divided by the total number of those tokens "
+            f"(the published kl_tok), must be at least {show(params.min_kl_tok)} nats per token, else the entry is a charged null_update."
+        )
+    return " ".join(rules) + " The public round output publishes every entry's kl_seq, kl_seq_se, kl_tok, kl_k and kl_tokens."
 
 
 def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, Any]:
@@ -275,10 +336,37 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
         "batch_file": {
             "versions": list(FORMATS),
             "train_allowed_in": list(TRAIN_FORMATS),
+            "v4": {
+                "format": FORMAT_V4,
+                "max_stages": params.max_stages,
+                "top_level_keys": ["version", "hotkey", "stages", "train"],
+                "stage_keys": ["train", "groups", "sft"],
+                "stage_train_keys": sorted(STAGE_TRAIN_KEYS),
+                "steps": "epochs (full passes) over the stage",
+                "cost": "sum over stages of steps * (grpo_tokens + sft_tokens) + grpo_tokens",
+                "sft": "official verification requires a known prompt with official reward exactly 1",
+            },
             "forbidden_text": list(CONTROL_TOKENS),
             "private_object": layout.miner_object("HOTKEY"),
             "upload_headers": UPLOAD_HEADERS,
+            "public_files": "crowned winners only; waiting and losing files, stage plans and counts stay private",
         },
+        "training": {
+            "steps": "epochs (full passes) over the batch or v4 stage, not gradient-update counts",
+            "per_stage_cost": "sum over stages of steps * (grpo_tokens + sft_tokens) + grpo_tokens; each stage's resolved steps applies to its GRPO and SFT trained tokens, plus one GRPO q_old rescoring pass",
+            "sft_weight": "token-mean cross-entropy multiplier; stage train may set it only when its opt-in MinerBound is published",
+            "sft_official_verification": "each SFT prompt must be known to the official grader and its output must have official reward exactly 1",
+            "stage_train_keys": sorted(STAGE_TRAIN_KEYS),
+        },
+        "training_time_floor": (
+            None if params.train_tokens_per_s_floor <= 0 else {
+                "enabled": True,
+                "train_tokens_per_s_floor": params.train_tokens_per_s_floor,
+                "minimum_seconds": math.ceil(params.max_train_token_steps / params.train_tokens_per_s_floor),
+                "post_training_reserve_s": 600,
+                "train_time_budget_s": params.train_time_budget_s,
+            }
+        ),
         "duplicate_policy": {
             "enabled": params.dedup_enabled,
             "stage_a": {
@@ -299,6 +387,7 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "min_signal_rollouts": "min_signal_rollouts; no implicit effective recipe.minibatches floor",
             "min_step_norm": params.min_step_norm,
             "min_kl_seq": params.min_kl_seq,
+            "min_kl_tok": params.min_kl_tok,
             "kl_rollouts": params.kl_rollouts,
             "kl_max_tokens": params.kl_max_tokens,
             "kl_time_limit_s": params.kl_time_limit_s,
@@ -382,6 +471,108 @@ def mining_document(snapshot: Mapping[str, Any], public_url: str = "", links_url
     return {"snapshot_digest": digest(plain), **plain, "contract": contract(params, public_url, links_url)}
 
 
+def _v4_recipe_lines(params: Params) -> list[str]:
+    """The v4 stage recipe, distinct from the unchanged flat-batch rules."""
+    if FORMAT_V4 not in FORMATS:
+        return []
+    settable = {row["key"] for row in miner_settable(params.recipe)}
+    stage_keys = [f"`{key}`" for key in sorted(STAGE_TRAIN_KEYS)]
+    usable = [f"`{key}`" for key in sorted(STAGE_TRAIN_KEYS & settable)]
+    sft_bound = params.recipe.bound("sft_weight")
+    sft_setting = (
+        f"`sft_weight` is opt-in here: its published MinerBound allows {bound_text(sft_bound)}, with default {show(params.recipe.sft_weight)}. "
+        "Set it in top-level `train`, or override it in a stage's `train`; 0 disables the SFT loss contribution."
+        if sft_bound is not None else
+        f"The recipe default is `sft_weight={show(params.recipe.sft_weight)}`. This recipe publishes no `sft_weight` MinerBound, "
+        "so a miner may not set that key at either level until the bound is explicitly enabled."
+    )
+    return [
+        "",
+        f"### Ordered GRPO and SFT stages (`{FORMAT_V4}`)",
+        "",
+        f"- A v4 file has `stages`: an ordered list of 1 to {params.max_stages} stages (`max_stages`). Each stage has",
+        "  optional `train`, plus `groups` and/or `sft` (at least one, non-empty when present). Stages train one LoRA",
+        "  in order. Each stage resolves top-level `train`, then its own `train`, gets a fresh Adam state, and measures",
+        "  GRPO's old policy and support again after all earlier stage updates. Every stage needs a trainable row:",
+        "  nonzero-advantage GRPO or SFT with a positive `sft_weight`.",
+        "- A stage's `train` allowlist is " + ", ".join(stage_keys) + ". Keys outside this list, including",
+        "  `rank`, `alpha`, `target_modules`, `global_norm_cap` and `dropout`, belong at top level where their bounds",
+        "  permit them, never in a stage. Every stage value must also have a published MinerBound; in this recipe the",
+        "  usable stage keys are " + ", ".join(usable) + ".",
+        "- `steps` means epochs: full passes over that stage's trainable rows, not gradient-update counts. Each pass",
+        "  has `minibatches` updates (fewer when fewer active rows train). Per-stage cost is",
+        "  `steps * (grpo_tokens + sft_tokens) + grpo_tokens`; the added GRPO tokens are its q_old rescoring pass.",
+        "  File cost is the sum of this value over all stages. The top-level `steps` supplies the default for a stage,",
+        "  and the stage's `steps` replaces it for that stage only. SFT trained tokens count in the training passes,",
+        "  but have no q_old pass.",
+        "- SFT rows have exactly `prompt` and `output`, with no reward or rollouts. They train token-mean",
+        "  cross-entropy, not GRPO advantage. Official verification requires a prompt known to the official grader",
+        "  and an output whose official reward is exactly 1. A grader failure or time limit leaves the trace",
+        "  unverified; an SFT output at the scoring cap or one that training token caps would cut is invalid.",
+        f"- {sft_setting}",
+        f"- {SFT_SIZING_GUIDANCE}",
+        "- Only a crowned winner's batch file, including its stages and SFT rows, becomes public. Waiting and losing",
+        "  seats reveal no batch content, stage counts, SFT counts, stage train values or SFT verification details.",
+    ]
+
+
+def _v4_example(params: Params) -> dict[str, Any]:
+    recipe = params.recipe
+    stage_train: dict[str, Any] = {"steps": recipe.steps}
+    if recipe.bound("sft_weight") is not None:
+        stage_train["sft_weight"] = recipe.sft_weight
+    return {
+        "version": FORMAT_V4,
+        "hotkey": "<your hotkey ss58 address>",
+        "stages": [{
+            "train": stage_train,
+            "groups": [{
+                "prompt": "<official instruction of section 6>\n\n<problem text>",
+                "rollouts": [
+                    {"output": "<reasoning> \\boxed{<right answer>}", "reward": 1.0},
+                    {"output": "<reasoning> \\boxed{<wrong answer>}", "reward": 0.0},
+                ],
+            }],
+            "sft": [{"prompt": "<a known pool prompt>", "output": "<reasoning> \\boxed{<officially correct answer>}"}],
+        }],
+    }
+
+
+def _v4_file_lines(params: Params) -> list[str]:
+    if FORMAT_V4 not in FORMATS:
+        return []
+    return [
+        "",
+        f"### The `{FORMAT_V4}` file",
+        "",
+        "The same prompt/output token and control-text rules apply across all stages. Whole groups and SFT traces",
+        "share the file-wide prompt and rollout caps in stage order; each SFT trace counts as one prompt and one",
+        "rollout for those caps and for the public counts of a crowned winner. A v4 example:",
+        "",
+        "```json",
+        json.dumps(_v4_example(params), indent=1),
+        "```",
+        "",
+        "GRPO `groups` have the same shape as the flat example above. `sft` traces have exactly `prompt` and",
+        "`output`. There is no miner-supplied SFT reward: the official grader must verify reward exactly 1 for a",
+        "known prompt. Run the same `check --tokenizer ... --grade` command below; it checks every stage and trace.",
+        "Only the crowned winner's exact batch file is published; waiting and losing seats expose no stage or SFT",
+        "counts, content or train values.",
+    ]
+
+
+def _training_time_floor_lines(params: Params) -> list[str]:
+    if params.train_tokens_per_s_floor <= 0:
+        return []
+    minimum = math.ceil(params.max_train_token_steps / params.train_tokens_per_s_floor)
+    return [
+        f"- Training-time floor enabled: `train_tokens_per_s_floor={params.train_tokens_per_s_floor}` reserves at least",
+        f"  ceil(max_train_token_steps / train_tokens_per_s_floor) = {minimum} seconds plus 600 seconds of post-training",
+        f"  reserve. The configured training budget is {params.train_time_budget_s} seconds. This is a validator",
+        "  scheduling/reservation floor, not a throughput requirement for miners and not a different token-step cap.",
+    ]
+
+
 def _recipe_lines(params: Params) -> list[str]:
     recipe, recipe_id = params.recipe, params.recipe_id
     cap, cap_bound = recipe.global_norm_cap, recipe.bound("global_norm_cap")
@@ -429,15 +620,22 @@ def _recipe_lines(params: Params) -> list[str]:
         "for every batch. Your batch is the only training data. A batch made against an older head is trained on the",
         "current head. `recipe_id` is the sha256 of the canonical JSON (sorted keys, no spaces) of the recipe object in",
         "mining.json (`params.recipe`). A new recipe gets a new id, and it is shown here before the next round starts.",
-        "The object does not hold `minibatches` while the value is 1, or `adam_eps` while it is the default 1e-8.",
+        "The canonical hashed/stored object omits `minibatches` while the value is 1, `adam_eps` while it is the",
+        "default 1e-8, and `sft_weight` while it is the default 1. The public snapshot visibly includes those effective",
+        "`sft_weight` and `max_stages` defaults; decoding it restores the same canonical object and hashes.",
         "",
         *table(("field", "value", "meaning"), rows),
         "",
         f"- Training code: `sn120_v2/gpu/` in {REPO}/tree/v2/v2 (sha256 `{show(recipe.code_digest)}`).",
         *pinned,
-        "- Every prompt is a system message containing the instruction of section 6, then a user message. For a batch",
-        "  row the user text is `prompt` with a leading instruction + blank line removed. The trainer applies the chat",
-        "  template of the head with `add_generation_prompt=True` and `enable_thinking=True`.",
+        "- Validator training uses exactly the stored `prompt` field of each batch row. Sampling context such as a",
+        "  separate system message is not kept unless it was written into that stored `prompt` field. For a pool task",
+        "  the recommended stored-prompt template is the official instruction of section 6 (`MANDATE`), a blank line,",
+        "  then the problem, both in that one `prompt` field, as recent crowned kings do. Official form:",
+        '  `MathPool.task.batch_prompt()` = `MANDATE + "\\n\\n" + problem`. For chat rendering, a leading official',
+        "  instruction + blank line is stripped first if present. The trainer renders system = the official instruction,",
+        "  user = the problem, then applies the head's chat template with `add_generation_prompt=True` and",
+        "  `enable_thinking=True`. It does not apply that template directly to the raw stored `prompt` as one message.",
         "",
         "### What you may set",
         "",
@@ -448,11 +646,16 @@ def _recipe_lines(params: Params) -> list[str]:
         "",
         "- These are the bounds for launch. The bounds are part of the recipe: a change of a bound gives a new",
         "  `recipe_id`.",
+        "- `decided` means the bound is frozen into `recipe_id`, not that you cannot set the value. You may still set",
+        "  `minibatches`, `rank`, `global_norm_cap` and every other field anywhere in its published range above. These",
+        "  bounds, not the decided flag alone, are the authority. A bound not yet frozen still leaves the value yours",
+        "  to set in range.",
         "- Every key is optional. A key that you do not set keeps its default.",
         "- Values are never clamped. A value outside its bound, a value of the wrong type, or any other key under",
         "  `train` makes the whole file invalid.",
         f"- `train` is allowed in {show(TRAIN_FORMATS)}. It is not allowed in {FORMATS[0]}.",
-        "- Your `train` values are published only if your batch wins.",
+        "- Your `train` values are published only if your batch wins. For v4, stage `train` uses the restricted key",
+        "  set below; top-level `train` supplies defaults to each stage.",
         "- A file with `train` keys that only v1 had (`lr`, `kl`, `step_mult`, the knobs) is invalid. The seat is",
         "  skipped and not charged, as with any invalid file (section 4), until the miner uploads a valid file.",
         "",
@@ -482,6 +685,7 @@ def _recipe_lines(params: Params) -> list[str]:
         "  train report counts the truncated rollouts. A rollout with no output token left is dropped and counted.",
         "",
         *_training_lines(params),
+        *_v4_recipe_lines(params),
     ]
 
 
@@ -523,9 +727,11 @@ def _training_lines(params: Params) -> list[str]:
         "- Rows: one row for each rollout of the groups that the file check keeps (section 5), in file order. The",
         "  advantage of a row is its reward minus the mean reward of its group (`group_size`, above). The trainer does",
         "  nothing else to it: no division by a standard deviation and no clip.",
-        "- Tokens of a row. Prompt: messages = system instruction (section 6), user = `prompt` with a leading",
-        "  instruction + blank line removed. Apply the head's chat template with `add_generation_prompt=True`,",
-        "  `tokenize=False` and `enable_thinking=True`, then `tokenizer.encode(text, add_special_tokens=False)`.",
+        "- Tokens of a row. Start from the stored `prompt` field and strip a leading official instruction + blank line",
+        "  if present. Render system = the official instruction (section 6), user = the problem; then apply the head's",
+        "  chat template with `add_generation_prompt=True`, `tokenize=False` and `enable_thinking=True`, followed by",
+        "  `tokenizer.encode(text, add_special_tokens=False)`. The template is not applied to the raw stored `prompt`",
+        "  as a single user message.",
         "  Output: `tokenizer.encode(output, add_special_tokens=False)`. The tokenizer is the one of the base files.",
         "- Room: room = min(`train_max_output_tokens`, `train_max_context_tokens` - prompt tokens). An output shorter",
         f"  than the room gets the end-of-turn token `{END_OF_TURN}` after its last token. An output as long as the room or",
@@ -620,6 +826,7 @@ def _round_time_lines(params: Params) -> list[str]:
         "  chunk, the judging and the promotion.",
         f"- Training time: the first {show(train_end / 60)} minutes. Batches train longest-expected-first, with queue order breaking ties.",
         "  Each batch trains on one GPU, up to one training job per GPU at a time; any remaining batch waits for a free GPU.",
+        *_training_time_floor_lines(params),
         "- At the end of the training time no new training starts, and each training that still runs is stopped. Such",
         f"  a batch is `{NOT_TRAINED}`: you are not charged, your seat is first in the next round, and no failure is counted",
         "  for the seat. Each GPU starts scoring when its own training is done or stopped; other GPUs may still train.",
@@ -690,7 +897,7 @@ def _duplicate_lines(params: Params) -> list[str]:
         f"- Stored null update: after training, a stored `step_norm` that is not finite is terminal `{NULL_UPDATE}`. It is charged,",
         "  cannot win or be paid, and is not a candidate or keeper in Stage B. There is no minimum norm.",
     ]
-    subfloor = [f"- {kl_rule(params)}"] if params.min_kl_seq > 0 else []
+    subfloor = [f"- {kl_rule(params)}"] if params.kl_floor_on else []
     subfloor += [
         "- Why a sub-floor update cannot beat M except by luck: the trainer's first-order step changes the head by at most",
         "  its small stored norm. The scoring noise and a favorable task sample can then produce a positive result even",
@@ -752,6 +959,17 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         f"- phase: {show(doc.get('phase'))} (IDLE: no round is open; RUNNING: training and scoring; APPLY: decided, the",
         "  new head is being published). The last closed rounds are in mining.json under `history`.",
+        "- `service` is a sibling of `phase` in mining.json. `service.state` is `running` for RUNNING, `applying` for APPLY,",
+        "  `idle` while no round is open without a close-publish error, or `stalled` when such an error remains.",
+        "  A stop request takes priority for the reason but does not hide a stalled state. Running and applying have",
+        "  `reason` and `next_open_at` null. Idle/stalled `reason` is one of `deploying fix`, `publish retrying`,",
+        "  `waiting for seats`, `between rounds`; in that order when more than one applies. The first is the coarse",
+        "  form of an operator stop-after-round request. A close-publish retry is `publish retrying`; insufficient",
+        "  valid files/seats is `waiting for seats`; a recently closed round with enough seats is `between rounds`.",
+        "- `service.next_open_at` is UTC ISO-8601 with seconds and Z, rounded up to a five-minute boundary. It is a",
+        "  coarse estimate for between rounds, publish retrying and deploying fix, and null for running, applying,",
+        "  waiting for seats or when no coarse estimate is possible. No exact sleep, retry budget, request-file path,",
+        "  retry count or scheduler timing is public.",
         *(f"- {key}: {show(round_now[key])}" for key in in_order(round_now, ROUND_FIELDS) if not isinstance(round_now[key], (dict, list))),
         *(["", *table(ENTRY_COLUMNS, ([row.get(column) for column in ENTRY_COLUMNS] for row in entries)), ""] if entries else []),
         f"- A round takes at most {params.batch_cap} batches and needs at least {params.n_min_start}. It does not wait",
@@ -778,9 +996,10 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- `file_valid`: the validator's verdict on the file that was stored for the hotkey at its last check of the",
         f"  files: {utc(checked) if checked else 'no check yet'} (`queue.files_checked_at` in mining.json). The validator reads the waiting files when it picks the entries",
         "  of a round, and again and again while no round runs. It does not read them while a round runs: a file that",
-        "  you store then shows the old verdict until the round ends. The validator never publishes batch content or",
-        "  `train` values. To see the rule that a file breaks, run the `check` command of section 5: it prints the",
-        "  rule code and the reason.",
+        "  you store then shows the old verdict until the round ends. The validator never publishes waiting or losing",
+        "  batch content or their `train` values. To see the rule that a file breaks, run the `check` command of section",
+        "  5: it prints the rule code and the reason. Waiting files have the SHA256 + check-time-only exception below;",
+        "  `train` values become public only for a crowned winner.",
         "- A new process of the validator has no verdict until its first check of the files. A publication before that",
         "  check has `queue.files_checked_at` null and `file_valid` no for every waiting seat, also for a good file.",
         "  This can be so when a process starts while the chain gives no answer. It can also be so when a process",
@@ -789,12 +1008,31 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  round from a new check of the files, never from the published value. So do not replace a good file because",
         "  of it: wait for the next check.",
         "- The verdicts of the whole line are in mining.json under `queue.files`. Its list `verdicts` has one row for",
-        "  each hotkey with a waiting seat, in UID order: `uid`, `hotkey`, `file_valid` and `file_verdict`.",
+        "  each hotkey with a waiting seat, in UID order: `uid`, `hotkey`, `file_valid`, `file_verdict`, `batch_sha256`,",
+        "  `checked_at`, `valid_ahead` and `eta_rounds`. UID order is not queue order; for a repeated hotkey the count",
+        "  belongs to its earliest waiting seat. `queue.line` is the full real waiting order, including seats beyond",
+        f"  this {QUEUE_PREVIEW}-row preview, and `queue.next` is its first {QUEUE_PREVIEW} rows. Every seat row has its own SHA256 and check time.",
         f"  `file_verdict` is `{VALID}`, `{NOT_VALID}` or `{NOT_JUDGED}`. `{NOT_JUDGED}`: the validator has no verdict for the hotkey. No file",
-        "  was stored at the last check, or the seat came after that check, or a new process made no check yet.",
+        "  was stored at the last check, or the seat came after that check, or a new process made no check yet. In",
+        "  that case `batch_sha256` and the row's `checked_at` are null. Otherwise `batch_sha256` is the 64-lowercase-hex",
+        "  SHA256 of the stored bytes at that verdict, and `checked_at` is that verdict's Unix UTC seconds. The outer",
+        "  `queue.files.checked_at` is `queue.files_checked_at`: the time at which the whole check started.",
         f"  `file_valid` is yes only with `{VALID}`. `hotkeys` counts the rows; `{VALID}`, `{NOT_VALID}` and `{NOT_JUDGED}` count the rows",
-        "  with that verdict; `seats` counts the waiting seats. `checked_at` is `queue.files_checked_at`: the time at",
-        "  which that check started. The validator does not publish the sha256 of a waiting file.",
+        "  with that verdict; `seats` counts the waiting seats.",
+        "- `valid_ahead` counts only waiting seats strictly ahead in the real waiting order whose last verdict has",
+        "  `file_valid` true. Seats leased in the open round are not counted. `eta_rounds` is the coarse upper bound",
+        f"  ceil(valid_ahead / {params.batch_cap}), using only public `batch_cap`. It is not a scheduler prediction or a promise of",
+        "  files, duplicate owners, holds and available capacity can change a turn. No exact next-check or start time",
+        "  is published, and these fields reveal no draw-targeting information.",
+        "- Waiting-file publication is SHA256 + check time only. No waiting or losing batch bytes, prompts, outputs,",
+        "  train values, reason, rule, counts, format, stage count, SFT count, stage plan, store URI, download link",
+        "  or presigned URL is public. Use the local `check` command to diagnose your own file; only crowned winners'",
+        "  batches become public.",
+        "- `queue.pending` lists chain registrations which have no waiting seat and no leased seat in the open round.",
+        "  Each row contains only `uid`, `hotkey`, `registration_block` and `status: pending`; there are no file fields",
+        "  or URLs. The rows come from the controller's latest complete chain read, with no publisher-time chain query.",
+        "  A newly seen registration can therefore appear after its next ordinary read, and `pending` here does not",
+        "  refer to the private `pending/` store staging prefix.",
         "- Identity: a registered UID on this subnet (`btcli subnets register --netuid "
         f"{params.netuid}`). One registration (UID + registration block) buys one seat in one round, win or lose.",
         "  A hotkey gets one turn. When its entry was charged, the hotkey never enters again, also with a new",
@@ -806,7 +1044,7 @@ def _state_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- When the hotkey of the UID changes and the registration stays, the seat keeps its place. The validator then",
         "  reads the file of the new hotkey: a file that was stored for the old hotkey does not count. When the new",
         "  hotkey already had its turn, the seat is removed.",
-        "- One entry for each miner in a round. A second seat of the same hotkey or coldkey waits for a later round.",
+        "- One entry for each hotkey in a round. A second seat of the same hotkey waits for a later round.",
         f"- `{NO_DECISION}`: our infrastructure failed (section 3). You are not charged and you go to the front of the",
         "  queue.",
         "- A failure is counted for your seat in one case only: your batch had the whole training time of the round",
@@ -882,7 +1120,7 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "train": {recipe.miner_bounds[0].key: getattr(recipe, recipe.miner_bounds[0].key)} if recipe.miner_bounds else {},
         "groups": [
             {
-                "prompt": "<problem text>",
+                "prompt": "<official instruction of section 6>\n\n<problem text>",
                 "rollouts": [
                     {"output": "<reasoning> \\boxed{<right answer>}", "reward": 1.0},
                     {"output": "<reasoning> \\boxed{<wrong answer>}", "reward": 0.0},
@@ -907,9 +1145,11 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "```json",
         json.dumps(example, indent=1),
         "```",
+        *_v4_file_lines(params),
         "",
         f"- UTF-8 JSON, at most {params.max_batch_bytes} bytes. Top keys: `version`, `hotkey`, `groups`, and the optional",
-        f"  `train`. `version` is one of {show(FORMATS)}. `hotkey` must be the owner of the object.",
+        f"  `train` for flat formats; `{FORMAT_V4}` uses `stages` instead of `groups` as documented below. `version` is one of",
+        f"  {show(FORMATS)}. `hotkey` must be the owner of the object.",
         "- `groups`: a non-empty list of {prompt, rollouts}, with no other key. Each prompt is text with more than white",
         "  space in it, and differs from every other prompt. Each prompt has at least 1 rollout: {output, reward}, with",
         "  no other key. `output` is text.",
@@ -943,16 +1183,24 @@ def _file_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  group (`group_size`, section 2). A file in which no rollout trains is invalid. One rollout per prompt never",
         "  trains. So the example above has two rollouts with different rewards.",
         *textwrap.wrap("- " + SAMPLING_GUIDANCE, width=118, subsequent_indent="  "),
-        f"- `{TRAIN_COST}`: cost = steps x the tokens of the rollouts that train. The tokens of one rollout are its",
+        f"- `{TRAIN_COST}`: for v1-v3, cost = steps x the tokens of the rollouts that train. For `{FORMAT_V4}`,",
+        "  resolve each stage's recipe after top-level and stage overrides, then sum",
+        "  `steps * (grpo_tokens + sft_tokens) + grpo_tokens` across stages. The added GRPO tokens count its q_old",
+        "  rescoring pass; SFT needs no such pass. Both active GRPO rows and positive-weight verified SFT traces",
+        "  contribute their trained tokens to their stage and to `min_signal_rollouts`; an SFT trace with `sft_weight=0`",
+        "  contributes neither. The",
+        "  token-count rule for one row is the same for either form: the tokens of one rollout or trace are its",
         f"  prompt tokens plus its output tokens. room = min({recipe.train_max_output_tokens},",
         f"  {recipe.train_max_context_tokens} - prompt tokens). An output shorter than the room counts its tokens + 1",
-        "  (the end-of-turn token). An output as long as the room or longer counts the room. A rollout with advantage",
-        "  0 counts 0.",
+        "  (the end-of-turn token). An output as long as the room or longer counts the room. A GRPO rollout with advantage",
+        "  0 counts 0. Thus v1-v3 compare `max_train_token_steps` with `steps x tokens`, summed over the kept training",
+        "  rows; v4 uses the formula above for each stage and sums those costs.",
+        *textwrap.wrap("- " + TRAIN_COST_EXAMPLE, width=118, subsequent_indent="  "),
         *cost_cap,
         f"- Two limits keep the training of a round short: the training time of the round ({show(params.train_time_budget_s / 60)} minutes for",
         f"  all batches, section 3) and this cost cap for one file ({f'{show(params.max_train_token_steps)} token-steps' if params.max_train_token_steps > 0 else 'no cap now'}).",
-        "- The cost does not count `minibatches`. Two things come on top of the cost with more than one minibatch. One:",
-        "  the first pass is one more run of every row that trains through the model. Two: each update has a fixed cost",
+        "- The cost does not count `minibatches`; more minibatches mean more updates at the same token cost. The v4",
+        "  formula includes GRPO's q_old rescoring pass. Each update also has a fixed cost",
         f"  of its own, about {show(UPDATE_COST_S)} s. That number is an estimate and not a measured value. So steps x minibatches",
         f"  updates add about {show(UPDATE_COST_S)} s x steps x minibatches to the training of your file, and no rule of the file check",
         "  counts that time. A training that still runs at the end of the training time is stopped, and the batch is not",
@@ -999,8 +1247,9 @@ def _rollout_lines(params: Params) -> list[str]:
     """
     recipe = params.recipe
     pool = [
-        "  For a task of the pool, `prompt` is the problem text, or the instruction of section 6, one blank line and the",
-        "  problem text. Both are the same task for the grader and give exactly the same model tokens.",
+        "  For a task of the pool, `task_for_prompt` also recognizes the bare problem for grading. The recommended",
+        '  stored `prompt` is the official `MathPool.task.batch_prompt()`: `MANDATE + "\\n\\n" + problem`. Put the',
+        "  official instruction of section 6, a blank line and the problem in that one field.",
     ] if params.env == ENV_ID else []
     return [
         "### How to make rollouts",
@@ -1015,11 +1264,12 @@ def _rollout_lines(params: Params) -> list[str]:
         '  `--limit-mm-per-prompt \'{"image":0,"video":0}\'`. The official evaluator and miner Generator search already pass it.',
         "- Prompt: the trainer and scorer use the same chat messages and template options (section 2).",
         *pool,
-        "  For your sampler, render your prompt the same way: system = the instruction of section 6, user = `prompt`",
-        "  with a leading instruction + blank line removed; apply the head's chat template with",
-        "  `add_generation_prompt=True` and `enable_thinking=True`. Sample on-policy with those exact tokens.",
-        "- Training and scoring render a pool task identically. Old-format batches stay valid. Rollouts sampled under",
-        "  the old one-user-message render are now slightly off-policy for the trainer.",
+        "  For your sampler, match the trainer's render: strip a leading official instruction + blank line from the",
+        "  stored `prompt` if present; render system = the official instruction, user = the problem; then apply the",
+        "  head's chat template with `add_generation_prompt=True` and `enable_thinking=True`. Do not apply the template",
+        "  to the raw stored `prompt` as a single user message. Sample on-policy with those exact tokens.",
+        "- Bare-problem and other stored-prompt forms stay valid. The miner `check` warns when a stored prompt maps to",
+        "  a pool task but differs from its official `task.batch_prompt()` text.",
         f"- Sampling: use the temperature that you state in `train.sample_temperature` (default {show(recipe.sample_temperature)}), top_k {recipe.support_top_k}",
         f"  and top_p {show(recipe.support_top_p)}. These are the settings of the support (section 2). The sampler must work as the",
         "  support does: top_k first, then top_p over the tokens that are left. Then each token that you",
@@ -1035,6 +1285,9 @@ def _rollout_lines(params: Params) -> list[str]:
         f"- Stop: let the model end by itself, or stop it at {params.max_output_tokens} tokens (`params.max_output_tokens`). Only an output of",
         "  exactly that many tokens is an official cap-hit; a longer output is invalid. A shorter local serving cap (for example 8192)",
         "  is not an official cap-hit: below the official cap, a correct boxed answer can grade 1.0.",
+        "- Live pool: sample from the official-active set shown in the start-here section, not the stale bundled active-list approximation.",
+        "  `python v2/miner/live_pool.py --out tasks.jsonl` resolves verified base and reserve bodies and official stored prompts.",
+        "  The reference `miner/kit/generate.py` defaults to that live pool; local mode requires explicit `--pool local`.",
         "- Reward of a pool task: the official grade, 1.0 for a pass and 0.0 for every other result. Take it from the",
         "  grader itself, `sn120_v2.envs.math_grader.grade(task, output, capped).reward`, with `capped` true only for an",
         "  output that reached `params.max_output_tokens`. `task` is a `Task` or a mapping with string `task_id`, `slice`,",
@@ -1074,12 +1327,21 @@ def _upload_lines(contract_block: Mapping[str, Any]) -> list[str]:
         "  minutes. An activation made for v1 stays valid: do not make it again. Install:",
         '  `pip install -e "v2[links,chain]"`.',
         f"- Where to get the link: {upload['sealed_links']}. The file is public, but only the secret key of your hotkey",
-        f"  opens it. A new file is written every {show(upload['reissue_every_seconds'] / 60)} minutes. Each link works for {show(upload['link_ttl_seconds'] / 3600)} hours.",
+        f"  opens it. The links job runs every minute. Each link works for {show(upload['link_ttl_seconds'] / 3600)} hours.",
+        f"  The live index {upload['index']} gives the authoritative `reissue_every_seconds`.",
+        "- A new registration gets its sealed link within about 5 minutes of the registration showing on chain (after",
+        "  activation), also while a round is open. The validator checks the waiting files once per round, right after",
+        "  the previous round closes and registrations are synced (`queue.files_checked_at` in mining.json); a file must",
+        "  be uploaded before that check to be judged for the next round. A file uploaded after the check waits for the",
+        "  next round's check.",
         "- You have a link while your hotkey is registered, has the activation, and its queue entry is not evaluated",
         "  yet. You may upload again as often as you like. Each upload replaces the file before. The file that is",
         "  stored when a round takes your entry is the file that is trained.",
         "- Open the link:",
         f'  `export AFFINE_PUT_URL="$(python -m sn120_v2.links open --hotkey <ss58> --key <seed file> --links-url {links_url})"`.',
+        "  `open_link` is a CLI alias of `open`: `python -m sn120_v2.links open_link ...` has the same behavior.",
+        "  The Python function which decrypts a link document is named `open_link`; there was no earlier `open_link` CLI",
+        "  subcommand. Use either spelling; `--help` documents both.",
         "  The seed file holds the 32-byte Ed25519 seed of your hotkey as 64 hex characters. A bittensor hotkey file",
         '  that is not encrypted also works. Install: `pip install -e "v2[links]"`.',
         f"- Upload: {tool} checks the file, reads the URL from the environment variable `AFFINE_PUT_URL` and sends the",
@@ -1087,9 +1349,67 @@ def _upload_lines(contract_block: Mapping[str, Any]) -> list[str]:
         "  is signed for that header: without it the store refuses the upload.",
         "- The opened URL is a secret. Anyone who has it can replace your file until the link expires.",
         "- HTTP 404 on your link file means one of three things: the hotkey is not registered, it has no activation, or",
-        "  its entry was evaluated. After a new registration or activation, wait for the next link file. A hotkey",
-        "  whose entry was evaluated gets no link again (section 4).",
+        "  its entry was evaluated. After a new registration or activation, wait for the next link file, within about 5",
+        "  minutes. A hotkey whose entry was evaluated gets no link again (section 4).",
         "- After the upload, read `file_valid` in section 4.",
+    ]
+
+
+def _onboarding_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
+    """The first-screen miner workflow. Every value that can change is read from this document."""
+    base = (doc["contract"].get("public_url") or "https://affine.io").rstrip("/")
+    mining = f"{base}/{layout.MINING_JSON.rsplit('/', 1)[-1]}"
+    check = f"`python v2/miner/affine_miner.py check --mining-json {mining} --hotkey <ss58> batch.json`"
+    crown = (f"strict `z > z_bar` (currently live: `z_bar=0.5`, so `z > 0.5`; this snapshot: `z > {show(params.z_bar)}`; "
+             "always reread the live value rather than treating 0.5 as permanent)" if params.crown_gate == "argmax_symmetric"
+             else "the crown gate in the live params")
+    confirmation = (f"The crown is applied now but paid only after next round's fresh paired confirmation with `z > {show(params.z_bar)}`."
+                    if params.confirm_next_round else "The current params apply and pay a crown without a separate next-round confirmation.")
+    return [
+        "## Start here: live-pool mining in nine steps",
+        "",
+        "**Scoring draws from the live official-active pool, which rotates every round.** The bundled",
+        f"`sn120_v2/envs/{POOL_FILE.name}` is **STALE / test-only as an active list, not the king-draw source**.",
+        "It supplies only base task bodies. Do not sample from a saved pool or an earlier active SHA for a new round.",
+        "",
+        f"1. **Register a hotkey.** Register an Ed25519 hotkey on Finney netuid {params.netuid} and activate its sealed link as section 5 says.",
+        f"2. **Build from the live pool.** Fetch cache-busted `{mining}` with a named `User-Agent`. Use `round.pool.active` and",
+        f"   `round.pool.active_sha`; use `{base}/{layout.POOL_SUMMARY}` only when the round has no pool. Fetch",
+        f"   `{base}/public/pool/active/<active_sha>.json` and require sha256(exact bytes) = active_sha. Then run",
+        "   `python v2/miner/live_pool.py --out tasks.jsonl`. It performs those checks and emits `task_id`, `problem`, `answer`",
+        "   and official `prompt = task.batch_prompt()` rows. The reference `miner/kit/generate.py` defaults to this live pool;",
+        "   local generation requires explicit `--pool local`, optionally with `--local-pool PATH`.",
+        f"3. **Check locally.** Run {check}. After the ordinary file check, the CLI adds a warning if more than half of mapped",
+        "   batch prompts are outside the active set. `--active FILE` uses a saved active object or helper JSONL; `--no-live-pool`",
+        "   skips this diagnostic. A fetch failure or pool finding never changes `valid`, rejects a batch or changes validator admission.",
+        "4. **PUT to your sealed link.** Open it with the section-5 command, keep the resulting URL secret, and upload the file bytes",
+        "   with `Content-Type: application/octet-stream`. The official `upload` command performs the same check and PUT.",
+        "5. **Read file verdicts by phase.** Waiting-file checks occur at round open and while IDLE, not during a RUNNING round.",
+        "   A mid-round verdict belongs to the previous snapshot: `queue.files_checked_at` and each row's `checked_at` identify it.",
+        "6. **One entry per hotkey per round; no coldkey seat limit.** A charged hotkey needs a new hotkey/registration for another turn.",
+        f"7. **Crown gate.** The eligible highest-delta candidate needs the published tie tolerance and {crown}.",
+        f"8. **Confirm before payment.** {confirmation} Only a confirmed crown is paid under the live confirmation rule.",
+        "9. **Weights and public results.** Only confirmed, still-registered kings split weight equally; confirmation adds no backpay.",
+        "   The sole writer follows the cadence in live params and preserves the last valid weights across chain/state failures.",
+        f"   Canonical stats: `{base}/{layout.WINNER_STATS}`; byte-identical root alias: `{base}/{layout.WINNER_STATS_ALIAS}`.",
+        "",
+        "### Live task bodies and rotation",
+        "",
+        "- " + LOCAL_MINER_BOUNDS,
+        f"  The live contract at {base}/llms.txt and {mining} is the authority.",
+        "",
+        f"- **Base `dapo:` / `math:` IDs:** bodies come from the checked-in `sn120_v2/envs/{POOL_FILE.name}` catalog, but only the live",
+        "  active object selects which IDs score. It is not the current active set.",
+        f"- **`gen:` / reserve IDs:** `gen:` tasks are Generator-produced public reserve tasks. Read `{base}/{layout.RESERVE_MANIFEST}`",
+        f"  and each `{base}/public/pool/reserve/shards/<name>.<sha>.jsonl` named by its manifest row. Reserve rows include `id`,",
+        "  `problem`, `answer` and optional `prior_p`. Verify manifest and shard SHAs; the helper refreshes pointers every time and",
+        "  caches only immutable, SHA-addressed shards. Every HTTP request needs a `User-Agent` and cache-busting/no-cache headers.",
+        "- **Rotation-v2:** sufficiently measured tasks use IRT-predicted head pass rate `p`. Otherwise an available reserve `prior_p`",
+        "  is used, then `rotation_prior_p`. An active task with an IRT row but too few rounds uses the configured fallback, not that",
+        "  reserve prior. Non-dead candidates score `p(1-p)`; dead tasks with enough head rollouts and zero passes score zero.",
+        "  Thus `score > 0.16` is exactly `0.2 < p < 0.8`, and the maximum `0.25` occurs at `p=0.5`; scores from `0.15` through",
+        "  `0.16` can lie just outside that middle interval. `irt_middle_band` applies only to `irt_draw_rule=\"band\"`, not rotation-v2.",
+        "",
     ]
 
 
@@ -1126,8 +1446,9 @@ def _pool_lines(params: Params) -> list[str]:
             "  --round rNNNNNN` recomputes a decision from its public inputs.",
         ]
     return [
-        f"- Task pool: {count} tasks in `sn120_v2/envs/{POOL_FILE.name}` in the code (sha256 `{POOL_SHA256}`). Scoring sends this",
-        f'  instruction as the system message and the problem as the user message: "{MANDATE}"',
+        f"- Base task-body catalog: {count} tasks in `sn120_v2/envs/{POOL_FILE.name}` (sha256 `{POOL_SHA256}`). This bundled catalog is",
+        "  **STALE / test-only as an active list**: scoring draws from the live official-active pool in the start-here section, not from this file.",
+        f'  For a live base task, scoring sends this instruction as the system message and the problem as the user message: "{MANDATE}"',
         f"- {removed} tasks of the earlier pool (sha256 `{POOL_V2_0_SHA256[:8]}…`) were removed because their key is wrong, the problem",
         "  is ambiguous or broken. The list is",
         f"  `sn120_v2/envs/{dropped_file.name}` in the code: {REPO}/blob/v2/v2/sn120_v2/envs/{dropped_file.name}.",
@@ -1415,6 +1736,56 @@ def _payout_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     ]
 
 
+def _confirmation_record_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
+    """Descriptive paired-test history, rendered from the same object as mining.json and its public mirror."""
+    stats = doc.get("confirmations") or {}
+    rows, total = stats.get("rows") or [], stats.get("total") or {"n": 0, "paid": 0, "rate": None, "pending": 0, "no_decision": 0}
+
+    def z(value: Any) -> Any:
+        return f"{value:.3f}" if value is not None else "none"
+
+    def delta(value: Any) -> Any:
+        return f"{value:.4f}" if value is not None else "none"
+
+    def rate(value: Any) -> Any:
+        return f"{round(100 * value)}%" if value is not None else "none"
+
+    def band_table(entries: Sequence[Mapping[str, Any]]) -> list[str]:
+        return table(("band", "n", "paid", "rate"),
+                     [(row["band"], row["n"], row["paid"], rate(row["rate"])) for row in entries])
+
+    return [
+        "### Crown confirmation record",
+        "",
+        "After-the-fact record: each applied crown, its original paired z and delta, and the fresh paired test in the next round",
+        "that decides payment. A crown is paid only if that test passes.",
+        "Crowns before the confirmation rule are omitted. `pending` has no next-round test yet; `no_decision` means that test",
+        "could not run for an infrastructure reason, so it is unpaid and has null confirmation z/delta. Bands, cumulative rows",
+        "and the total rate include only completed paid/unpaid tests. A crown that is no longer in the current paid window still",
+        "has `paid=true`: this records the result of its test, not a separate or new payout rule.",
+        "",
+        *band_table(stats.get("bands") or []),
+        "",
+        *table(("minimum original z", "n", "paid", "rate"),
+               [(f"{row['min_z']:.2f}".rstrip("0").rstrip(".") + (".0" if row["min_z"] == int(row["min_z"]) else ""),
+                 row["n"], row["paid"], rate(row["rate"])) for row in stats.get("cumulative") or []]),
+        "",
+        f"Resolved tests: {total.get('n', 0)}; paid: {total.get('paid', 0)}; rate: {rate(total.get('rate'))}. "
+        f"Pending: {total.get('pending', 0)}; no_decision: {total.get('no_decision', 0)}. "
+        f"Lowest paid original z: {z(stats.get('lowest_paid_z'))}; highest unpaid original z: {z(stats.get('highest_unpaid_z'))}.",
+        "This record is descriptive, not a rule change. The crown bar is unchanged: strict "
+        f"`z > {show(params.z_bar)}`.",
+        "",
+        "Last 30 crowns, newest first. `confirmation z` and `confirmation delta` are the next round's fresh paired test.",
+        "",
+        *table(("round_id", "uid", "z", "delta", "status", "confirmed", "confirmation z", "confirmation delta", "paid"),
+               [(row["round_id"], row["uid"], z(row["z"]), delta(row["delta"]), row["status"], show(row["confirmed"]),
+                 z(row["confirmation_z"]), delta(row["confirmation_delta"]), row["paid"]) for row in rows[:30]]),
+        f"Machine-readable record: `{layout.CONFIRMATION_STATS}`; the same object is `confirmations` in mining.json.",
+        "",
+    ]
+
+
 def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
     kings, keys, url = doc.get("kings") or [], object_keys(), doc["contract"]["public_url"]
     beneficiaries = "paid king" if params.null_prune_from_round else "king of the window"
@@ -1519,12 +1890,11 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "",
         "## 7. Payout",
         "",
-        f"- A king is a round winner that was applied. The window is the last {params.kings_window} distinct king UIDs. A UID that wins",
-        "  again has one place in the window, with its newest win."
-        if not params.confirm_next_round else
-        f"- A king is a round winner that was applied and then confirmed in the next round. The window is the last {params.kings_window}",
-        "  distinct king UIDs. Pending and failed crowns are never paid. A confirmed UID that wins again keeps one place, with its newest win."
-        if params.confirm_next_round else "",
+        (f"- A king is a round winner that was applied. The window is the last {params.kings_window} distinct king UIDs. A UID that wins"
+         "  again has one place in the window, with its newest win."
+         if not params.confirm_next_round else
+         f"- A king is a round winner that was applied and then confirmed in the next round. The window is the last {params.kings_window}"
+         "  distinct king UIDs. Pending and failed crowns are never paid. A confirmed UID that wins again keeps one place, with its newest win."),
         f"- Each {beneficiaries} gets an equal share of all the weight, while the hotkey that won is still registered",
         "  on that UID: 1 / (the number of such kings).",
         "- The share of a paid king that is no longer registered is split among the other registered paid kings."
@@ -1535,8 +1905,12 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  registered, the writer sets nothing and the last valid weights stay on chain.",
         f"- One writer sets the weights, with one attempt each {params.weights_cadence_s} s. If the chain read fails or is not complete, or",
         "  the state does not load, that attempt sets nothing and the last valid weights stay on chain.",
+        "- A newly paid king first gets weights from the next hourly write (:05 UTC); with commit-reveal that shows in",
+        "  incentive one to two epochs later (about 1–2.5 h after the round closes).",
         "",
         *(rows_table(kings, KING_COLUMNS) if kings else ["There is no king yet."]),
+        "",
+        *_confirmation_record_lines(doc, params),
         "",
         "## 8. The IRT snapshot",
         "",
@@ -1557,10 +1931,23 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "- A file set (base, fp32 master, LoRA) has the id sha256(canonical JSON of {file name: sha256}). Check each",
         "  file hash, then the id. The fp32 master has its own prefix: do not put it in the directory of the base.",
         "- `version_id` of a head is the sha256 of the canonical JSON of the head object without `version_id`.",
-        "- Only a winner has a public batch, and with it public `train` values. For every other entry the round file",
+        "- Only a crowned/applied winner has a public batch, and with it public `train` values. For every other entry the round file",
         "  shows the decision, batch sha256 and available scores. `duplicate` and `null_update` are charged and cannot",
         "  win or be paid. Duplicate clusters publish only the identity and comparison fields listed in section 5; they",
-        "  never publish batch content.",
+        "  never publish batch content. Waiting seats get only their own stored-file SHA256 and verdict check time,",
+        "  never stage counts, SFT counts or SFT verification details. Losing entries likewise expose no stage plan.",
+        f"- `{layout.WINNER_STATS}` is `{WINNER_STATS_SCHEMA}`: integer Unix UTC `generated_at` and a newest-first",
+        f"  `winners` list covering the same last {HISTORY_PREVIEW} closed rounds as `mining.json` (not an all-time archive). Each row",
+        "  has `round_id`, `uid`, `hotkey`, `applied_at`, `z`, `delta`, `se`, `head`, `lora`, `batch_sha256`,",
+        "  `batch_prompts`, `batch_rollouts`, `batch_format`, winner-only `train`, `batch_url`, and confirmation/paid",
+        "  flags already in state. `batch_url` is the public `public/rounds/<round_id>/batch.json` object.",
+        "  When readable and SHA-verified, optional best-effort fields are `group_count`, `boxed_frac` (exactly one final",
+        "  balanced nonempty `\\boxed{}`), `output_chars_p50` (median Python character count, not tokens),",
+        "  `prompt_sources` (per-prompt source-prefix counts including `unmapped`) and `prompt_band` (mapped prompt",
+        "  counts `low`, `middle`, `high` by that crown round's IRT middle band; absent for non-band IRT).",
+        "  Missing, unreadable or mismatched public data omits these fields and never blocks publication.",
+        f"  `{layout.WINNER_STATS_ALIAS}` at the site root is byte-identical to `{layout.WINNER_STATS}`.",
+        "  Losing, waiting, queued, invalid and unapplied batches are never read for these fields or represented here.",
         "- In a round file each entry has a `reason`. The round has a `note`, and a `reason` when it has a result. The",
         f"  `note` is empty unless the round had no result or has the outcome `{ABANDONED}` (section 4). These texts give a",
         "  cause in words, for a person to read: the class of an error and its message. Before the validator",
@@ -1603,15 +1990,39 @@ def _replicate_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         f"is not the box. The document of the tool is `{REPLICATE_DOC}` in the code: {REPO}/blob/v2/{REPLICATE_DOC}. It has",
         "every argument, the fields of the report, and the complete list of what differs from the box.",
         "",
-        "- Install, in `v2/` of a copy of the code (section 2): `uv pip install -e \".[gpu,envs,miner]\"`. The",
-        "  document has the complete steps. Run each command below in `v2/`. N is the number of your GPUs.",
+        "- Fresh clone, from the repository root: `git clone https://github.com/AffineFoundation/affine`, then",
+        "  `cd affine && git switch v2`. " + LOCAL_INSTALL,
+        "  `git checkout v2` is ambiguous because the repository contains a `v2/` directory; use `git switch v2`",
+        "  (or `git checkout v2 --`) to select the branch. Run each command below at that repository root;",
+        "  No secrets are needed for these public reads. N is the number of your GPUs.",
         f"- `{tool} compare --mining-json {mining} --gpus <N>` prints what differs between your machine and the box.",
         "  It starts nothing and needs no GPU.",
         f"- `{tool} fetch --mining-json {mining} --work <directory>` gets the base files of head M through the signed",
-        "  links of section 1 and checks each file against the head manifest.",
+        "  links of section 1 and checks each file against the head manifest. With `eval_merged=true`, it also downloads",
+        "  and verifies the real fp32 king master, tens of GB, from `master` / `master_files`. Both sets are staged and",
+        "  renamed into cache only when complete. A later fetch retains correct files. The report gives base and master",
+        "  digests, directories, file counts and bytes. `--master-from <directory>` can supply the master with `--from`;",
+        "  it is never replaced by an upcast bf16 base. The master is optional only when `eval_merged=false`.",
+        f"- `python v2/miner/affine_miner.py check --mining-json {mining} --hotkey <ss58> --tokenizer <directory>/cache",
+        "  --grade batch.json` checks your actual file and its token/reward rules before upload.",
         f"- `{tool} run --mining-json {mining} --hotkey <ss58> --work <directory> --gpus <N> batch.json` checks the",
-        "  file, trains, scores and judges. It prints one report. With no other argument it takes the seed and the",
-        "  draw of the open round, or of the last closed round when none is open.",
+        "  file, trains, scores and judges. For merged evaluation it verifies the master before training, uses `SoloRunner`",
+        "  to build the fp32-master + LoRA candidate, scores it against null M, then runs the official `gpu/kl.py` path.",
+        "  A missing or corrupt master fails before training. When either KL floor is enabled, the measurement uses up to",
+        f"  `kl_rollouts` scored, non-error rollouts ({LOCAL_KL_DEFAULTS}); `kl_max_tokens` caps measured tokens per rollout.",
+        f"  A positive `params.min_kl_seq` (currently {params.min_kl_seq:g}) applies to mean `kl_seq`; a positive",
+        f"  `params.min_kl_tok` (currently {params.min_kl_tok:g}) applies to summed KL divided by total measured tokens, `kl_tok`.",
+        "  When both floors are positive both must pass; equality passes. With both at zero no KL measurement runs.",
+        "  The report gives `kl_seq`, `kl_seq_se`, `kl_tok`, `kl_k`, `kl_tokens`, both floors and pass/fail in `kl_gate`, cap-hit",
+        "  details in `cap_hit`, and the one-batch result in `win_vs_null`. Add `--first-tasks <N>` for a one-GPU smoke",
+        "  test; fewer than `min_scored_tasks` cannot produce a winner. With no round argument it uses the open round,",
+        "  or the last closed round when none is open. There is no separate `replicate kl` subcommand.",
+        "- **The file check does NOT train and does NOT measure `kl_seq` or `kl_tok`; a passing file check is NOT a passing KL",
+        "  gate.** Use `replicate run` above for the trained merged candidate and full live gate. The official floors",
+        "  are `params.min_kl_seq` and `params.min_kl_tok`, not fixed numbers in the miner tool.",
+        "- **Training cost:** `max_train_token_steps = steps x tokens`, summed over kept training rows; minibatches do",
+        "  NOT multiply it. Worked example: cap 22,130,000 with steps=16 gives 1,383,125 tokens (integer floor). A bound's",
+        "  `decided` flag freezes the bound into `recipe_id`; you may still choose its value within the published range.",
         "- What differs from the box. The report of `run` names each difference under `differences`. Your install:",
         "  the list of the packages of the box, with their versions, is not published, so in practice your install has",
         "  another digest than the pinned one, and its versions of torch and vLLM can differ. The number of GPUs, when it is not",
@@ -1631,6 +2042,7 @@ def _replicate_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         "  the vLLM servers and for the grader. So it is not known which GPU is large enough, how long a run takes, or",
         "  how close null M on your machine is to null M on the box. With `--round-file` and the round file of a closed",
         "  round (section 9), the report compares the two, task by task.",
+        f"- {LOCAL_DELTA_SE}",
         "- The miner tool can call the same code: `python v2/miner/affine_miner.py reproduce --mining-json",
         "  mining.json --hotkey <ss58> --irt-snapshot irt.json --round-seed <seed> --work <directory> --backend",
         f"  {REPLICATE_MODULE}:{REPLICATE_BACKEND} batch.json`. This is the code of the box with the params as they are: the same",
@@ -1649,8 +2061,8 @@ def _weight_lines(doc: Mapping[str, Any], where: str) -> list[str]:
             "- Weight files are not served under the public address. Signed download links for the files of the current",
             f"  head (the base, the stacked LoRAs and the fp32 master) are in {where}/{READ_LINKS}. Each link works until",
             "  `expires_at`; fetch the file again for new links. Check each file against its `sha256` and `size`.",
-            "  `head_version_id` in that file names the head of the links. To mine you need the `base` and the `loras`.",
-            "  You do not need the `master`: it is only for a check of a fold.",
+            "  `head_version_id` in that file names the head of the links. Ordinary mining/sampling needs the `base` and the",
+            "  `loras`; local `replicate run` with `eval_merged=true` also requires the real fp32 `master` (section 10).",
         ]
     start, steps = chain["start"], chain["steps"]
     kernels = ", ".join(f"`{kernel}`" for kernel in sorted({str(step["kernel"]) for step in steps}))
@@ -1703,7 +2115,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
     params, head = Params.from_dict(doc["params"]), HeadManifest.from_dict(doc["head"]).head
     loras = [(ref.lora_hash, ref.round_id, ref.miner_uid, ref.batch_sha256) for ref in head.loras]
     numbers = [(f"`{f.name}`", getattr(params, f.name)) for f in dataclasses.fields(params)
-               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_") or f.name == "confirm_next_round") and getattr(params, f.name) == f.default)]
+               if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round") and getattr(params, f.name) == f.default)]
     url = doc["contract"]["public_url"]
     where, pair = url or "<the public address>", [key.rsplit("/", 1)[-1] for key in (layout.LLMS_TXT, layout.MINING_JSON)]
     lines = [
@@ -1728,6 +2140,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "its miner becomes a king. Only kings earn." if not params.confirm_next_round else
         "payout waits for the next round's fresh paired sample-mean confirmation. Only confirmed kings earn.",
         "",
+        *_onboarding_lines(doc, params),
         "## 1. Network and head",
         "",
         f"- Network: Bittensor Finney, netuid {params.netuid}. Environment: `{params.env}` (pin `{show(params.env_pin)}`).",
@@ -1766,6 +2179,8 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "machine-readable `contract.duplicate_policy` block repeats their thresholds and public evidence schema.",
         "",
         *table(("parameter", "value"), numbers),
+        "",
+        *RULE_CHANGELOG,
         "",
         "- `eval_time_budget_s`: the longest time that the box waits for one answer of a model in scoring. It is not the",
         "  time of the scoring: the times of a round are in section 3.",
@@ -1822,7 +2237,7 @@ def check_pair(mining: bytes, llms: bytes, live: Params | None = None, whole_tex
         problems.append(f"llms.txt and mining.json are not a pair: llms.txt names snapshot {found and found.group(1)}, mining.json {doc['snapshot_digest']}")
     stated = stated_params(text)
     values = {f.name: show(getattr(params, f.name)) for f in dataclasses.fields(params)
-              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name.startswith("rotation_") or f.name == "confirm_next_round") and getattr(params, f.name) == f.default)}
+              if not f.name.startswith("_") and f.name != "recipe" and not (f.name in Params.LEFT_OUT_AT_DEFAULT and (f.name == "null_samples_per_task" or f.name == "min_kl_tok" or f.name.startswith("rotation_") or f.name == "confirm_next_round") and getattr(params, f.name) == f.default)}
     for name in sorted(values.keys() | stated.keys()):
         if stated.get(name) != values.get(name):
             problems.append(f"`{name}`: llms.txt states {stated.get(name, 'no value')}, mining.json has {values.get(name, 'no such parameter')}")
@@ -1903,24 +2318,50 @@ class StorePublisher:
     the upload link files (``python -m sn120_v2.links issue --links-url``). Each is "" until it exists.
     """
 
-    def __init__(self, store: ObjectStore, public_url: str = "", links_url: str = "") -> None:
+    def __init__(self, store: ObjectStore, public_url: str = "", links_url: str = "", prompt_pool: Any = None,
+                 enrichment_log: Any = None) -> None:
         self.store = store
         self.public_url = public_url.rstrip("/")
         self.links_url = links_url.rstrip("/")
+        self.prompt_pool = prompt_pool if prompt_pool is not None else load_pool()
+        self.enrichment_log = enrichment_log
         if self.links_url:
             upload_entry(self.links_url)  # a bad address stops the start, not each publish
 
     def publish(self, snapshot: Mapping[str, Any]) -> None:
-        """Render both files first, so a bad snapshot changes nothing. Then write and read back each one.
+        """Publish the validated contract pair before optional winner-stats enrichment.
 
-        A store that is behind or fails raises ``InfraError``: the controller keeps running and publishes again.
+        A malformed or private snapshot changes nothing. Every write reads back;
+        a failed store raises ``InfraError`` and the controller publishes again.
         """
-        mining, llms = render(snapshot, self.public_url, self.links_url)
+        stats = validate_winner_stats(snapshot, winner_stats_from_snapshot(snapshot, self.public_url), self.public_url)
+        confirmations = validate_confirmation_stats(snapshot.get("confirmations") or {}, snapshot)
+        confirmations_bytes = (json.dumps(confirmations, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+        refuse_private(confirmations, "confirmation-stats")
+        # This transport carries crowned-only facts into the separate public file. It is not part of mining.json;
+        # the publisher still receives only a mapping, never State or private journal/batch locations.
+        mining, llms = render({key: value for key, value in snapshot.items() if key != "winner_stats"},
+                              self.public_url, self.links_url)
+        refuse_private(stats, "winner-stats")
         head_key = layout.head_manifest(snapshot["head"]["head"]["version_id"])
         try:
             if not self.store.exists(head_key):
                 raise InfraError(f"head manifest {head_key} is not public yet; the contract may not name this head")
-            for key, data in ((layout.MINING_JSON, mining), (layout.LLMS_TXT, llms)):
+            # Every public pool reference is resolved before mining.json or its summary can point to it.
+            # Only public rotation data is used; missing active bytes are restored byte-idempotently.
+            try:
+                verify_public_pool_snapshot(self.store, snapshot)
+            except V2Error as exc:
+                raise InfraError(f"public pool verification failed: {exc}") from exc
+            for key, data in ((layout.MINING_JSON, mining), (layout.LLMS_TXT, llms), (layout.CONFIRMATION_STATS, confirmations_bytes)):
+                self.store.put(key, data)
+                if self.store.sha256(key) != sha256_hex(data):
+                    raise InfraError(f"{key} does not read back as written")
+            # Optional public-batch enrichment must not hold back the already validated contract pair.
+            stats = enrich_winner_stats(snapshot, stats, self.store, self.prompt_pool, self.enrichment_log)
+            refuse_private(stats, "winner-stats")
+            stats_bytes = (json.dumps(stats, indent=1, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+            for key, data in ((layout.WINNER_STATS, stats_bytes), *((alias, stats_bytes) for alias in layout.PUBLIC_ALIASES)):
                 self.store.put(key, data)
                 if self.store.sha256(key) != sha256_hex(data):
                     raise InfraError(f"{key} does not read back as written")

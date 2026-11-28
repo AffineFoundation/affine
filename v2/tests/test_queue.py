@@ -55,8 +55,9 @@ def test_one_entry_per_miner_per_round_and_held_or_leased_seats_are_passed_over(
     same_hotkey = build.queue(build.seat(1, block=10, hotkey="same"), build.seat(2, block=20, hotkey="same"), build.seat(3, block=30))
     picked = pick(build, same_hotkey, ("same", "hk3"), cap=5)
     assert [e.reg.uid for e in picked.entries] == [1, 3] and picked.skipped == (), "the second seat waits; it is not a skip"
-    same_owner = build.queue(build.seat(1, coldkey="owner"), build.seat(2, coldkey="owner"), build.seat(3), build.seat(4))
-    assert [e.reg.uid for e in pick(build, same_owner, ("hk1", "hk2", "hk3", "hk4"), cap=5).entries] == [1, 3, 4]
+    shared_coldkey = build.queue(build.seat(1, coldkey="owner"), build.seat(2, coldkey="owner"), build.seat(3), build.seat(4))
+    picked = pick(build, shared_coldkey, ("hk1", "hk2", "hk3", "hk4"), cap=5)
+    assert [e.reg.uid for e in picked.entries] == [1, 2, 3, 4], "different hotkeys are selectable"
     parked = build.queue(build.seat(1, held=True), build.seat(2, leased=True), build.seat(3), build.seat(9, front=True))
     assert [e.reg.uid for e in pick(build, parked, ("hk1", "hk2", "hk3", "hk9"), cap=5).entries] == [9, 3]
 

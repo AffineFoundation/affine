@@ -1,7 +1,8 @@
 """Build the SN120 v2 status site: static files plus one small ``site-data.json``.
 
 The site reads only public files. This builder reads ``public/mining.json``
-(the publisher's snapshot) and ``public/benchmarks.json`` (the benchmark
+(the publisher's snapshot), ``public/winner-stats.json`` (checked crowned-only
+history) and ``public/benchmarks.json`` (the benchmark
 service's file); it never calls the controller. ``view`` and ``bench_view``
 are the only code that knows the shape of those two files. The benchmark table
 has one row for the genesis head and one for every king, with or without the
@@ -45,13 +46,13 @@ if __package__ in (None, ""):
 
 from sn120_v2 import layout
 from sn120_v2.headlog import GENESIS_ROUND
-from sn120_v2.public import SCHEMA
+from sn120_v2.public import SCHEMA, validate_winner_stats, winner_stats_from_snapshot
 from sn120_v2.state import APPLIED
 from sn120_v2.types import WINNER
 
 STATIC = Path(__file__).parent / "static"
 # Order matters: a file is stamped with the hashes of the files before it.
-ASSETS = ("network-haffer.ttf", "network-mono.ttf", "favicon.svg", "site.js", "pool.js", "generator.js", "site.css", "generator.css", "index.html", "v1.html", "pool.html", "generator.html", "generator-guide.md", "generator-guide.html")
+ASSETS = ("network-haffer.ttf", "network-mono.ttf", "favicon.svg", "site.js", "pool.js", "generator.js", "site.css", "generator.css", "index.html", "v1.html", "pool.html", "generator.html", "generator-guide.md", "generator-guide.html", "confirmations.html")
 TEXT = (".css", ".html")
 DATA = "site-data.json"
 POOL_DATA = "pool-data.json"
@@ -94,7 +95,7 @@ def write(path: Path, data: bytes) -> None:
         raise
 
 
-def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str], str]) -> dict[str, Any]:
+def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str], str], winners: dict[str, Any] | None = None) -> dict[str, Any]:
     """The public snapshot (``sn120_v2.public.snapshot``), cut down to what the page shows.
 
     Every output field is named here, so an unknown or private snapshot field
@@ -147,13 +148,29 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
             "batch": link(layout.winner_batch(round_id)) if v2 else None, "lora": lora_of.get(round_id), "imported": not v2,
         })
 
-    # Seats in the open round come first, then the waiting line. A frozen batch passed every check at round open.
-    seats = [(seat, True, ["leased"]) for seat in live.get("entries", [])]
-    seats += [(seat, seat["file_valid"], [flag for flag in FLAGS if seat[flag]]) for seat in snap["queue"]["next"]]
+    # Leased seats are shown separately. Waiting positions and valid_ahead come from the full real line,
+    # never from leased seats or the UID-ordered verdict list. Pending registrations have no file facts.
     queue = [{
-        "line": line, "uid": seat["uid"], "hotkey": seat["hotkey"], "registration_block": seat["registration_block"],
-        "file_valid": valid, "flags": flags,
-    } for line, (seat, valid, flags) in enumerate(seats, 1)]
+        "line": position + 1, "uid": seat["uid"], "hotkey": seat["hotkey"],
+        "registration_block": seat["registration_block"], "status": "waiting",
+        "file_valid": seat.get("file_valid", False), "file_verdict": seat.get("file_verdict", "valid" if seat.get("file_valid") else "not_judged"),
+        # A pre-change row has no own-file SHA or verdict time. Keep them unknown, never invent them.
+        "batch_sha256": seat.get("batch_sha256"), "checked_at": seat.get("checked_at"),
+        "flags": [flag for flag in FLAGS if seat.get(flag, False)],
+        # Legacy next rows are in queue order, so an ahead count is derivable only up to this preview.
+        "valid_ahead": seat.get("valid_ahead", sum(1 for earlier in snap["queue"]["next"][:position] if earlier.get("file_valid", False))),
+        "eta_rounds": seat.get("eta_rounds"),
+    } for position, seat in enumerate(snap["queue"].get("line", snap["queue"]["next"]))]
+    leased = [{
+        "uid": seat["uid"], "hotkey": seat["hotkey"], "registration_block": seat["registration_block"],
+        "status": "leased", "file_valid": True, "flags": ["leased"], "line": None,
+    } for seat in live.get("entries", [])]
+    pending = [{name: seat[name] for name in ("uid", "hotkey", "registration_block", "status")}
+               for seat in snap["queue"].get("pending", [])]
+    winner_stats_url = None
+    if winners is not None:
+        validate_winner_stats(snap, winners, link("").rstrip("/"))
+        winner_stats_url = link(layout.WINNER_STATS)
 
     heads = [{
         "head": head["version_id"], "current": head["version_id"] == head_id, "round_id": head["round_id"],
@@ -167,8 +184,8 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
         "kings_window": params["kings_window"],
         "round": {"id": live.get("round_id"), "seats": live.get("seats"), "cap": params["batch_cap"],
                   "tasks": live.get("n_tasks") or params["n_tasks"], "opened_at": live.get("opened_at")},
-        "kings": kings, "queue": {"rows": queue, "total": len(live.get("entries", [])) + snap["queue"]["length"]},
-        "history": history, "rounds": rounds, "heads": heads, "bench": bench,
+        "kings": kings, "queue": {"leased": leased, "rows": queue, "pending": pending, "total": len(queue)},
+        "winner_stats_url": winner_stats_url, "history": history, "rounds": rounds, "heads": heads, "bench": bench,
     }
 
 
@@ -333,6 +350,13 @@ def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing
     """Write the data file. The benchmark file and the v1 history are informational: without one of them, or with a bad
     one, the page is still built, and the genesis head and each king still have their rows."""
     snap = json.loads(read(source, layout.MINING_JSON))
+    try:
+        winners = json.loads(read(source, layout.WINNER_STATS))
+    except FileNotFoundError:
+        # A pull can reach its site step between the old public pair and this new file's first mirror.
+        # Derive only crowned facts; a supplied but malformed winner file still fails closed.
+        winners = winner_stats_from_snapshot(snap, link("").rstrip("/"))
+    validate_winner_stats(snap, winners, link("").rstrip("/"))
     heads = snap["heads"] if snap.get("schema") == SCHEMA else []  # ``view`` refuses any other snapshot
 
     def usable(bench: dict[str, Any] | None, kept: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -352,7 +376,7 @@ def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing
                   lambda error: quiet_missing and missing(error))  # no file yet is the state at launch
     kept = tried("kept", "no reference model from the v1 history", v1_models, missing)  # a site can have no v1 history
     table = bench_view(bench, heads, kept)
-    write(out / DATA, json.dumps(view(snap, table, link), separators=(",", ":"), allow_nan=False).encode())
+    write(out / DATA, json.dumps(view(snap, table, link, winners), separators=(",", ":"), allow_nan=False).encode())
 
 
 def install_v1(location: str, out: Path) -> None:

@@ -131,10 +131,12 @@ def test_deterministic_subsample_uses_only_scored_nonerror_sample_zero(tmp_path)
 def test_live_params_hash_unchanged_and_validation():
     live = load_params(LIVE)
     assert live.params_hash == OPEN_PIN and live.to_dict() == json.loads(LIVE.read_text())
-    assert "min_kl_seq" not in live.to_dict() and "kl_rollouts" not in live.to_dict()
+    assert "min_kl_seq" not in live.to_dict() and "min_kl_tok" not in live.to_dict() and "kl_rollouts" not in live.to_dict()
     assert "kl_max_tokens" not in live.to_dict() and "kl_time_limit_s" not in live.to_dict()
-    assert (live.min_kl_seq, live.kl_rollouts, live.kl_max_tokens, live.kl_time_limit_s) == (0.0, 128, 0, 1200)
-    for changes in ({"min_kl_seq": -1.0}, {"min_kl_seq": math.inf}, {"kl_rollouts": 7},
+    assert (live.min_kl_seq, live.min_kl_tok, live.kl_rollouts, live.kl_max_tokens, live.kl_time_limit_s) == (0.0, 0.0, 128, 0, 1200)
+    assert not live.kl_floor_on
+    assert dataclasses.replace(live, min_kl_tok=0.0014).kl_floor_on
+    for changes in ({"min_kl_seq": -1.0}, {"min_kl_seq": math.inf}, {"min_kl_tok": -1.0}, {"min_kl_tok": math.nan}, {"min_kl_tok": math.inf}, {"kl_rollouts": 7},
                     {"kl_max_tokens": -1}, {"kl_max_tokens": 1.5}, {"kl_time_limit_s": 0}):
         with pytest.raises(Exception):
             dataclasses.replace(live, **changes)
@@ -169,11 +171,11 @@ def test_production_params_exact_identity_and_effective_diff():
     assert json.loads(PRODUCTION.read_text()) == json.loads(FULL_LENGTH.read_text()) | {"kl_max_tokens": 8192}
 
 
-def gated(build, kl, floor=0.25):
-    params = build.params(min_kl_seq=floor)
+def gated(build, kl, floor=0.25, token_floor=0.0, kl_tok=0.01):
+    params = build.params(min_kl_seq=floor, min_kl_tok=token_floor)
     ticket = build.ticket(n_entries=1, params=params)
     result = build.result(ticket, PASS * 8, {0: PASS * 8})
-    entry = dataclasses.replace(result.entries[0], **({} if kl is None else METRICS | {"kl_seq": kl}))
+    entry = dataclasses.replace(result.entries[0], **({} if kl is None else METRICS | {"kl_seq": kl, "kl_tok": kl_tok}))
     return ticket, dataclasses.replace(result, entries=(entry,))
 
 
@@ -191,6 +193,29 @@ def test_judging_below_above_missing_and_off(build):
     assert decide([(ticket, result)]).entries[0].status == LOST
     with pytest.raises(ContractError, match="while min_kl_seq is off"):
         check_result(ticket, dataclasses.replace(result, entries=(dataclasses.replace(result.entries[0], **METRICS),)))
+
+
+def test_token_floor_exact_equality_passes_and_just_below_is_charged(build):
+    exact = decide([gated(build, 0.5, floor=0.0, token_floor=0.0014, kl_tok=0.0014)])
+    assert exact.entries[0].status == LOST and exact.entries[0].charged
+    below = decide([gated(build, 0.5, floor=0.0, token_floor=0.0014, kl_tok=0.001399)])
+    assert below.entries[0].status == NULL_UPDATE and below.entries[0].charged
+    assert below.entries[0].reason == "measured KL 0.0014 nats/token is below min_kl_tok 0.0014"
+    missing = decide([gated(build, None, floor=0.0, token_floor=0.0014)])
+    assert missing.entries[0].status == NO_DECISION and not missing.entries[0].charged
+    assert missing.entries[0].reason == "KL measurement is missing while min_kl_tok is enabled"
+
+
+def test_both_kl_floors_apply_and_sequence_off_token_on_accepts_measurement(build):
+    ticket, result = gated(build, 0.5, floor=0.0, token_floor=0.0014, kl_tok=0.01)
+    check_result(ticket, result)
+    assert decide([(ticket, result)]).entries[0].status == LOST
+    both_pass = decide([gated(build, 0.25, token_floor=0.01, kl_tok=0.01)])
+    assert both_pass.entries[0].status == LOST
+    sequence_fail = decide([gated(build, 0.249, token_floor=0.01, kl_tok=0.01)])
+    assert sequence_fail.entries[0].status == NULL_UPDATE and "min_kl_seq" in sequence_fail.entries[0].reason
+    token_fail = decide([gated(build, 0.25, token_floor=0.01, kl_tok=0.009)])
+    assert token_fail.entries[0].status == NULL_UPDATE and "min_kl_tok" in token_fail.entries[0].reason
 
 
 def test_sealed_result_round_trip_and_validation(build):
@@ -250,6 +275,92 @@ def test_entry_decision_and_public_round_fields(build):
     assert "kl_seq" in json.dumps(report["entries"])
 
 
+@pytest.mark.parametrize("changes", [{"min_kl_seq": 0.0, "min_kl_tok": 0.0014}, {"min_kl_seq": 0.25, "min_kl_tok": 0.01}])
+def test_solo_seals_kl_with_token_only_or_both_floors(build, changes):
+    from sn120_v2.gpu.solo import SoloRunner
+
+    ticket = build.ticket(n_entries=1, params=build.params(**changes))
+    reports = {0: build.artifact(ticket.head, ticket.entries[0], ticket.params)}
+    outcome = ((PASS * 8,), {0: (PASS * 8,)}, {}, False)
+    result = SoloRunner._solo_result(SimpleNamespace(clock=lambda: 2000, image_digest=build.image, _tested={}),
+                                     ticket, reports, *outcome, 1000, 1100, {}, 30.0, {0: METRICS})
+    assert result.entries[0].kl_tok == 0.01 and result.phase_s["kl"] == 30
+    check_result(ticket, result)
+    assert decide([(ticket, result)]).entries[0].status == LOST
+
+
+def test_solo_with_both_floors_off_has_no_measurement_or_kl_phase(build, monkeypatch):
+    from sn120_v2.gpu import solo
+    from sn120_v2.types import NULL_MODEL
+
+    params = build.params(min_kl_seq=0.0, min_kl_tok=0.0, n_gpus=1)
+    ticket = build.ticket(n_entries=1, params=params)
+    artifact = build.artifact(ticket.head, ticket.entries[0], params)
+    class Pool:
+        class Future:
+            def result(self):
+                return None
+
+            def done(self):
+                return True
+
+        def __init__(self, workers):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def submit(self, fn, gpu):
+            fn(gpu)
+            return self.Future()
+
+        def shutdown(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(solo, "ThreadPoolExecutor", Pool)
+    monkeypatch.setattr(solo, "wait", lambda running, timeout: (set(), set()))
+
+    class Trainer:
+        def train(self, request):
+            return artifact
+
+        def close(self):
+            pass
+
+    class Evaluator:
+        http = None
+
+        def solo_worker(self, ticket, trained, deadline, gpu):
+            class Worker:
+                def run(self, *, steal, result, judge, alive, deadline):
+                    while claim := steal(gpu, NULL_MODEL):
+                        model, start, stop = claim
+                        for index in range(start, stop):
+                            for sample in range(params.null_samples if model == NULL_MODEL else params.samples_per_task):
+                                result(model, sample, index, PASS)
+
+            return Worker()
+
+        def _serve_one(self, *args, **kwargs):
+            return None
+
+        def close(self):
+            pass
+
+        def measure_kl(self, *args):
+            pytest.fail("KL must not be measured when both floors are off")
+
+    runner = solo.SoloRunner(Trainer(), Evaluator(), lambda: ticket.issued_at, build.image,
+                             settings=solo.SoloSettings(prewarm=False), poll_s=0.01)
+    result = runner.run(ticket)
+    assert result.entries[0].kl_seq is None and result.entries[0].kl_tok is None
+    assert "kl" not in result.phase_s
+    check_result(ticket, result)
+
+
 def test_solo_seals_kl_and_one_failure_is_uncharged(build):
     from sn120_v2.gpu.solo import SoloRunner
 
@@ -264,6 +375,19 @@ def test_solo_seals_kl_and_one_failure_is_uncharged(build):
     assert result.entries[1].status == NO_DECISION and result.phase_s["kl"] == 30
     assert result.phase_s["evaluation"] == 900  # 100 seconds of eval + 30 seconds of KL
     check_result(ticket, result)
+
+
+def test_token_floor_publisher_rule_and_mining_json():
+    params = Params(min_kl_seq=0.0, min_kl_tok=0.0014, kl_max_tokens=8192)
+    rule = kl_rule(params)
+    assert "KL(new||head) summed over the first 8192 completion tokens of each of the kl_k sampled rollouts, divided by the total number of those tokens" in rule
+    assert "(the published kl_tok), must be at least 0.0014 nats per token, else the entry is a charged null_update" in rule
+    assert "nats per sequence" not in rule
+    published = contract(params, "https://example.org")["duplicate_policy"]
+    assert published["min_kl_tok"] == 0.0014 and published["min_kl_seq_rule"] == rule
+    both = kl_rule(Params(min_kl_seq=0.25, min_kl_tok=0.0014))
+    assert "0.25 nats per sequence" in both and "0.0014 nats per token" in both
+    assert kl_rule(Params()) == "measured KL gate off"
 
 
 def test_time_limit_before_first_look_stays_not_scored(build):

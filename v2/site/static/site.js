@@ -41,6 +41,7 @@
     front: ['front', 'wait', 'Sent back to the front, not charged: a failure on our side, or the time of the round ended first.'],
     demoted: ['back of queue', 'wait', 'Moved to the back: no valid file for too long. A seat with a valid file is never moved back.'],
     held: ['held', 'wait', 'Parked for the operator after repeated infrastructure failures. Not charged.'],
+    pending: ['pending', 'wait', 'On chain, but not yet a waiting seat or leased in the open round. No file verdict yet.'],
   };
   const V1 = document.body.dataset.page === 'v1', DATA = V1 ? 'v1-data.json' : 'site-data.json';
   let D = null, filter = '';
@@ -62,8 +63,8 @@
     head: { h: 'Head', w: 132, r: r => key(r.head, 8, 0) + (r.current ? ' ' + pill('current', 'up') : ''), t: 'Head version id.' },
     files: { h: 'Files', w: 136, r: files, t: 'Published for a winner only: the batch, and the hash of the LoRA.' },
     reg: { h: 'Reg block', w: 88, n: 1, r: r => esc(r.registration_block ?? '—') },
-    check: { h: 'File', w: 96, r: r => r.file_valid ? pill('valid', 'up', 'The stored file passes every check.') : mute('no valid file', 'This seat is skipped, is not charged, and keeps its place.'), t: 'Live check of the stored file. It never shows file content.' },
-    flags: { h: 'Status', w: 170, r: r => r.flags.map(f => pill(...FLAG[f])).join(' ') || mute('waiting') },
+    check: { h: 'File', w: 96, r: r => r.status === 'pending' ? mute('not seated') : r.file_valid ? pill('valid', 'up', 'The stored file passes every check.') : mute('no valid file', 'This seat is skipped, is not charged, and keeps its place.'), t: 'Live check of the stored file. It never shows file content.' },
+    flags: { h: 'Status', w: 170, r: r => r.status === 'pending' ? pill(...FLAG.pending) : r.flags.map(f => pill(...FLAG[f])).join(' ') || mute('waiting') },
     result: { h: 'Result', w: 112, r: r => pill(...(r.status == null ? NO_RESULT : RESULT[r.status] || [r.status, 'private', ''])) },
     gain: { h: 'Gain', w: 76, n: 1, r: r => score(r.delta == null ? null : 100 * r.delta, 2, `Pass rate minus the pass rate of M, in percentage points (standard error ${(100 * r.se).toFixed(2)})`), t: 'LoRA pass rate minus head pass rate, in percentage points.' },
     bar: { h: 'vs bar', w: 68, n: 1, r: r => score(r.z == null ? null : r.z - D.z_bar, 2, `z minus the winner bar (${D.z_bar})`), t: 'z minus the winner bar. Above zero clears the bar.' },
@@ -311,7 +312,8 @@
   }
   function render() {
     if (V1) return renderV1();
-    const d = D, r = d.round, q = d.queue.rows, waits = q.filter(x => !x.flags.includes('leased')), ready = waits.filter(x => x.file_valid).length;
+    const d = D, r = d.round, waits = d.queue.rows, pending = d.queue.pending || [], leased = d.queue.leased || [];
+    const q = [...leased, ...waits, ...pending], ready = waits.filter(x => x.file_valid).length;
     const live = {
       id: r.id || '—', state: d.phase, seats: r.seats == null ? '—' : `${r.seats} / ${r.cap}`, tasks: r.tasks,
       head: clip(d.head, 8, 0), bar: 'z > ' + d.z_bar, cap: d.max_output_tokens.toLocaleString('en-US'), next: ready + ' ready',
@@ -320,8 +322,8 @@
     document.querySelector('#round .reading').innerHTML = 'env ' + esc(d.env) + (r.opened_at ? ' · opened ' + ago(r.opened_at) : '');
     fill('kings', d.kings, `${d.kings.length} of ${d.kings_window} places`);
     // every count in the summary comes from the listed rows, so it can never disagree with them
-    const hidden = d.queue.total - q.length;
-    fill('queue', q, `${q.length - waits.length} in the round · ${ready} waiting with a valid file · ${waits.length - ready} waiting without`,
+    const hidden = d.queue.total - waits.length;
+    fill('queue', q, `${leased.length} in the round · ${ready} waiting with a valid file · ${waits.length - ready} waiting without · ${pending.length} pending registration${pending.length === 1 ? '' : 's'}`,
       hidden > 0 ? `+${hidden} more registrations wait behind these and are not listed.` : '');
     const f = filter.trim().toLowerCase(), hist = match(d.history, f);
     fill('history', hist, f ? `${hist.length} of ${d.history.length} results` : `${hist.length} results`);

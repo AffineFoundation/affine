@@ -83,12 +83,12 @@ def moved(value):
 def all_moved(params: Params) -> Params:
     """Every number of the params and of the recipe at another value, the bounds of a miner too."""
     def shift(record, **special):
-        names = [f.name for f in dataclasses.fields(record) if f.name not in ("recipe", "miner_bounds", "_legacy_fields", *special)]
+        names = [f.name for f in dataclasses.fields(record) if f.name not in ("recipe", "miner_bounds", "_legacy_fields", "max_stages", *special)]
         return dataclasses.replace(record, **{name: moved(getattr(record, name)) for name in names}, **special)
 
     bounds = tuple(shift(bound) for bound in params.recipe.miner_bounds)
     recipe = shift(params.recipe, miner_bounds=bounds, global_norm_cap=1.75)
-    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False, null_samples_per_task=2, fold_every_k=1, crown_gate="king", null_prune_from_round="r000001")
+    return shift(params, recipe=recipe, looks=(0.2, 0.6, 1.0), irt_middle_band=(0.3, 0.7), irt_draw_rule="band", rotation_enabled=True, rotation_rule="info", train_seed_scope="batch", dedup_enabled=False, null_samples_per_task=2, fold_every_k=1, crown_gate="king", null_prune_from_round="r000001", max_stages=4, train_tokens_per_s_floor=40_000)
 
 
 def sentences(text: str) -> str:
@@ -100,6 +100,7 @@ def sentences(text: str) -> str:
 OTHER = {
     "looks": (0.2, 0.6, 1.0), "irt_middle_band": (0.3, 0.7), "irt_draw_rule": "fisher", "global_norm_cap": 1.75, "target_modules": ("q_proj",),
     "image_digests": (sim.SIM_IMAGE, "other-image"), "dtype": "float32", "kv_cache_dtype": "fp8", "env_pin": "pin-1", "method": "other-method", "code_digest": "c" * 64,
+    "max_stages": 4, "train_tokens_per_s_floor": 40_000,
     "rotation_rule": "info", "train_seed_scope": "batch", "null_samples_per_task": 2, "crown_gate": "king", "null_prune_from_round": "r000001",
 }  # fmt: skip
 
@@ -107,6 +108,12 @@ OTHER = {
 def one_changed(record, name: str):
     """The record with one field at another value that the rules of the record allow."""
     value = getattr(record, name)
+    if name == "train_tokens_per_s_floor":
+        for other in (value + 1, record.max_train_token_steps // max(1, record.train_time_budget_s - 600) + 1):
+            try:
+                return other, dataclasses.replace(record, **{name: other})
+            except ConfigError:
+                continue
     if name in OTHER:
         tries = [OTHER[name]]
     elif isinstance(value, bool):
@@ -172,14 +179,20 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         f"after {admission.FAULT_TRIES} failed checks in a row",
         f"After {admission.FAULT_TRIES} counted checks in a row",
         f"No seat is moved when no turn was charged in the last {queue.SECONDS_PER_DAY // 3600} hours.",
-        f"A new file is written every {publisher.show(upload['reissue_every_seconds'] / 60)} minutes",
+        "A new registration gets its sealed link within about 5 minutes",
+        "wait for the next link file, within about 5 minutes",
+        "A newly paid king first gets weights from the next hourly write (:05 UTC); with commit-reveal that shows in incentive one to two epochs later (about 1–2.5 h after the round closes).",
         f"Each link works for {publisher.show(upload['link_ttl_seconds'] / 3600)} hours",
         f"a text of more than {public.TEXT_LIMIT} characters",
+        f"this {public.QUEUE_PREVIEW}-row preview, and `queue.next` is its first {public.QUEUE_PREVIEW} rows.",
+        "Otherwise `batch_sha256` is the 64-lowercase-hex",  # a SHA256 digest is always 64 hex characters
+        f"- `{layout.WINNER_STATS}` is `{public.WINNER_STATS_SCHEMA}`: integer Unix UTC `generated_at` and a newest-first",
+        f"`winners` list covering the same last {public.HISTORY_PREVIEW} closed rounds as `mining.json` (not an all-time archive). Each row",
         f"the first {sampling.SEED_BITS} bits of sha256",
         publisher.OPTIMIZER,  # typed in the publisher; a test below compares it with the training job
         publisher.GRADER_VERSION,  # the same, with the grader
         f"at most {publisher.BOX_TRIES} tries in all, inside the training time",
-        f"Task pool: {publisher._pool_lines(params)[0].split(' tasks in ')[0].removeprefix('- Task pool: ')} tasks",
+        f"Base task-body catalog: {publisher._pool_lines(params)[0].split(' tasks in ')[0].removeprefix('- Base task-body catalog: ')} tasks",
         f"{len(json.loads((math_pool.POOL_FILE.with_suffix('.dropped.json')).read_bytes())['dropped']):,} tasks of the earlier pool",
         f"sha256 `{math_pool.POOL_V2_0_SHA256[:8]}…`",
 
@@ -200,7 +213,9 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         # A fact of the chain, of a key format or of HTTP. No constant of this code gives it.
         "The chain shows it after about 3 minutes",
         "the 32-byte Ed25519 seed of your hotkey as 64 hex characters",
+        "an SFT trace with `sft_weight=0` contributes neither",
         "HTTP 404 on your link file",
+        "`service.next_open_at` is UTC ISO-8601 with seconds and Z",
         "The site can answer HTTP 403 to a read", "HTTP 403 does not say that a file is missing", "a missing file gives HTTP 404",
         "UTF-8 JSON",
         # A formula, a count that is part of a rule, or a step of a list: the digit is a word of the rule.
@@ -208,7 +223,14 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "(6) publish", "(7) start again",
         "0 = the groups of your file",
         "1 = one update from all rows of your batch",
-        "does not hold `minibatches` while the value is 1, or `adam_eps` while it is the default 1e-8.",
+        "canonical hashed/stored object omits `minibatches` while the value is 1, `adam_eps` while it is the",
+        "default 1e-8, and `sft_weight` while it is the default 1. The public snapshot visibly includes those effective",
+        publisher.SFT_SIZING_GUIDANCE,
+        "an ordered list of 1 to 5 stages",
+        "not a list of 1 to max_stages objects",
+        "official reward is exactly 1",
+        "official grader must verify reward exactly 1",
+        "official reward is not exactly 1",
         "Minibatches, for a value N above 1.",
         "(k from 0) goes to minibatch k modulo N",
         "train in the order 0 to N - 1.",
@@ -229,7 +251,7 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "when min_step_norm > 0, the miner's global_norm_cap is below it",
         "its advantage is not 0 and it has at least 1 output token",
         "counts its tokens + 1 (the end-of-turn token)",
-        "A rollout with advantage 0 counts 0.",
+        "A GRPO rollout with advantage 0 counts 0.",
         "sqrt(n / (n - 1) * sum((w_t * (d_t - delta))^2))",
         "on that UID: 1 / (the number of such kings)",
         "from -1/sqrt(inputs) to +1/sqrt(inputs)",
@@ -246,11 +268,17 @@ def fixed_phrases(params: Params, text: str) -> list[str]:
         "ln(1 + (e - 1) * t), and spent = 0 before the first look",
         "the normal quantile of 1 - a_k",
         "or when its se is 0.",
+        publisher.LOCAL_INSTALL,
+        publisher.LOCAL_MINER_BOUNDS,
+        publisher.LOCAL_KL_DEFAULTS,
+        publisher.TRAIN_COST_EXAMPLE,
+        "Worked example: cap 22,130,000 with steps=16 gives 1,383,125 tokens (integer floor).",
         "(0.5 for a 0/1 split)",
         "an even 0/1 split gives 0.5",
         "or 0 when `field_se` is 0.",
         f"The old z {publisher.RETIRED_KING_Z_BAR}",
         publisher.SAMPLING_GUIDANCE,
+        publisher.LOCAL_DELTA_SE,
     ]  # fmt: skip
 
 
@@ -274,7 +302,18 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     missing = [phrase for phrase in phrases if phrase not in text]
     assert not missing, f"fixed_phrases names a phrase that the text does not hold: {missing}"
     spans = [found.span() for phrase in phrases for found in re.finditer(re.escape(phrase), text)]
-    spans += [found.span() for pattern in (SECTION, re.compile(r"## \d+\. ")) for found in pattern.finditer(text)]
+    # The changelog is a dated history, not a statement of current numeric parameters.
+    # Its activation numbers must not change with a simulation's current Params.
+    spans += [match.span() for line in publisher.RULE_CHANGELOG for match in re.finditer(re.escape(line), text)]
+    spans += [found.span() for pattern in (SECTION, re.compile(r"## \d+\. "), re.compile(r"(?m)^\d+\. "), re.compile(r"p\(1-p\)"),
+              re.compile(r"`score > 0\.16`"), re.compile(r"`0\.2 < p < 0\.8`"), re.compile(r"`0\.25`"), re.compile(r"`p=0\.5`"),
+              re.compile(r"`0\.15`"), re.compile(r"`0\.16`"), re.compile(r"section 5")) for found in pattern.finditer(text)]
+    start = text.index("## Start here:")
+    end = text.index("### Live task bodies and rotation", start)
+    spans += [(start, end), *(found.span() for found in re.finditer("section 5", text))]
+    # This report is replayed history, not a parameter or a rule. Its numbers move with the state.
+    start = text.index("### Crown confirmation record")
+    spans.append((start, text.index("## 8.", start)))
     typed = [f"...{text[max(0, at - 70) : at]}>>{text[at : at + 30]}..." for at in digits if not any(low <= at < high for low, high in spans)]
     assert not typed, "a number in llms.txt that no parameter and no named constant gives:\n" + "\n".join(typed)
     unused = [phrase for phrase in phrases if phrase in flat[1] and not any(low <= at < high for found in re.finditer(re.escape(phrase), text) for low, high in [found.span()] for at in digits)]
@@ -283,7 +322,7 @@ def test_a_number_that_no_param_moves_is_named_with_its_source(tmp_path):
     first, second = (publisher.stated_params(one) for one in texts)
     # Opt-in fields are absent at defaults, preserving old Params and llms
     # bytes. Non-default serving and rotation values must still be stated.
-    omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if (name == "null_samples_per_task" or name.startswith("rotation_")) and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
+    omitted = {name for name in Params.LEFT_OUT_AT_DEFAULT if (name == "null_samples_per_task" or name == "min_kl_tok" or name.startswith("rotation_")) and getattr(base, name) == next(f.default for f in dataclasses.fields(Params) if f.name == name)}
     omitted |= {"confirm_next_round"}
     public_fields = {f.name for f in dataclasses.fields(Params) if not f.name.startswith("_")} - {"recipe"}
     assert set(first) == public_fields - omitted
@@ -334,9 +373,20 @@ def test_llms_txt_is_the_same_text_from_the_snapshot_and_from_the_mining_json_th
         phases.add(snap["phase"])
     assert phases >= {"IDLE", "RUNNING"} and snap["kings"] and snap["queue"]["next"]
     text = llms.decode()
-    assert "| position | uid | hotkey | registration_block | file_valid | front | demoted | held |" in text  # the order of public.snapshot
+    assert "| " + " | ".join(publisher.QUEUE_COLUMNS) + " |" in text  # the order of public.snapshot
     assert "| uid | hotkey | round_id | head_version_id | applied_at | z |" in text
     assert tuple(snap["queue"]["next"][0]) == publisher.QUEUE_COLUMNS and tuple(snap["kings"][0]) == publisher.KING_COLUMNS
+    changelog = """## Rule changelog
+
+Date (UTC) / field / old → new. Dates identify shipped commits; the parameter table is the current contract.
+- 2026-11-24 / `min_kl_seq` + `min_kl_tok` / `min_kl_seq=10` → `min_kl_seq=0`, `min_kl_tok=0.0014` nats per token.
+- 2026-11-24 / `z_bar` + paired next-round confirmation / no z bar → crown and paid confirmation both require strict `z > 1`.
+- 2026-11-24 / squat trim / queue-rate-stretched wait → flat 6h cap (`squat_min_wait_s=10800`, `squat_age_factor=2`), retaining the zero-turn guard.
+- 2026-11-24 / confirming-round king + old-parent samples / inherited `1` → matched `2` per task (`null_samples_per_task=2`).
+"""
+    assert "\n".join(publisher.reflow(changelog.splitlines())) + "\n" in text
+    assert text.count("- 2026-11-24 /") == 4 and "UTC-6" not in text
+    assert "min_kl_seq=10" in text and "squat_min_wait_s=10800" in text and "old-parent samples / inherited `1`" in text
     running = next(snap for snap in world.publisher.snapshots if snap["phase"] == "RUNNING")
     assert [key for key, value in running["round"].items() if not isinstance(value, (dict, list))] == list(publisher.ROUND_FIELDS[:12])
     assert publisher.in_order({"z": 1, "uid": 2, "a": 3}, publisher.KING_COLUMNS) == ["uid", "z", "a"]

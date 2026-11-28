@@ -58,8 +58,10 @@ def test_the_tool_that_llms_txt_names_is_in_the_code(tmp_path):
     assert "has not run on a real GPU yet" in text
 
     extras = tomllib.loads((V2 / "pyproject.toml").read_text())["project"]["optional-dependencies"]
-    installs = re.findall(r'pip install -e "(?:v2|\.)\[([a-z,]+)\]"', text)
+    installs = re.findall(r"(?:python -m )?pip install -e ['\"](?:\./v2|v2|\.)?(\[[a-z0-9,]+\])['\"]", text)
+    installs = [line[1:-1] for line in installs]
     assert installs and all(extra in extras for line in installs for extra in line.split(","))
+    assert "gpu,envs,r2" in installs
 
     # The miner tool takes the backend of the text, with the arguments of the text.
     reproduce = next(argv for argv in commands(text) if argv[1:3] == ["v2/miner/affine_miner.py", "reproduce"])
@@ -93,6 +95,8 @@ def test_each_command_that_llms_txt_names_sends_a_client_name(tmp_path):
     """The public site answers 403 to the default client name of urllib. llms.txt says that its commands send their own."""
     named = set()
     for argv in commands(llms(tmp_path)):
+        if argv[0] != "python" or argv[:3] == ["python", "-m", "pip"]:
+            continue  # an install command names a package, not a Python module or script
         named.add(V2.parent / argv[1] if argv[1] != "-m" else V2 / (argv[2].replace(".", "/") + ".py"))
     assert {PACKAGE / "replicate.py", PACKAGE / "links.py", V2 / "miner" / "affine_miner.py"} <= named
     assert all(path.is_file() for path in named), "llms.txt names a command that is not in the code"

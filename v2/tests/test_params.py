@@ -104,6 +104,94 @@ def test_changed_params_shows_left_out_at_default_fields_in_both_directions():
         assert changed_params(default, changed)[name] == {"before": old, "after": value}
 
 
+def test_public_params_keep_live_crown_recitation_and_kl_ceiling_fields():
+    recipe = Recipe().to_dict()
+    recipe["miner_bounds"] = [*recipe["miner_bounds"], {"key": "future_field", "low": 0, "high": 1}]
+    public = Params().to_dict() | {
+        "recipe": recipe,
+        "crown_gate": "argmax_symmetric",
+        "z_crown": 1.5,
+        "recite_max_share": 0.05,
+        "max_kl_tok": 0.25,
+    }
+    params = Params.from_public_dict(public)
+    assert (params.crown_bar, params.recite_max_share, params.max_kl_tok) == (1.5, 0.05, 0.25)
+    assert params.kl_floor_on
+    # The 2026-11-27 live values hashed bd7b9aee... here; the old drop-unknown
+    # behavior on the king branch at 08a936d5 hashed the reduced dict 54c5656c...
+    old = {key: value for key, value in public.items() if key not in ("z_crown", "recite_max_share", "max_kl_tok")}
+    assert params.params_hash != Params.from_public_dict(old).params_hash
+    for key in ("z_crown", "recite_max_share", "max_kl_tok"):
+        assert public[key] == params.to_dict()[key]
+        assert key in Params.LEFT_OUT_AT_DEFAULT
+    assert not {"z_crown", "recite_max_share", "max_kl_tok"} & Params().to_dict().keys()
+    assert dataclasses.replace(Params(), z_crown=None).params_hash == Params().params_hash
+    assert {bound.key for bound in params.recipe.miner_bounds} == {bound.key for bound in Recipe().miner_bounds}
+    with pytest.raises(ConfigError):
+        Params.from_dict(public)
+
+
+def test_public_params_keep_anchor_fields_and_hash_them():
+    anchor_values = {
+        "anchor_n": 300,
+        "anchor_min_p": 0.85,
+        "anchor_min_rollouts": 8,
+        "anchor_hi_p": 0.9,
+        "anchor_hi_share": 0.2,
+        "anchor_z_veto": 2.0,
+        "anchor_min_scored": 80,
+    }
+    public = Params().to_dict() | {
+        "crown_gate": "argmax_symmetric",
+        "eval_merged": True,
+        "irt_draw_rule": "sqrt_fisher",
+        "z_crown": 1.5,
+        "recite_max_share": 0.05,
+        "max_kl_tok": 0.25,
+        **anchor_values,
+    }
+    params = Params.from_public_dict(public)
+    assert {key: getattr(params, key) for key in anchor_values} == anchor_values
+    assert params.to_dict().items() >= anchor_values.items()
+    without_anchor_n = Params.from_public_dict({key: value for key, value in public.items() if key != "anchor_n"})
+    assert without_anchor_n.anchor_n == 0
+    assert params.params_hash != without_anchor_n.params_hash
+    # The 2026-11-28 live contract was 3a3f6252...; trees without anchor fields
+    # computed bd7b9aee.... Other live fields may change, so compare dynamically.
+    for key in anchor_values:
+        assert key in Params.LEFT_OUT_AT_DEFAULT
+        assert key not in Params().to_dict()
+    assert Params().params_hash == "7eb09fa89387d1d2c5db2d8d0ffd627ad87ece8ef31bdfe93f3374f0c7bb1e50"
+    assert not {"max_stages", "train_tokens_per_s_floor"} & Params().to_dict().keys()
+    assert Params.from_public_dict(public | {"train_tokens_per_s_floor": 100_000}).train_tokens_per_s_floor == 100_000
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"anchor_n": -1}, {"anchor_n": True}, {"anchor_n": 1.5},
+        {"anchor_min_rollouts": -1}, {"anchor_min_rollouts": True},
+        {"anchor_min_scored": -1}, {"anchor_min_scored": 1.5},
+        {"anchor_min_p": -0.1}, {"anchor_hi_p": 1.1}, {"anchor_hi_share": 1.1},
+        {"anchor_z_veto": -1}, {"anchor_z_veto": float("nan")}, {"anchor_z_veto": float("inf")},
+        {"anchor_n": 300},
+        {"max_stages": 0}, {"max_stages": 6}, {"max_stages": True},
+        {"train_tokens_per_s_floor": -1}, {"train_tokens_per_s_floor": True},
+        {"train_tokens_per_s_floor": 5_000},
+    ],
+)
+def test_anchor_and_training_fields_fail_closed(change):
+    with pytest.raises(ConfigError):
+        Params(**change)
+
+
+def test_public_params_accept_known_rotation_rules_and_reject_unknown_rules():
+    for rule in ("v1", "info", "info-guard"):
+        assert Params.from_public_dict(Params().to_dict() | {"rotation_rule": rule}).rotation_rule == rule
+    with pytest.raises(ConfigError, match="rotation_rule must be 'v1', 'info' or 'info-guard'"):
+        Params.from_public_dict(Params().to_dict() | {"rotation_rule": "unknown"})
+
+
 def test_params_hash_and_recipe_id_pin_every_field_and_survive_a_json_round_trip():
     base = Params()
     assert base.params_hash == Params().params_hash and base.recipe_id == Recipe().recipe_id
@@ -154,6 +242,7 @@ def test_look_sizes_end_with_every_task():
         {"looks": (0.5, 0.25, 1.0)}, {"z_bar": float("nan")}, {"cap_hit_floor": 1.5}, {"min_cover": 0.0}, {"min_scored_tasks": 1},
         {"drop_alpha": 0.0}, {"fold_every_k": 0}, {"max_output_tokens": 70000}, {"max_num_seqs": 0}, {"lease_timeout_s": 0}, {"kings_window": 0},
         {"irt_draw_rule": "middle"}, {"irt_draw_rule": ""}, {"irt_draw_rule": "Fisher"}, {"irt_draw_rule": None},
+        {"rotation_rule": "unknown"},
         {"null_samples_per_task": 0}, {"null_samples_per_task": -1}, {"null_samples_per_task": 1.5}, {"null_samples_per_task": True},
     ],
 )
@@ -211,8 +300,12 @@ def test_a_rejection_never_repeats_the_miners_own_key_text_and_bounds_must_name_
         Recipe().for_miner({"secret-batch-text": 1})
     assert "secret-batch-text" not in str(caught.value)
     for bounds in ((MinerBound("no_such_field", 0, 1),), (MinerBound("rank", 9, 8, integer=True),), (MinerBound("image_digests", choices=("x",)),)):
-        with pytest.raises(ConfigError):
+        with pytest.raises(ConfigError) as caught:
             Recipe(miner_bounds=bounds)
+        if bounds[0].key == "no_such_field":
+            assert "git fetch origin affine/king4-kltok && git checkout affine/king4-kltok && git pull && python -m pip install -e './v2[miner,envs,links,chain]'" in str(caught.value)
+    with pytest.raises(ConfigError, match="git fetch origin affine/king4-kltok"):
+        Recipe(miner_bounds=(MinerBound("rank", 8, 64), MinerBound("rank", 8, 64)))
     for change in ({"steps": 0}, {"rank": 0}, {"lora_lr": 0.0}, {"adam_eps": 0.0}, {"target_modules": ()}):
         with pytest.raises(ConfigError):
             Recipe(**change)

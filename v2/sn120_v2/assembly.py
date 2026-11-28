@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import logging
 import os
 import time
 from pathlib import Path
@@ -131,7 +132,8 @@ class ChainFeed(Feed):
 
 
 def _read_groups(raw: bytes, hotkey: str, params: Params):
-    return check_batch(raw, hotkey, params).groups
+    batch = check_batch(raw, hotkey, params)
+    return batch.frozen_stages() if batch.format == "affine-batch-v4" else batch.groups
 
 
 def box_pins(image_digest: str, params: Params) -> None:
@@ -183,7 +185,8 @@ def stack(context: StackContext) -> Stack:
     sampler = IRTSampler(pool_runtime.active_ids if pool_runtime else pool.task_ids, params, snapshot=stored_irt_snapshot(store, state))
     public_url = require_env("SN120_PUBLIC_URL")
     links_url = os.environ.get("SN120_LINKS_URL", "").strip()
-    publisher = StorePublisher(store, "" if public_url == NONE else public_url, "" if links_url == NONE else links_url)
+    publisher = StorePublisher(store, "" if public_url == NONE else public_url, "" if links_url == NONE else links_url,
+                               prompt_pool=pool_runtime if pool_runtime else pool, enrichment_log=logging.getLogger(__name__))
     network = require_env("SN120_V2_CHAIN_NETWORK")
     feed = None if network == NONE else ChainFeed(params.netuid, network)
     chain: Callable[[], ChainSnapshot] | None = feed.snapshot if feed else None

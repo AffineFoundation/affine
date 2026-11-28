@@ -281,7 +281,7 @@ def test_runtime_lora_rounding_loses_the_small_update_that_merging_preserves():
 def planned_claims(params, loras):
     from sn120_v2.gpu.solo import SoloScheduler
 
-    ticket = SimpleNamespace(params=params, draw=SimpleNamespace(task_ids=tuple(f"t{i}" for i in range(params.n_tasks))))
+    ticket = SimpleNamespace(params=params, parent=None, draw=SimpleNamespace(task_ids=tuple(f"t{i}" for i in range(params.n_tasks))))
     runner = SimpleNamespace(settings=SoloSettings(steal_block_tasks=2), evaluator=SimpleNamespace(http=None))
     scheduler = SoloScheduler(runner, ticket, 10_000)
     for pos, lora in enumerate(loras):

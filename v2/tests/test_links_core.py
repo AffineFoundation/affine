@@ -12,10 +12,12 @@ from nacl.public import SealedBox
 from nacl.signing import SigningKey
 
 from sn120_v2 import layout, links
+from sn120_v2.chain import FakeChain, Reader
 from sn120_v2.errors import ConfigError, ContractError, InfraError
 from sn120_v2.publisher import refuse_private
 from sn120_v2.state import State
 from sn120_v2.store import LocalStore
+from sn120_v2.types import ChainSnapshot
 
 NOW = 1_800_000_000
 URL = "https://site.test/ff/links"  # the public address of the link files
@@ -246,12 +248,13 @@ def test_the_index_lists_the_hotkeys_that_have_a_link():
     assert index == {
         "version": "affine-ff-link-v1",
         "issued_at": NOW,
-        "issued_at_cr": "2027-01-15 02:00:00 CR (UTC-6)",  # 08:00:00 UTC
         "expires_at": NOW + 7200,
         "hotkeys": sorted([A.hotkey, B.hotkey]),
         "reissue_every_seconds": 600,
         "link_file": "https://site.test/ff/links/<hotkey>.json",
     }
+    assert {key: value for key, value in index.items() if key.endswith("_at")} == {"issued_at": NOW, "expires_at": NOW + 7200}
+    assert all(type(value) is int for key, value in index.items() if key.endswith("_at"))  # Unix seconds, UTC; no local/location stamp
     assert json.loads(links.link_files([], FakePresigner(), NOW, URL)["ff/links.json"])["hotkeys"] == []
 
 
@@ -324,6 +327,35 @@ def test_every_seat_that_is_not_evaluated_yet_may_upload(build):
     assert links.eligible(state, burn_uid=0) == sorted(["waiting", "in-a-round", "held", "demoted", "front"])
     assert "burn" in links.eligible(state, burn_uid=99)
     assert links.eligible(State(), burn_uid=0) == []
+
+
+def test_new_registrations_and_rehotkeys_get_links_before_the_next_sync(build):
+    state = State(
+        queue=build.queue(build.seat(1, hotkey="waiting"), build.seat(2, block=20, hotkey="old-hotkey"), build.seat(3, hotkey="leased", leased=True)),
+        served_regs={(4, 40)},
+        served_hotkeys={"served-hotkey"},
+    )
+    chain = FakeChain({
+        0: "burn",
+        1: "waiting",
+        2: "new-hotkey",
+        3: "old-hotkey",
+        4: "served-reg",
+        5: "served-hotkey",
+        6: "new-registration",
+    }, "validator")
+    chain.born.update({0: 100, 1: 101, 2: 20, 3: 103, 4: 40})
+    snapshot = Reader(chain, 120).snapshot()
+    before = dict(state.queue)
+    assert links.eligible_with_chain(state, snapshot, 120, 0) == sorted(["waiting", "old-hotkey", "new-hotkey", "leased", "new-registration"])
+    assert state.served_regs == {(4, 40)} and state.queue == before  # read only: no sync
+
+
+def test_a_missing_chain_snapshot_keeps_the_queue_only_link_list(build, capsys):
+    state = State(queue=build.queue(build.seat(1, hotkey="waiting")))
+    assert links.eligible_with_chain(state, None, 120, 0) == ["waiting"]
+    assert links.eligible_with_chain(state, ChainSnapshot(121, 1, 1, (build.reg(2, hotkey="new"),)), 120, 0) == ["waiting"]
+    assert "using queue-only waiting hotkeys" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("prefix", ["", "public/"])

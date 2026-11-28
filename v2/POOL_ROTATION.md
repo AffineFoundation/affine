@@ -106,9 +106,11 @@ At close, null-M resolved outcomes update `(head_rollouts, head_passes)` since a
 
 ## Ranked active pool (`affine-pool-rotation-v2`)
 
+`rotation_rule="info-guard"` (`affine-pool-rotation-v3`): a candidate enters the active pool only with a recorded pool-quality guard PASS in the sealed public guard ledger; earlier rounds replay under their own rule versions. Ranking is the same as `info` (score every candidate by `p * (1-p)`), plus that fail-closed admission gate. The local replicate tool accepts `v1`, `info`, and `info-guard` when reading a mining.json.
+
 Select this rule with `rotation_rule="info"`. The existing v1 rule and its bytes remain the default; selecting the new rule also needs `rotation_enabled: true`. The new default-omitted params are:
 
-- `rotation_rule` (`"v1"` or `"info"`),
+- `rotation_rule` (`"v1"`, `"info"` or `"info-guard"`),
 - `rotation_churn_frac` (default 0.10),
 - `rotation_prior_p` (default 0.5),
 - `rotation_queue_publish` (default 2000), and

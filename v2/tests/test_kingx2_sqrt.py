@@ -24,7 +24,7 @@ from sn120_v2.worker import LocalRunner
 
 
 def king_params(build, **changes):
-    return build.params(null_samples_per_task=2, irt_draw_rule="sqrt_fisher", **changes)
+    return build.params(**{"null_samples_per_task": 2, "irt_draw_rule": "sqrt_fisher"} | changes)
 
 
 def test_king_gets_two_strings_loras_one_in_both_runner_paths(build):
@@ -50,8 +50,9 @@ def test_simulator_uses_two_king_strings_and_one_lora_string(build, tmp_path):
     assert all(len(text) == 4 for strings in outcomes.values() for text in strings)
 
 
-def test_solo_scheduler_runs_both_king_samples_and_averages_early_looks(build):
-    params = king_params(build, n_tasks=8, n_gpus=2, eval_chunk_tasks=4, looks=(0.5, 1.0))
+@pytest.mark.parametrize("k", [2, 3, 4])
+def test_solo_scheduler_runs_every_king_sample_and_averages_early_looks(build, k):
+    params = king_params(build, null_samples_per_task=k, n_tasks=8, n_gpus=2, eval_chunk_tasks=4, looks=(0.5, 1.0))
     ticket = build.ticket(1, 8, params)
     runner = SimpleNamespace(settings=SoloSettings(), evaluator=SimpleNamespace(http=None))
     scheduler = SoloScheduler(runner, ticket, 5000)
@@ -66,8 +67,8 @@ def test_solo_scheduler_runs_both_king_samples_and_averages_early_looks(build):
             for sample in range(params.null_samples if model == NULL_MODEL else params.samples_per_task):
                 scheduler.result(model, sample, index, PASS)
     null, scored, dropped, stopped = scheduler.finish()
-    assert len(null) == 2 and len(scored[0]) == 1 and not dropped and not stopped
-    assert samples_for_model(params, NULL_MODEL) == 2 and samples_for_model(params, ticket.entries[0].batch.batch_sha256) == 1
+    assert len(null) == k and len(scored[0]) == 1 and not dropped and not stopped
+    assert samples_for_model(params, NULL_MODEL) == k and samples_for_model(params, ticket.entries[0].batch.batch_sha256) == 1
 
 
 def test_cap_rate_and_gate_use_each_models_own_denominator():
@@ -89,17 +90,19 @@ def test_result_shape_is_exact_for_king_and_loras(build):
             check_result(ticket, bad)
 
 
-def test_king_mean_and_se_match_hand_calculation_and_early_look(build):
-    params = king_params(build, n_tasks=4)
-    null = ("PFPF", "FFFF")
+@pytest.mark.parametrize("k", [2, 3, 4])
+def test_king_delta_se_and_z_match_hand_calculation_for_generic_k(build, k):
+    params = king_params(build, null_samples_per_task=k, n_tasks=4)
+    null = ("PFPF",) + ("FFFF",) * (k - 1)
     lora = ("PPPP",)
-    # d = [.5, 1, .5, 1], delta = .75, se = sd(d)/2.
-    d = [0.5, 1.0, 0.5, 1.0]
+    # Only task positions 0 and 2 have one passing King sample out of k.
+    d = [1.0 - 1.0 / k, 1.0, 1.0 - 1.0 / k, 1.0]
     delta = sum(d) / len(d)
     se = math.sqrt(sum((value - delta) ** 2 for value in d) / (len(d) - 1) / len(d))
     score = score_entry((1.0,) * 4, null, lora, params, n_total=4)
     assert (score.delta, score.se) == (pytest.approx(delta), pytest.approx(se))
-    assert score.null_pass_rate == pytest.approx(sum(text.count(PASS) for text in null) / 8)
+    assert score.z == pytest.approx(delta / se)
+    assert score.null_pass_rate == pytest.approx(sum(text.count(PASS) for text in null) / (4 * k))
     ticket = build.ticket(1, 4, params)
     result = build.result(ticket, null, {0: lora})
     check_result(ticket, result)

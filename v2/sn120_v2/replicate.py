@@ -30,13 +30,15 @@ from typing import Any, Callable, Mapping, Sequence
 from transformers import AutoTokenizer
 
 from . import judging, layout
-from .admission import Grader, HFTokens, Invalid, LazyPool, Tokens, check_batch, pool_grader
-from .canonical import file_sha256, manifest_digest, to_jsonable
+from .admission import Grader, HFTokens, Invalid, LazyPool, Tokens, check_batch, frozen_batch, pool_grader
+from .canonical import file_sha256, manifest_digest, sha256_hex, to_jsonable
 from .envs.math_grader import GradePool
 from .envs.math_pool import ENV_ID, POOL_SHA256, MathPool, load_pool, pool_for_draw
 from .errors import ConfigError, InfraError, V2Error, VerifyError
 from .gpu.evaluator import VllmEvaluator
+from .gpu.fold_input import FoldInputs, unchanged
 from .gpu.plan import BoxConfig, code_digest, install_digest
+from .gpu.solo import SoloRunner
 from .gpu.procs import Child, Spawn, nvidia_smi, wait_gpus_free
 from .gpu.resident import Resident, hash_tree
 from .gpu.trainer import LoraTrainer
@@ -44,9 +46,10 @@ from .headchain import heads_of
 from .headfold import FoldSettings, LinkSource, download, read, read_json, rebuild, say
 from .irt import draw_from_snapshot
 from .params import Params
+from .recite import PoolIndex, ReciteReport, fail_reason as recite_fail_reason, measure_batch
 from .seams import Evaluator, ObjectStore, Trainer
 from .store import LocalStore
-from .types import NOT_RUN, PASS, Draw, Entry, FrozenBatch, HeadManifest, HeadVersion, Registration, RoundTicket
+from .types import CAP, NOT_RUN, PASS, Draw, Entry, FrozenBatch, HeadManifest, HeadVersion, Registration, RoundTicket
 from .worker import LocalRunner
 
 ROUND_ID, LEASE_ID, BOX_ID = "local", "local-l0", "local-box"
@@ -145,8 +148,8 @@ def local_params(params: Params, image: str, code: str, gpus: int, round_clock: 
         stop = params.round_time_limit_s - params.promote_reserve_s
         note("round-clock", f"No time limit of the round applies. On the box the training ends {params.train_time_budget_s} s after the start of the round and the scoring stops at {stop} s; what is scored by then is the whole test. The limit of one reply ({params.eval_time_budget_s} s) is the same here.")
         changes.update(round_time_limit_s=NO_ROUND_LIMIT_S, lease_timeout_s=NO_ROUND_LIMIT_S, promote_reserve_s=0, train_time_budget_s=NO_ROUND_LIMIT_S - 1)
-    note("one-batch", f"This is a round of one batch. The result says whether this LoRA beats null M by the win rule" + (f": delta above the tie tolerance and z strictly above {params.z_bar}, with positive standard error" if params.crown_gate == "argmax_symmetric" and params.z_bar > 0 else "") + f". In a real round the eligible LoRA with the highest delta wins. The training job has all {gpus} GPU(s) of this run; on the box a job has floor({params.n_gpus} / batches of the round) GPUs, at least 1. The LoRA table of the servers (--max-loras) is 1; on the box it is the number of batches of the round.")
-    note("no-master", "The fp32 master is not checked and not needed. The box checks it before it trains or scores, because the box also folds. This tool never folds.")
+    note("one-batch", f"This is a round of one batch. The result says whether this LoRA beats null M by the win rule" + (f": delta above the tie tolerance and z strictly above {params.crown_bar}, with positive standard error" if params.crown_gate == "argmax_symmetric" and params.crown_bar > 0 else "") + f". In a real round the eligible LoRA with the highest delta wins. The training job has all {gpus} GPU(s) of this run; on the box a job has floor({params.n_gpus} / batches of the round) GPUs, at least 1. The LoRA table of the servers (--max-loras) is 1; on the box it is the number of batches of the round.")
+    note("master", "For eval_merged=true the real fp32 master is required and is large (tens of GB): fetch downloads and verifies it, and run builds the official fp32-master + LoRA candidate. For eval_merged=false the master is not required.")
     note("free-gpus", f"Before the scoring starts, only GPUs 0 to {gpus - 1} must be free. The box waits for all of its GPUs.")
     return (dataclasses.replace(params, **changes) if changes else params), notes
 
@@ -155,21 +158,45 @@ def local_params(params: Params, image: str, code: str, gpus: int, round_clock: 
 
 
 class BaseOnly(Resident):
-    """The cache of the box, without the fp32 master.
+    """The miner's local model cache, with no implicit public-store downloads.
 
-    The box verifies the master of a head before it uses the base. A miner
-    has no use for the master, so this cache answers for it without a file.
-    The base and every LoRA are verified as on the box.
+    ``fetch`` puts complete, verified file sets here. A missing or invalid set
+    is a local configuration error, not a non-existent master path or a search
+    for a public prefix in the miner's empty local store.
     """
 
+    merged = False
+
     def tree(self, prefix: str, identity: str) -> Path:
+        path = self.root / identity
         if prefix == layout.public_master_prefix(identity):
-            return self.root / identity
+            if not self.merged:
+                # The box's resident_head always checks the master. Non-merged
+                # local training has no merged candidate and does not need it.
+                return path
+            if not path.is_dir():
+                raise ConfigError(
+                    f"eval_merged requires the real fp32 master at {path}. "
+                    "The master is large (tens of GB). Run the fetch command first; "
+                    "do not substitute the bf16 base."
+                )
+            try:
+                return super().tree(prefix, identity)
+            except VerifyError:
+                raise ConfigError(
+                    f"the fp32 master at {path} is missing files or does not hash to "
+                    f"base_fp32_master_digest {identity[:16]}. Under eval_merged the real "
+                    "master is required and is large (tens of GB). Remove the invalid "
+                    "directory and run the fetch command again."
+                ) from None
+        if prefix == layout.public_base_prefix(identity) and not path.is_dir():
+            raise ConfigError(f"the base files of the head are not in {path}; run the fetch command first")
         return super().tree(prefix, identity)
 
 
 def _read_groups(raw: bytes, hotkey: str, params: Params):
-    return check_batch(raw, hotkey, params).groups
+    batch = check_batch(raw, hotkey, params)
+    return batch.frozen_stages() if batch.format == "affine-batch-v4" else batch.groups
 
 
 @dataclass
@@ -179,6 +206,7 @@ class Parts:
     evaluator: VllmEvaluator
     image: str
     resident: BaseOnly
+    fold_input: FoldInputs | None = None
 
 
 def parts(
@@ -189,6 +217,7 @@ def parts(
     train_spawn: Spawn = Child,
     serve: Mapping[str, Any] | None = None,
     pool: MathPool | None = None,
+    fold_input: FoldInputs | None = None,
 ) -> Parts:
     """The box's trainer and evaluator, built as ``assembly.stack`` builds them, over a store in ``<work>/store``.
 
@@ -199,11 +228,13 @@ def parts(
     work = Path(work).resolve()
     store, box = LocalStore(work / "store"), BoxConfig(work, install_digest())
     free = wait_gpus_free if gpus is None else functools.partial(wait_gpus_free, report=functools.partial(gpu_report, gpus))
-    trainer = LoraTrainer(store, box, _read_groups, spawn=train_spawn)
-    evaluator = VllmEvaluator(store, box, pool or load_pool(), grades or GradePool(), **{"gpus_free": free, **(serve or {})})
+    prepared = fold_input or unchanged
+    trainer = LoraTrainer(store, box, _read_groups, spawn=train_spawn, fold_input=prepared)
+    evaluator = VllmEvaluator(store, box, pool or load_pool(), grades or GradePool(), gpus_free=free, fold_input=prepared, **(serve or {}))
     resident = BaseOnly(store, work)
+    resident.merged = fold_input is not None
     trainer.resident = evaluator.resident = resident
-    return Parts(store, trainer, evaluator, box.image_digest, resident)
+    return Parts(store, trainer, evaluator, box.image_digest, resident, fold_input)
 
 
 def backend(workdir: str) -> tuple[ObjectStore, Trainer, Evaluator, str]:
@@ -218,13 +249,10 @@ def backend(workdir: str) -> tuple[ObjectStore, Trainer, Evaluator, str]:
 
 def base_dir(resident: Resident, head: HeadVersion) -> Path:
     """The verified base files of the head in the cache. Nothing is downloaded here: ``fetch`` does that."""
-    path = resident.root / head.base_hash
-    if not path.is_dir():
-        raise ConfigError(f"the base files of the head are not in {path}; run the fetch command first")
     try:
         return resident.tree(layout.public_base_prefix(head.base_hash), head.base_hash)
     except VerifyError:
-        raise VerifyError(f"the files in {path} did not hash to base_hash {head.base_hash[:16]}; the directory was deleted, as on the box. Run the fetch command again") from None
+        raise VerifyError(f"the files in {resident.root / head.base_hash} did not hash to base_hash {head.base_hash[:16]}; the directory was deleted, as on the box. Run the fetch command again") from None
 
 
 # ---- fetch ----
@@ -241,40 +269,42 @@ def place(source: Path, path: Path) -> None:
 
 
 def base_links(contract: Contract, links: Mapping[str, Any], now: float) -> dict[str, Mapping[str, Any]]:
-    """``{file name: link}`` for the base of the contract's head, from read_links.json. Fails closed on any mismatch."""
-    head, wanted = contract.head, contract.manifest.base_files
-    base = links.get("base") or {}
+    """The base and, for merged evaluation, fp32-master links of the contract's head."""
+    head = contract.head
+    base, master = links.get("base") or {}, links.get("master") or {}
     if links.get("head_version_id") != head.version_id or base.get("id") != head.base_hash:
         raise ConfigError("mining.json and the links file name two different heads; fetch both again")
+    if contract.params.eval_merged and master.get("id") != head.base_fp32_master_digest:
+        raise ConfigError("eval_merged needs the current head's fp32 master in the links file; fetch both files again")
     if now >= int(links.get("expires_at") or 0):
         raise ConfigError("the links have expired; fetch the links file again")
-    found = {str(row.get("name")): row for row in base.get("files") or [] if isinstance(row, dict)}
-    if set(found) != set(wanted) or any(found[name].get("sha256") != sha for name, sha in wanted.items()):
-        raise VerifyError("the links file does not list the base files of the head manifest")
+
+    def files(wanted: Mapping[str, str], group: Mapping[str, Any], what: str) -> dict[str, Mapping[str, Any]]:
+        found = {str(row.get("name")): row for row in group.get("files") or [] if isinstance(row, dict)}
+        if set(found) != set(wanted) or any(found[name].get("sha256") != sha for name, sha in wanted.items()):
+            raise VerifyError(f"the links file does not list the {what} files of the head manifest")
+        return found
+
+    found = files(contract.manifest.base_files, base, "base")
+    if contract.params.eval_merged:
+        found |= {f"../{head.base_fp32_master_digest}/{name}": row for name, row in files(contract.manifest.master_files, master, "fp32-master").items()}
     return found
 
 
-def fetch(contract: Contract, work: Path, *, source_dir: Path | None = None, links_source: str | None = None, now: Callable[[], float] = time.time) -> dict[str, Any]:
-    """Put the base files of the head into ``<work>/cache/<base_hash>/``, each checked against the head manifest.
-
-    Files come from ``source_dir`` or from the signed links of read_links.json. They are collected in
-    ``<work>/fetch/<base_hash>/`` and moved to the cache only when the set is complete, so a run never meets
-    a half-filled directory. A file that is already there with the right hash is kept.
-    """
-    head, wanted = contract.head, contract.manifest.base_files
+def fetch_file_set(work: Path, identity: str, wanted: Mapping[str, str], *, source_dir: Path | None = None, links: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, Any]:
+    """Fetch one whole file set without ever changing a sealed cache directory."""
     if any(not name or name.startswith("/") or ".." in name.split("/") for name in wanted):
         raise VerifyError("the head manifest has an unsafe file name")
-    cache = Path(work).resolve() / "cache" / head.base_hash
+    if not wanted:
+        raise ConfigError(f"the head manifest names no files for {identity}; fetch cannot build a valid cache")
+    cache = Path(work).resolve() / "cache" / identity
     if cache.is_dir():
-        if manifest_digest(hash_tree(cache)) == head.base_hash:
-            return {"base_hash": head.base_hash, "dir": str(cache), "files": len(wanted), "fetched": 0}
-        raise ConfigError(f"{cache} exists and does not hash to base_hash; remove it and run fetch again")
-    found = None if source_dir else read_json(links_source or contract.links_url(), "the links file")
-    if found is not None and found.get("base") is None and contract.doc.get("head_chain"):
-        return fetch_by_chain(contract, Path(work).resolve(), found, now)
-    links = None if source_dir else base_links(contract, found, now())
-    stage = Path(work).resolve() / "fetch" / head.base_hash
-    fetched = 0
+        files = hash_tree(cache)
+        if files == dict(wanted) and manifest_digest(files) == identity:
+            return {"dir": str(cache), "files": len(files), "bytes": sum((cache / name).stat().st_size for name in files), "fetched": 0, "fetched_bytes": 0}
+        raise ConfigError(f"{cache} exists and does not match its manifest and id; remove it and run fetch again")
+    stage = Path(work).resolve() / "fetch" / identity
+    fetched = fetched_bytes = 0
     for name, sha in sorted(wanted.items()):
         path = stage / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -287,15 +317,49 @@ def fetch(contract: Contract, work: Path, *, source_dir: Path | None = None, lin
                 path.unlink()
                 raise VerifyError(f"{Path(source_dir) / name} is not the file of the head manifest")
         else:
-            say(f"fetch {name} ({links[name]['size']} bytes)")
-            download(str(links[name]["url"]), path, sha, int(links[name]["size"]))
+            try:
+                link = (links or {})[name]
+            except KeyError:
+                raise ConfigError(f"the links file has no download for {name} of {identity[:16]}; fetch both public files again") from None
+            say(f"fetch {name} ({link['size']} bytes)")
+            download(str(link["url"]), path, sha, int(link["size"]))
         fetched += 1
+        fetched_bytes += path.stat().st_size
     extra = sorted(file.relative_to(stage).as_posix() for file in stage.rglob("*") if file.is_file() and file.relative_to(stage).as_posix() not in wanted)
     if extra:
         raise ConfigError(f"{stage} holds files that are not of the head: {extra[:3]}; remove them and run fetch again")
     cache.parent.mkdir(parents=True, exist_ok=True)
     stage.rename(cache)
-    return {"base_hash": head.base_hash, "dir": str(cache), "files": len(wanted), "fetched": fetched}
+    return {"dir": str(cache), "files": len(wanted), "bytes": sum((cache / name).stat().st_size for name in wanted), "fetched": fetched, "fetched_bytes": fetched_bytes}
+
+
+def fetch(contract: Contract, work: Path, *, source_dir: Path | None = None, master_dir: Path | None = None, links_source: str | None = None, now: Callable[[], float] = time.time) -> dict[str, Any]:
+    """Fetch the base, and the fp32 master required by a merged-candidate run, under ``<work>/cache``."""
+    found = None if source_dir else read_json(links_source or contract.links_url(), "the links file")
+    if found is not None and found.get("base") is None and contract.doc.get("head_chain"):
+        if master_dir is not None:
+            raise ConfigError("--master-from cannot replace a head-chain rebuild; use the checkpoint master in the links file")
+        return fetch_by_chain(contract, Path(work).resolve(), found, now)
+    if contract.params.eval_merged and source_dir and master_dir is None:
+        raise ConfigError("eval_merged needs the actual fp32 master: pass --master-from alongside --from, or omit --from to use signed links")
+    links = None if source_dir else base_links(contract, found, now())
+    head = contract.head
+    result = fetch_file_set(Path(work), head.base_hash, contract.manifest.base_files, source_dir=source_dir, links=links)
+    result["base_hash"] = head.base_hash
+    result["base_dir"] = result["dir"]
+    result["base_files"] = result["files"]
+    result["base_bytes"] = result["bytes"]
+    result["base_fetched"] = result["fetched"]
+    result["base_fetched_bytes"] = result["fetched_bytes"]
+    if contract.params.eval_merged:
+        identity = head.base_fp32_master_digest
+        master_prefix = f"../{identity}/"
+        master_links = {name.removeprefix(master_prefix): row for name, row in (links or {}).items() if name.startswith(master_prefix)} or None
+        master = fetch_file_set(Path(work), identity, contract.manifest.master_files, source_dir=master_dir, links=master_links)
+        result.update(master_digest=identity, master_hash=identity, master_dir=master["dir"], master_files=master["files"], master_bytes=master["bytes"], master_fetched=master["fetched"], master_fetched_bytes=master["fetched_bytes"])
+        result["fetched"] += master["fetched"]
+        result["fetched_bytes"] += master["fetched_bytes"]
+    return result
 
 
 def fetch_by_chain(contract: Contract, work: Path, links: Mapping[str, Any], now: Callable[[], float]) -> dict[str, Any]:
@@ -315,7 +379,31 @@ def fetch_by_chain(contract: Contract, work: Path, links: Mapping[str, Any], now
         raise VerifyError("the head chain of mining.json does not end at the base of the head")
     say("the head is not a checkpoint: this machine makes its base from the newest checkpoint and the LoRAs after it")
     built = rebuild(chain, work, LinkSource(links, now), target["version_id"], settings=FoldSettings.from_env(box=False))
-    return {"base_hash": head.base_hash, "dir": built["base_dir"], "files": len(contract.manifest.base_files), "fetched": built["fetched_bytes"], "replayed_folds": built["steps"]}
+    result = {
+        "base_hash": head.base_hash,
+        "base_dir": built["base_dir"],
+        "dir": built["base_dir"],
+        "base_files": len(contract.manifest.base_files),
+        "files": len(contract.manifest.base_files),
+        "base_bytes": sum((Path(built["base_dir"]) / name).stat().st_size for name in contract.manifest.base_files),
+        "fetched": 0,  # a chain rebuild reports downloaded bytes, not a file count
+        "fetched_bytes": built["fetched_bytes"],
+        "base_fetched": 0,
+        "base_fetched_bytes": built["fetched_bytes"],
+        "replayed_folds": built["steps"],
+    }
+    for directory, wanted, identity in (
+        (Path(built["base_dir"]), contract.manifest.base_files, head.base_hash),
+        *(([(Path(built["master_dir"]), contract.manifest.master_files, head.base_fp32_master_digest)] if contract.params.eval_merged else [])),
+    ):
+        actual = hash_tree(directory)
+        if actual != dict(wanted) or manifest_digest(actual) != identity:
+            raise VerifyError(f"the rebuilt file set at {directory} does not match its head manifest and id {identity[:16]}")
+    if contract.params.eval_merged:
+        identity = head.base_fp32_master_digest
+        master = Path(built["master_dir"])
+        result.update(master_digest=identity, master_hash=identity, master_dir=str(master), master_files=len(contract.manifest.master_files), master_bytes=sum((master / name).stat().st_size for name in contract.manifest.master_files), master_fetched=0, master_fetched_bytes=0)
+    return result
 
 
 # ---- the round to repeat ----
@@ -329,6 +417,7 @@ class Round:
     draw: Draw  # the tasks the run scores, in the order of the round
     view: Mapping[str, Any]  # what is public about the real round; only the seed for a seed of your choice
     box_file: Mapping[str, Any] | None  # the public round file, when one was given
+    active_ids: tuple[str, ...] | None = None  # active task ids; absent means the unrotated base pool
 
 
 def the_round(contract: Contract, *, round_id: str | None = None, round_file: str | None = None, round_seed: str | None = None, irt_snapshot: str | None = None, first_tasks: int | None = None) -> Round:
@@ -353,6 +442,34 @@ def the_round(contract: Contract, *, round_id: str | None = None, round_file: st
         draw = Draw(draw.snapshot_id, draw.round_seed, draw.task_ids[:first_tasks], draw.weights[:first_tasks])
     shown = {"round_id": view.get("round_id"), "round_seed": draw.round_seed, "irt_snapshot_id": draw.snapshot_id, "n_tasks": n_draw, "scored_tasks": len(draw.task_ids)}
     return Round(shown, draw, view, box_file)
+
+
+def active_recite_index(contract: Contract, the: Round, pool: MathPool) -> PoolIndex:
+    """Index the active pool of the repeated round, not merely the local current task list."""
+    block = the.view.get("pool") or {}
+    ids = the.active_ids
+    if ids is None and block.get("active"):
+        if not isinstance(block["active"], str):
+            raise ConfigError("the round's active pool is not a public object key")
+        ids = tuple(read_json(contract.url(block["active"]), "the active pool"))
+    if not ids:
+        ids = pool.task_ids
+    return PoolIndex((pool.task(task_id).task_id, pool.task(task_id).problem, pool.task(task_id).answer) for task_id in ids)
+
+
+def recite_gate(raw: bytes, index: PoolIndex | None, limit: float) -> tuple[ReciteReport | None, str, str]:
+    """Measure the frozen batch. An internal check error fails open and is logged, as on the controller."""
+    if limit <= 0:
+        return None, "disabled", ""
+    try:
+        if index is None:
+            raise ConfigError("the round's active pool is not available")
+        report = measure_batch(raw, index)
+        print(f"anti-recitation: batch {sha256_hex(raw)[:12]}: {json.dumps(report.to_dict(), sort_keys=True)}", file=sys.stderr, flush=True)
+        return report, "measured", recite_fail_reason(report, limit)
+    except Exception as exc:
+        print(f"anti-recitation check failed open: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        return None, "error (failed open)", ""
 
 
 def round_notes(contract: Contract, the: Round) -> list[dict[str, str]]:
@@ -411,6 +528,7 @@ def run_round(
     tokens: Tokens | None = None,
     grader: Grader | None = None,
     clock: Callable[[], float] = time.time,
+    recite_index: PoolIndex | None = None,
 ) -> dict[str, Any]:
     """One batch as a round of one entry: the validator's file check, then the box's runner and the judging.
 
@@ -430,13 +548,39 @@ def run_round(
     }
     key, now = layout.frozen_batch(ROUND_ID, hotkey), int(clock())
     built.store.put(key, raw)
-    frozen = FrozenBatch(hotkey, batch.sha256, key, batch.format, batch.n_prompts, batch.n_rollouts, dict(batch.train))
+    frozen = frozen_batch(batch, Registration(0, hotkey, 0), key, local)
     ticket = RoundTicket(ROUND_ID, LEASE_ID, BOX_ID, head, local, draw, (Entry(0, Registration(0, hotkey, 0), frozen),), now, now + local.lease_timeout_s)
-    result = LocalRunner(built.trainer, built.evaluator, lambda: int(clock()), built.image).run(ticket)
-    decision = judging.decide([(ticket, result)])
+    runner = (
+        SoloRunner(built.trainer, built.evaluator, lambda: int(clock()), built.image)
+        if local.eval_merged
+        else LocalRunner(built.trainer, built.evaluator, lambda: int(clock()), built.image)
+    )
+    result = runner.run(ticket)
+    recite_report, recite_status, reason = recite_gate(raw, recite_index, local.recite_max_share)
+    gates = {0: reason} if reason else {}
+    decision = judging.decide([(ticket, result)], gates=gates)
     row, mine = decision.entries[0], result.entries[0]
     report |= {"status": row.status, "reason": row.reason or decision.reason, "eliminated_at_look": row.eliminated_at_look, "score": row.score and row.score.to_dict()}
     report |= {"null_outcomes": list(result.null_outcomes), "outcomes": list(mine.outcomes), "stopped_at_limit": result.stopped_at_limit, "phase_s": dict(result.phase_s)}
+    report["kl_gate"] = {"enabled": local.kl_floor_on, "min_kl_seq": local.min_kl_seq, "min_kl_tok": local.min_kl_tok, "max_kl_tok": local.max_kl_tok, "kl_rollouts": local.kl_rollouts, "kl_max_tokens": local.kl_max_tokens, "measured": mine.kl_seq is not None, "sample": 0, "source": "sn120_v2/gpu/kl.py"}
+    report["kl_gate"] |= {name: getattr(mine, name) for name in ("kl_seq", "kl_seq_se", "kl_tok", "kl_k", "kl_tokens") if getattr(mine, name) is not None}
+    if mine.kl_seq is not None:
+        report["kl_gate"]["passed"] = all((
+            local.min_kl_seq <= 0 or mine.kl_seq >= local.min_kl_seq,
+            local.min_kl_tok <= 0 or mine.kl_tok >= local.min_kl_tok,
+            local.max_kl_tok <= 0 or mine.kl_tok <= local.max_kl_tok,
+        ))
+    report["anti_recitation"] = {"enabled": local.recite_max_share > 0, "max_share": local.recite_max_share,
+                                 "status": recite_status, "passed": not reason,
+                                 **(recite_report.to_dict() if recite_report is not None else {})}
+    report["win_vs_null"] = {"won": row.status == "winner", "status": row.status, "reason": row.reason or decision.reason, "score": row.score.to_dict() if row.score else None}
+    if row.score is not None:
+        n = row.score.n_tasks
+        hits = judging.code_count(mine.outcomes, CAP, n)
+        null_hits = judging.code_count(result.null_outcomes, CAP, n)
+        rollouts = n * len(mine.outcomes)
+        null_rollouts = n * len(result.null_outcomes)
+        report["cap_hit"] = {"passed": judging.cap_hit_ok(hits, null_hits, rollouts, local, null_rollouts), "rate": row.score.cap_rate, "null_rate": row.score.null_cap_rate, "limit": judging.cap_limit(row.score.null_cap_rate, local), "margin": local.cap_hit_margin, "floor": local.cap_hit_floor, "hits": hits, "rollouts": rollouts}
     if mine.lora is not None:
         report["lora"] = {"lora_hash": mine.lora.lora_hash, "dir": str(built.store.root.joinpath(*mine.lora.prefix.split("/"))), "train_report": mine.lora.report.to_dict()}
     return report
@@ -473,12 +617,23 @@ def run(args: argparse.Namespace, contract: Contract) -> dict[str, Any]:
     refused = [note["text"] for note in notes if note["what"] in HARDWARE]
     if args.strict and refused:
         raise ConfigError("--strict: this machine does not equal the box. " + " ".join(refused))
+    work = Path(args.work).resolve()
+    resident = BaseOnly(LocalStore(work / "store"), work)
+    resident.merged = params.eval_merged
+    base = base_dir(resident, head)
+    if params.eval_merged:
+        if not (contract.manifest.master_files or contract.doc.get("head_chain")):
+            raise ConfigError("eval_merged needs the fp32 master and its files in the head manifest; run the fetch command first")
+        # Fail before admission, training or any GPU process. The merged model
+        # cannot be reconstructed from the bf16 base alone.
+        resident.tree(layout.public_master_prefix(head.base_fp32_master_digest), head.base_fp32_master_digest)
     the = the_round(contract, round_id=args.round, round_file=args.round_file, round_seed=args.round_seed, irt_snapshot=args.irt_snapshot, first_tasks=args.first_tasks)
     notes += round_notes(contract, the)
     pool = pool_for_draw(the.draw.task_ids, args.pool)
     if isinstance(the.view.get("pool"), Mapping):
         from .pool_catalog import public_catalog
         pool, active = public_catalog(contract, Path(args.work), the.view, pool)
+        the = dataclasses.replace(the, active_ids=tuple(active))
         if set(the.draw.task_ids) - set(active):
             raise VerifyError("the round draw contains a task outside its rotated active set")
     if pool.sha256 != POOL_SHA256:
@@ -486,12 +641,20 @@ def run(args: argparse.Namespace, contract: Contract) -> dict[str, Any]:
     for note in notes:
         say(f"differs from the box [{note['what']}]: {note['text']}")
     raw = read(args.batch)
-    built = parts(Path(args.work), gpus, pool=pool)
+    fold_input = None
+    if local.eval_merged:
+        # Head records omit the model repository/revision, which are publication
+        # facts, not Params. FoldInputs uses its pinned lineage guard as on prod.
+        from .params import GENESIS_BASE_HASH, GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, GenesisSpec
+        genesis = GenesisSpec(GENESIS_MODEL_REPO, GENESIS_MODEL_REVISION, GENESIS_BASE_HASH, head.base_fp32_master_digest, "local-replication")
+        fold_input = FoldInputs(Path(args.work).resolve(), genesis)
+    built = parts(Path(args.work), gpus, pool=pool, fold_input=fold_input)
     admission = LazyPool(lambda: GradePool(workers=GRADE_WORKERS, timeout_s=GRADE_TIMEOUT_S))
     try:
-        tokens = head_tokens(base_dir(built.resident, head))
+        tokens = head_tokens(base)
         grader = pool_grader(built.evaluator.pool, admission, chunk=GRADE_WORKERS)
-        result = run_round(raw, args.hotkey, params, local, head, the.draw, built, tokens=tokens, grader=grader)
+        index = active_recite_index(contract, the, pool) if local.recite_max_share > 0 else None
+        result = run_round(raw, args.hotkey, params, local, head, the.draw, built, tokens=tokens, grader=grader, recite_index=index)
     finally:
         admission.close()
         closer = getattr(built.evaluator.grader, "close", None)
@@ -529,6 +692,7 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument("--work", required=True, help="work directory on a local disk: the model cache, the local store, the logs")
     fetcher, runner = commands.choices["fetch"], commands.choices["run"]
     fetcher.add_argument("--from", dest="source_dir", help="take the base files from this directory, and download nothing")
+    fetcher.add_argument("--master-from", help="with eval_merged, take the fp32-master files from this directory (default: the current head's master links)")
     fetcher.add_argument("--read-links", help="the links file: a file or an address (default: the one mining.json names)")
     runner.add_argument("batch", help="your batch file")
     runner.add_argument("--hotkey", required=True, help="the ss58 address of your hotkey")
@@ -559,7 +723,7 @@ def main(argv: list[str] | None = None) -> int:
             store, _ = public_rotation_inputs(contract, Path(args.work), view)
             report = replay_rotation(store, args.round)
         elif args.command == "fetch":
-            report = fetch(contract, Path(args.work), source_dir=Path(args.source_dir) if args.source_dir else None, links_source=args.read_links)
+            report = fetch(contract, Path(args.work), source_dir=Path(args.source_dir) if args.source_dir else None, master_dir=Path(args.master_from) if args.master_from else None, links_source=args.read_links)
         else:
             report = run(args, contract)
     except Invalid as exc:

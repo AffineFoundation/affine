@@ -21,6 +21,7 @@ from moto.server import ThreadedMotoServer
 from nacl.signing import SigningKey
 
 from sn120_v2 import links
+from sn120_v2.chain import FakeChain
 from sn120_v2.journal import JOURNAL_FILE, Journal, Mirror
 from sn120_v2.r2 import R2Store
 from sn120_v2.sim import SimWorld, sim_params
@@ -111,26 +112,70 @@ def seed_file(tmp_path, miner):
     return str(path)
 
 
-def chain_with(monkeypatch, rows=None, error=None):
+def chain_with(monkeypatch, rows=None, error=None, registrations=None, registration_blocks=None):
+    """The activation read, and optionally the same client's registration snapshot."""
+    chain = FakeChain(registrations or {0: C.hotkey, 3: A.hotkey, 4: B.hotkey}, "validator")
+    chain.born = {uid: 100 + uid for uid in chain.keys}
+    if registration_blocks:
+        chain.born = registration_blocks
+    connections = []
+
     def query_map(item, params):
         if error:
             raise error
         return iter(rows)
 
-    sdk = type("Sdk", (), {"storage": type("S", (), {"Commitments": type("C", (), {"RevealedCommitments": "REVEALED"})})})
-    client = type("Client", (), {"chain": type("Chain", (), {"query_map": staticmethod(query_map)}), "sdk": sdk})
-    monkeypatch.setattr(links.SubtensorClient, "connect", classmethod(lambda cls, netuid, network: client))
+    activation_chain = type("Chain", (), {"query_map": staticmethod(query_map)})
+
+    class Client:
+        sdk = type("Sdk", (), {"storage": type("S", (), {"Commitments": type("C", (), {"RevealedCommitments": "REVEALED"})})})
+
+        def __init__(self):
+            self.head, self.uid_count = chain.head, chain.uid_count
+            self.hotkeys = lambda block: {int(uid): hotkey for uid, hotkey in chain.hotkeys(block).items()}
+            self.registration_blocks = lambda block: {int(uid): born for uid, born in chain.registration_blocks(block).items()}
+            self.closed = 0
+
+            class Chain(activation_chain):
+
+                def close(inner):
+                    self.closed += 1
+
+            self.chain = Chain()
+
+    def connect(cls, netuid, network):
+        client = Client()
+        connections.append(client)
+        return client
+
+    monkeypatch.setattr(links.SubtensorClient, "connect", classmethod(connect))
+    return connections
+
+
+def test_open_link_alias_is_explained_in_help(capsys):
+    for args in (["--help"], ["open_link", "--help"]):
+        with pytest.raises(SystemExit) as caught:
+            links.main(args)
+        assert caught.value.code == 0
+        printed = capsys.readouterr()
+        assert printed.err == "" and "open_link" in printed.out
+        assert "alias" in printed.out and "Python function" in printed.out
 
 
 def test_a_miner_gets_its_link_from_the_site_and_uploads_its_batch(bucket, queue, site, tmp_path, monkeypatch, capsys):
     root, address = site
-    chain_with(monkeypatch, rows=[(A.hotkey, [("a\x02" + A.activation(), 1)]), (B.hotkey, [('{"model": "x"}', 1)])])
+    connections = chain_with(monkeypatch, rows=[(A.hotkey, [("a\x02" + A.activation(), 1)]), (B.hotkey, [('{"model": "x"}', 1)])])
     assert links.main(["issue", "--links-url", URL, "--state-dir", str(tmp_path), "--site-dir", str(root), "--network", "finney"]) == 0
     printed = capsys.readouterr()
-    assert "issued 1 of 2 waiting hotkeys (not activated 1, not Ed25519 0), removed 0" in printed.out
+    assert "issued 1 of 2 waiting hotkeys (queue 2, new registrations 0, not activated 1, not Ed25519 0), removed 0" in printed.out
+    assert len(connections) == 1 and connections[0].closed == 1  # both read-only reads share one connection
     assert "X-Amz" not in printed.out + printed.err and "http" not in printed.out  # the job never prints an address
     assert sorted(path.name for path in (root / "ff" / "links").iterdir()) == [f"{A.hotkey}.json"]  # B is not activated
-    assert json.loads((root / "ff" / "links.json").read_text())["hotkeys"] == [A.hotkey]
+    index = json.loads((root / "ff" / "links.json").read_text())
+    assert index["hotkeys"] == [A.hotkey]
+    assert set(index) == {"version", "issued_at", "expires_at", "hotkeys", "reissue_every_seconds", "link_file"}
+    assert all(type(index[key]) is int for key in ("issued_at", "expires_at"))  # Unix seconds, UTC; no location-bearing stamp
+    assert "issued_at_cr" not in index and "CR (UTC-6)" not in (root / "ff" / "links.json").read_text()
 
     assert links.main(["open", "--hotkey", A.hotkey, "--key", seed_file(tmp_path, A), "--links-url", address, "--json"]) == 0
     link = json.loads(capsys.readouterr().out)
@@ -145,10 +190,46 @@ def test_a_miner_gets_its_link_from_the_site_and_uploads_its_batch(bucket, queue
     assert "X-Amz-SignedHeaders=content-type%3Bhost" in link["put_url"] and f"/{key}?" in link["put_url"]
     assert bucket.keys() == [key]
 
-    assert links.main(["open", "--hotkey", A.hotkey, "--key", seed_file(tmp_path, A), "--links-url", address]) == 0
-    assert capsys.readouterr().out.strip() == link["put_url"]  # by default: only the upload address
+    assert links.main(["open_link", "--hotkey", A.hotkey, "--key", seed_file(tmp_path, A), "--links-url", address]) == 0
+    assert capsys.readouterr().out.strip() == link["put_url"]  # argparse alias: same real HTTP open, same Python function name
     assert links.main(["open", "--hotkey", B.hotkey, "--key", seed_file(tmp_path, B), "--links-url", address]) == 1
     assert "no link for this hotkey" in capsys.readouterr().err
+
+
+def test_a_new_registration_gets_a_link_before_the_sync(bucket, queue, site, tmp_path, monkeypatch, capsys):
+    root, _ = site
+    before = {key: seat for key, seat in queue.queue.items()}
+    chain_with(monkeypatch, rows=[(A.hotkey, [(A.activation(), 1)]), (B.hotkey, [(B.activation(), 1)]), (C.hotkey, [(C.activation(), 1)])], registrations={uid: miner.hotkey for uid, miner in enumerate([C, A, B, C])}, registration_blocks={0: 100, 1: 103, 2: 104, 3: 5000})
+    args = ["issue", "--links-url", URL, "--state-dir", str(tmp_path), "--site-dir", str(root), "--network", "finney"]
+    assert links.main(args) == 0
+    printed = capsys.readouterr()
+    assert "issued 3 of 3 waiting hotkeys (queue 2, new registrations 1" in printed.out
+    assert sorted(path.name for path in (root / "ff" / "links").iterdir()) == [f"{m.hotkey}.json" for m in sorted((A, B, C), key=lambda m: m.hotkey)]
+    assert queue.queue == before and not queue.served_regs and not queue.served_hotkeys  # the sync itself is not run
+
+    # The rollback switch restores the old queue-only behavior, with no chain read.
+    monkeypatch.setattr(links.SubtensorClient, "connect", classmethod(lambda cls, netuid, network: 1 / 0))
+    assert links.main(args + ["--no-chain-regs", "--no-activation-check"]) == 0
+    assert "queue 2, new registrations 0" in capsys.readouterr().out
+    assert sorted(path.name for path in (root / "ff" / "links").iterdir()) == [f"{m.hotkey}.json" for m in sorted((A, B), key=lambda m: m.hotkey)]
+
+
+def test_a_failed_registration_read_falls_back_without_removing_links(bucket, queue, site, tmp_path, monkeypatch, capsys):
+    root, _ = site
+    args = ["issue", "--links-url", URL, "--state-dir", str(tmp_path), "--site-dir", str(root), "--no-activation-check"]
+    assert links.main(args) == 0  # no --network: the optional chain-registration read is not made
+    before = {path.name: path.read_bytes() for path in (root / "ff" / "links").iterdir()}
+    capsys.readouterr()
+    monkeypatch.setattr(links.SubtensorClient, "connect", classmethod(lambda cls, netuid, network: (_ for _ in ()).throw(TimeoutError("down"))))
+    assert links.main(args + ["--network", "finney"]) == 0
+    printed = capsys.readouterr()
+    assert "cannot read chain registrations" in printed.err and "using queue-only waiting hotkeys" in printed.err
+    assert "queue 2, new registrations 0" in printed.out
+    assert {path.name: path.read_bytes() for path in (root / "ff" / "links").iterdir()}.keys() == before.keys()
+
+    chain_with(monkeypatch, error=ConnectionError("activations unavailable"))
+    assert links.main(["issue", "--links-url", URL, "--state-dir", str(tmp_path), "--site-dir", str(root), "--network", "finney"]) == 1  # the registration read falls back; activation still fails closed
+    assert "cannot read the activations" in capsys.readouterr().err
 
 
 def test_a_failed_chain_read_writes_nothing_and_keeps_the_old_links(bucket, queue, site, tmp_path, monkeypatch, capsys):
@@ -243,7 +324,7 @@ def test_issue_reads_the_queue_from_the_journal_copy_in_the_store(bucket, site, 
     args = ["issue", "--links-url", URL, "--state-dir", str(copy), "--site-dir", str(site[0]), "--no-activation-check", "--journal-from-store"]
     for _ in range(2):  # the second run finds its local copy up to date
         assert links.main(args) == 0  # the simulation's hotkeys are not SS58 addresses: they wait, but cannot get a link
-        assert f"issued 0 of {waiting} waiting hotkeys (not activated 0, not Ed25519 {waiting})" in capsys.readouterr().out
+        assert f"issued 0 of {waiting} waiting hotkeys (queue {waiting}, new registrations 0, not activated 0, not Ed25519 {waiting})" in capsys.readouterr().out
     assert (copy / JOURNAL_FILE).read_bytes() == (tmp_path / "controller" / JOURNAL_FILE).read_bytes()
     assert bucket.keys() == keys and not old.exists()  # the read wrote nothing to the store
 
@@ -362,7 +443,7 @@ def test_the_unit_runs_the_job_as_the_operator_installs_it(bucket, queue, site, 
         assert links.main(command[3:]) == 0
     finally:
         os.umask(before)
-    assert "issued 1 of 2 waiting hotkeys (not activated 1" in capsys.readouterr().out
+    assert "issued 1 of 2 waiting hotkeys (queue 2, new registrations 0, not activated 1" in capsys.readouterr().out
     written = site[0] / "ff" / "links" / f"{A.hotkey}.json"
     assert written.stat().st_mode & 0o777 == 0o644 and (site[0] / "ff" / "links.json").stat().st_mode & 0o777 == 0o644  # the web server can read them
     link = links.open_link(json.loads(written.read_text()), A.hotkey, A.seed, int(time.time()))

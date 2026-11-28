@@ -506,13 +506,21 @@ def test_two_boxes_take_disjoint_seats_and_one_winner_is_promoted(world):
 
 
 def test_public_data_never_shows_a_losers_file_or_train_values(world):
-    world.register(1, 0.3)
+    world.register(1, 0.3, train={"steps": 2})
     world.register(2, 0.0, train={"rank": 32})
     record = world.round()
     report = json.loads(world.store.get(layout.round_file(record.round_id)))
-    text = json.dumps([world.publisher.snapshots, report])
+    snap = world.publisher.snapshots[-1]
+    mining = {key: value for key, value in snap.items() if key != "winner_stats"}
+    text = json.dumps([mining, report])
     assert "private/" not in text and '"train"' not in text and '"uri"' not in text
-    loser = next(entry for entry in world.publisher.snapshots[-1]["history"][-1]["entries"] if entry["uid"] == 2)
+    # The publisher's separate transport is winner-only; the loser's train knobs and every private location stay out.
+    transport = json.dumps(snap["winner_stats"])
+    assert [row["uid"] for row in snap["winner_stats"]["winners"]] == [1]
+    assert snap["winner_stats"]["winners"][0]["train"] == {"steps": 2}
+    assert "hk2" not in transport and '"rank"' not in transport and '"steps": 32' not in transport
+    assert "private/" not in transport and '"uri"' not in transport
+    loser = next(entry for entry in snap["history"][-1]["entries"] if entry["uid"] == 2)
     assert set(loser) == {"queue_pos", "uid", "hotkey", "registration_block", "batch_sha256", "status", "eliminated_at_look", "delta", "se", "z", "cap_rate", "n_tasks"}
     assert report["winner_outcomes"] and list(report["null_outcomes"]) == ["box-0"]
     assert world.store.list("public/rounds/") == [layout.winner_batch(record.round_id), layout.round_file(record.round_id)]

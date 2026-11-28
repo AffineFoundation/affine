@@ -50,7 +50,7 @@ from .errors import ConfigError, FencedError, HeadLost, InfraError, V2Error
 from .journal import JOURNAL_FILE, Journal, Mirror
 from .params import GenesisSpec, Params, Recipe, load_params
 from .payout import paid_set, payees
-from .public import phase, round_text
+from .public import phase, public_text, round_text
 from .queue import BACK, FRONT, FrontMove, SyncPlan, plan_front, plan_sync, waiting, zone
 from .sim import SimWorld, sim_params
 from .dedup import dryrun
@@ -61,6 +61,7 @@ from .types import ChainSnapshot, V1Import, Verdict
 
 
 HEAD_LOST_EXIT = 75  # ``run`` stopped because the local head did not read back as folded. The run loop takes every code but 0, 2, 130 and 143 as a crash, and starts ``run`` again
+STOP_CLOSE_PUBLISH_TRIES = 10  # only a requested stop with no open round and a close-publication problem; never ordinary idle polling
 
 
 def now() -> int:
@@ -205,13 +206,14 @@ def cmd_run(args: argparse.Namespace) -> int:
     overlap = Overlap(stack.chain) if stack.overlap else None
     if overlap is not None:
         controller.use_overlap(overlap)
-    done = idle = 0
-    told = obeyed = None
+    done = idle = stop_close_failures = 0
+    told = obeyed = stopped = None
     hold = (lambda: stop.asked() is not None) if stop.path is not None else None
     while args.rounds is None or done < args.rounds:
         # A request to stop after the round (``stopafter.py``) is read before a round opens, and nowhere else: here,
         # and in ``run_round`` after it finished a round that it found open (``hold``).
         asked = stop.asked()
+        controller.stop_requested(asked is not None)
         if asked is not None and controller.state.round is None:
             waits = controller.close_in_public(now())
             if not waits:
@@ -225,6 +227,17 @@ def cmd_run(args: argparse.Namespace) -> int:
                     say(f"stopped: {exc}")
                     say(f"{SAID}not obeyed yet, the request of {stamp(asked)} stays. The next start of run rebuilds the local head and then stops for it.")
                     return HEAD_LOST_EXIT
+                obeyed = asked
+                break
+            stop_close_failures += 1
+            if stop_close_failures >= STOP_CLOSE_PUBLISH_TRIES:
+                last = controller.state.rounds[-1] if controller.state.rounds else None
+                stopped = "The close is recorded. "
+                if last:
+                    stopped += f"Round {last.round_id} is closed ({last.outcome}). "
+                stopped += (f"No round is open. A close-publish error remained after {STOP_CLOSE_PUBLISH_TRIES} tries. "
+                            f"The next start of run should publish the recorded close; it opens no new round while this request stays. "
+                            f"Last wait: {public_text(waits)}")
                 obeyed = asked
                 break
             say(f"{SAID}asked at {stamp(asked)}. No round is open, and run opens none. Not all that a close writes is in the store yet: {waits}. The next try is in {args.idle_sleep:g} s.")
@@ -248,6 +261,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             else:
                 entropy = stack.entropy() if stack.entropy else os.urandom(16).hex()
             record = controller.run_round(stack.runner, now, entropy, hold)
+            if record is not None and controller.state.round is None:
+                controller.stop_requested(stop.asked() is not None)
         except FencedError:
             raise
         except HeadLost as exc:
@@ -278,7 +293,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         overlap.flush(now())
     print(json.dumps(summary(controller.state, controller.params), indent=2), flush=True)
     if obeyed is not None:
-        stop.obeyed(obeyed, stopped_text(controller))  # the last line of this ``run``
+        stop.obeyed(obeyed, stopped or stopped_text(controller))  # the last line of this ``run``
     return 0
 
 
@@ -311,7 +326,10 @@ def cmd_publish(args: argparse.Namespace) -> int:
         raise ConfigError("this stack has no publisher")
     checked = now()  # this reads the file of every waiting seat
     verdicts = stack.admission.verdicts([seat.reg.hotkey for seat in waiting(state.queue)])
-    stack.publisher.publish(public_snapshot(stack.head, state, params, now(), verdicts, checked))
+    stack.publisher.publish(public_snapshot(
+        stack.head, state, params, now(), verdicts, checked,
+        waiting_for_seats=sum(verdict.valid for verdict in verdicts.values()) < params.n_min_start,
+    ))
     valid = sum(verdict.valid for verdict in verdicts.values())
     print(json.dumps({"published": True, "head": state.head.version_id, "queue": len(state.queue), "valid_files": valid}))
     return 0

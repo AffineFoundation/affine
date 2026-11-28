@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -62,7 +63,7 @@ def test_confirm_production_params_exact_identity_and_effective_diffs():
     assert (new.kl_max_tokens, new.kl_rollouts, new.kl_time_limit_s) == (8192, 128, 1200)
     assert new.batch_cap == 6 and new.n_gpus == 8
     assert new.recipe.code_digest == "ab2922c88558afd37e95938773a7e148e88c1a6ec543f96c1ce05483fd1b7941"
-    assert code_digest() == "d46b54e9891355fef71becb3b860c0e355804cb414353a11e66966ac2454c5d8"
+    assert code_digest() == "1c8f7c278ab25dbd9c74126b279b26cc6278e8a5c9e22158a47001ec4d076d07"
     assert new.recipe.image_digests == live.recipe.image_digests == kl8k.recipe.image_digests == (
         "9a4b16ff282b21baf44350e54c852ed59586b9efb6fe09e5cd2f1e288f4c108a",
     )
@@ -116,13 +117,31 @@ def test_score_confirmation_exact_tie_and_loss_fail_without_a_z_threshold():
     assert score_confirmation((1.0,) * 4, ("PPPP", "PPFF"), ("PPPP", "FFFF"))["delta"] == 0.25
 
 
+@pytest.mark.parametrize("k", [2, 3, 4])
+def test_score_confirmation_consumes_k_matched_parent_and_new_head_samples(k):
+    weights = (1.0,) * 4
+    new = ("PPPP",) + ("PPFF",) * (k - 1)
+    old = ("PPPF",) + ("PPFF",) * (k - 1)
+    # Only position 3 differs: new mean 1, old mean 1 - 1/k.
+    scored = score_confirmation(weights, new, old)
+    assert scored["n_tasks"] == 4 and scored["delta"] == pytest.approx(1 / (4 * k))
+    d = (0.0, 0.0, 0.0, 1 / k)
+    expected_se = (4 / 3 * sum((value - 1 / (4 * k)) ** 2 for value in d)) ** 0.5 / 4
+    assert scored["se"] == pytest.approx(expected_se)
+    assert scored["z"] == pytest.approx(scored["delta"] / expected_se)
+    with pytest.raises(ContractError, match="same nonzero number"):
+        score_confirmation(weights, new, old[:-1])
+    with pytest.raises(ContractError, match="same nonzero number"):
+        score_confirmation(weights, new, old + (old[-1],))
+
+
 def test_score_confirmation_positive_z_bar_requires_both_rounds():
     weights, new, old = (1.0,) * 4, ("PFFF", "PFFF"), ("FFFF", "FFFF")
     exact = score_confirmation(weights, new, old, z_bar=1.0, crown_z=2.0)
     assert exact["delta"] > 0 and exact["z"] == 1.0
     assert not exact["confirmed"] and exact["reason"] == "fresh paired z 1.000 is not above 1"
-    above = score_confirmation(weights, new, old, z_bar=1.0 - 1e-9, crown_z=2.0)
-    assert above["confirmed"]
+    above = score_confirmation(weights, new, old, z_bar=math.nextafter(1.0, 0.0), crown_z=2.0)
+    assert above["z"] == 1.0 and above["confirmed"]
     below = score_confirmation(weights, ("PPFF", "PPFF"), ("FFFF", "FFPP"), z_bar=1.0, crown_z=2.0)
     assert below["delta"] > 0 and below["se"] > 0 and 0 < below["z"] < 1 and not below["confirmed"]
     zero_se = score_confirmation(weights, ("PPPP",), ("FFFF",), z_bar=1.0, crown_z=2.0)
@@ -403,6 +422,27 @@ def test_no_pending_draw_is_byte_identical_and_parent_slot_is_conditional(tmp_pa
     assert on.controller._parent_slot().pending == on.controller.state.pending_king
 
 
+def test_simworld_four_king_samples_crown_and_confirm_end_to_end(tmp_path):
+    world = confirming(tmp_path, null_samples_per_task=4)
+    first, pending = crown(world)
+    first_result = json.loads(world.store.get(layout.sealed_result(first.round_id, first.leases[0].lease_id)))
+    assert len(first_result["null_outcomes"]) == 4
+    world.evaluator.parent_quality = -0.5
+    world.register(2, -1.0)
+    second = world.round()
+    assert second.confirmation.confirmed and second.confirmation.pending_round_id == first.round_id
+    result = json.loads(world.store.get(layout.sealed_result(second.round_id, second.leases[0].lease_id)))
+    assert len(result["null_outcomes"]) == 4 and len(result["parent_outcomes"]) == 4
+    assert all(len(text) == second.n_tasks for text in result["null_outcomes"] + result["parent_outcomes"])
+    report = json.loads(world.store.get(layout.round_file(second.round_id)))
+    assert set(report["null_outcomes"]) == {second.leases[0].box_id}
+    assert len(report["null_outcomes"][second.leases[0].box_id]) == 4
+    assert len(report["parent_outcomes"]) == 4
+    assert report["confirmation"]["new_head_pass_rate"] > report["confirmation"]["old_head_pass_rate"]
+    assert load(world.root / JOURNAL_FILE).kings == world.controller.state.kings == [King(
+        pending.uid, pending.hotkey, first.round_id, pending.new_version_id, pending.applied_at, pending.z)]
+
+
 def test_parent_result_sealing_requires_null_samples_and_a_full_fresh_null(build):
     params = build.params(confirm_next_round=True, null_samples_per_task=2)
     ticket = dataclasses.replace(build.ticket(n_entries=1, params=params), parent=build.parent(build.head()))
@@ -522,6 +562,19 @@ def test_public_pair_and_check_pair_describe_confirmation_and_kl_publication(tmp
     assert check_pair(mining, llms) == []
     text = " ".join(llms.decode().split())
     assert "22 nats per sequence" in text and "8192 completion tokens" in text
+
+
+def test_public_pair_renders_four_king_samples_and_token_floor(tmp_path):
+    world = confirming(tmp_path, null_samples_per_task=4, min_kl_seq=0.0, min_kl_tok=0.0014, kl_max_tokens=8192)
+    mining, llms = render(snapshot(world.controller.state, world.params, world.clock()), "https://example.org")
+    assert check_pair(mining, llms) == []
+    doc, text = json.loads(mining), " ".join(llms.decode().split())
+    assert doc["params"]["null_samples_per_task"] == 4 and doc["params"]["min_kl_tok"] == 0.0014
+    assert doc["contract"]["duplicate_policy"]["min_kl_tok"] == 0.0014
+    assert "4 sample(s) per task" in text and "each run 4 fresh samples per task" in text
+    assert "0.0014 nats per token" in text
+    assert "the published kl_tok" in text and "first 8192 completion tokens" in text
+    assert "The official floors are `params.min_kl_seq` and `params.min_kl_tok`" in text
     assert "kl_seq, kl_seq_se, kl_tok, kl_k and kl_tokens" in text
     assert "There is no second confirmation round" not in text
     assert "Exact ties and losses" in text and "diagnostic z" in text

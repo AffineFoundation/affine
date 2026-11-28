@@ -13,6 +13,7 @@ from pathlib import Path
 
 from sn120_v2 import layout, sim
 from sn120_v2.types import King, V1Import
+from sn120_v2.public import winner_stats_from_snapshot
 
 BUILD = Path(__file__).parents[1] / "site" / "build.py"
 V1_ARCHIVE = BUILD.with_name("v1_archive.py")
@@ -36,6 +37,7 @@ def build(tmp_path: Path, snap: object, *more: str) -> tuple[subprocess.Complete
     store, out = tmp_path / "store", tmp_path / "out"
     (store / layout.MINING_JSON).parent.mkdir(parents=True, exist_ok=True)
     (store / layout.MINING_JSON).write_text(snap if isinstance(snap, str) else json.dumps(snap))
+    (store / layout.WINNER_STATS).write_text(json.dumps(winner_stats_from_snapshot(snap, URL) if isinstance(snap, dict) else {"generated_at": None, "winners": []}))
     args = [sys.executable, str(BUILD), "--source", str(store), "--public-url", URL, "--out", str(out), *more]
     done = subprocess.run(args, capture_output=True, text=True)
     return done, out, (out / "site-data.json").read_text() if (out / "site-data.json").exists() else ""
@@ -45,7 +47,7 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
     done, out, _ = build(tmp_path, snapshot(tmp_path))
     assert done.returncode == 0, done.stderr
     assert sorted(path.name for path in out.iterdir()) == sorted(
-        ["index.html", "v1.html", "pool", "pool.html", "generator", "generator.html", "generator-guide", "generator-guide.html", "generator-guide.md", "generator.css", "generator.js", "site.css", "site.js", "pool.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf"])
+        ["index.html", "v1.html", "pool", "pool.html", "generator", "generator.html", "generator-guide", "generator-guide.html", "generator-guide.md", "generator.css", "generator.js", "site.css", "site.js", "pool.js", "site-data.json", "favicon.svg", "network-haffer.ttf", "network-mono.ttf", "confirmations.html"])
     page = (out / "index.html").read_text() + (out / "site.css").read_text()
     for name in ("site.js", "site.css", "favicon.svg"):  # the v1 page gets the same stamped files
         assert re.search(rf"""["']{name}\?v=[0-9a-f]{{8}}["']""", (out / "v1.html").read_text())
@@ -57,6 +59,24 @@ def test_build_writes_a_fixed_file_set_with_versioned_asset_links(tmp_path):
         assert hashlib.sha256((out / name).read_bytes()).hexdigest()[:8] == stamp
     assert not re.search(r"""(?:href|src)=["'][\w.-]+\.(?:js|css|svg|ttf)["']""", page)  # no unversioned asset link
     assert f'href="{URL}/{layout.LLMS_TXT}"' in page and f'href="{URL}/{layout.MINING_JSON}"' in page
+
+
+def test_confirmations_page_is_self_contained_and_uses_only_the_public_record(tmp_path):
+    done, out, _ = build(tmp_path, snapshot(tmp_path))
+    assert done.returncode == 0, done.stderr
+    page = (out / "confirmations.html").read_text()
+    assert "{{" not in page
+    for name in ("site.css", "favicon.svg"):
+        assert re.search(rf'href="{name}\?v=[0-9a-f]{{8}}"', page)
+    assert "site.js" not in page and "<script>" in page and 'src="' not in page
+    assert f"fetch('{URL}/public/mining.json'.replace(/[^/]*$/, 'confirmation-stats.json') + '?t=' + Date.now()" in page
+    assert '<a href="supply.html">Supply</a><a href="confirmations.html" aria-current="page">Confirmations</a>' in page
+    assert f'href="{URL}/{layout.LLMS_TXT}"' in page and f'href="{URL}/{layout.MINING_JSON}"' in page
+    assert page.count("<table>") == 3
+    for name in ("round_id", "uid", "status", "confirmation_z", "confirmation_delta"):
+        assert f"row.{name}" in page
+    for forbidden in ("Costa Rica", "CR", "CST", "UTC-6"):
+        assert forbidden not in page
 
 
 def test_pool_page_builds_from_mirrored_summary_and_ranking(tmp_path):
@@ -211,15 +231,54 @@ def test_a_round_with_no_result_is_listed_and_its_entries_have_no_status(tmp_pat
     assert "r.status == null ? NO_RESULT" in script and "'NO RESULT'" in script
 
 
-def test_queue_lists_the_round_first_and_its_total_matches_the_rows(tmp_path):
+def test_queue_lists_the_full_waiting_line_pending_registrations_and_leases_separately(tmp_path):
     snap = snapshot(tmp_path)
-    queue = json.loads(build(tmp_path, snap)[2])["queue"]
-    assert [(row["line"], row["uid"], row["file_valid"], row["flags"]) for row in queue["rows"]] == [
-        (1, 8, True, ["leased"]), (2, 6, False, []), (3, 9, False, [])]
-    assert queue["total"] == len(queue["rows"])
-    snap["queue"]["length"] = 57  # the snapshot lists only the first seats of a long line
-    queue = json.loads(build(tmp_path, snap)[2])["queue"]
-    assert queue["total"] - len(queue["rows"]) == 55
+    first = snap["queue"]["line"][0]
+    extra = [dict(first, position=position, uid=position, hotkey=f"hk{position}", registration_block=1000 + position, valid_ahead=1)
+             for position in range(2, 60)]
+    snap["queue"]["line"].extend(extra)
+    snap["queue"]["length"] = 60
+    snap["queue"]["pending"] = [{"uid": 70, "hotkey": "hk70", "registration_block": 1070, "status": "pending", "batch_sha256": "not-public"}]
+    data = json.loads(build(tmp_path, snap)[2])
+    queue = data["queue"]
+    assert [(row["uid"], row["status"], row["flags"]) for row in queue["leased"]] == [(8, "leased", ["leased"])]
+    assert [(row["position"], row["uid"], row["file_valid"]) for row in [snap["queue"]["line"][0], snap["queue"]["line"][1], snap["queue"]["line"][-1]]] == [
+        (first["position"], 6, False), (first["position"] + 1, 9, False), (59, 59, False)]
+    assert [(row["line"], row["uid"], row["file_valid"]) for row in [queue["rows"][0], queue["rows"][1], queue["rows"][-1]]] == [
+        (1, 6, False), (2, 9, False), (60, 59, False)]
+    assert queue["total"] == len(queue["rows"]) == 60
+    assert queue["rows"][-1]["valid_ahead"] == 1 and queue["rows"][-1]["eta_rounds"] == first["eta_rounds"]
+    assert queue["pending"] == [{"uid": 70, "hotkey": "hk70", "registration_block": 1070, "status": "pending"}]
+    assert "not-public" not in json.dumps(data)
+    script = (tmp_path / "out" / "site.js").read_text()
+    assert "r.status === 'pending' ? pill(...FLAG.pending)" in script
+    for row in queue["rows"][:2]:
+        assert set(row) == {"line", "uid", "hotkey", "registration_block", "status", "file_valid", "file_verdict",
+                            "batch_sha256", "checked_at", "flags", "valid_ahead", "eta_rounds"}
+        assert row["batch_sha256"] is None and row["checked_at"] is None
+    assert data["winner_stats_url"] == f"{URL}/{layout.WINNER_STATS}"
+    assert next(row for row in data["history"] if row["uid"] == 3)["batch"] is None
+
+
+def test_a_pre_change_queue_preview_builds_without_inventing_new_file_facts(tmp_path):
+    snap = snapshot(tmp_path)
+    waiting = [row for row in snap["queue"]["next"] if row["uid"] in (6, 9)]
+    waiting[0]["file_valid"] = True  # genuine old fields, with one valid file to exercise the derived preview count
+    assert [row["file_valid"] for row in waiting] == [True, False]
+    legacy = [{key: row[key] for key in ("uid", "hotkey", "registration_block", "file_valid", "front", "demoted", "held")} for row in waiting]
+    snap["queue"].pop("line")
+    snap["queue"]["next"] = legacy
+    snap["queue"].pop("pending", None)
+    done, _, text = build(tmp_path, snap)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(text)["queue"]["rows"] == [
+        {"line": 1, "uid": 6, "hotkey": "hk6", "registration_block": 1006, "status": "waiting",
+         "file_valid": True, "file_verdict": "valid", "batch_sha256": None, "checked_at": None,
+         "flags": [], "valid_ahead": 0, "eta_rounds": None},
+        {"line": 2, "uid": 9, "hotkey": "hk9", "registration_block": 1009, "status": "waiting",
+         "file_valid": False, "file_verdict": "not_judged", "batch_sha256": None, "checked_at": None,
+         "flags": [], "valid_ahead": 1, "eta_rounds": None},
+    ]
 
 
 def test_a_bad_or_missing_snapshot_keeps_the_last_good_data(tmp_path):
@@ -233,6 +292,22 @@ def test_a_bad_or_missing_snapshot_keeps_the_last_good_data(tmp_path):
     (tmp_path / "store" / layout.MINING_JSON).unlink()
     args = [sys.executable, str(BUILD), "--source", str(tmp_path / "store"), "--public-url", URL, "--out", str(out)]
     assert subprocess.run(args, capture_output=True).returncode == 1 and (out / "site-data.json").read_text() == good
+
+
+def test_bad_winner_stats_keep_the_last_good_site_data(tmp_path):
+    snap = snapshot(tmp_path)
+    done, out, good = build(tmp_path, snap)
+    assert done.returncode == 0 and good
+    stats = json.loads((tmp_path / "store" / layout.WINNER_STATS).read_text())
+    for bad in (stats | {"generated_at": stats["generated_at"] + 1},
+                stats | {"winners": stats["winners"] + [dict(stats["winners"][0], round_id="r999999")]}):
+        (tmp_path / "store" / layout.WINNER_STATS).write_text(json.dumps(bad))
+        done = subprocess.run([sys.executable, str(BUILD), "--source", str(tmp_path / "store"), "--public-url", URL, "--out", str(out)], capture_output=True, text=True)
+        assert done.returncode == 1 and "kept the last good" in done.stderr and (out / "site-data.json").read_text() == good
+    (tmp_path / "store" / layout.WINNER_STATS).unlink()
+    # An older store has no separate file. The public-history projection is safe and keeps the site working.
+    done = subprocess.run([sys.executable, str(BUILD), "--source", str(tmp_path / "store"), "--public-url", URL, "--out", str(out)], capture_output=True, text=True)
+    assert done.returncode == 0 and json.loads((out / "site-data.json").read_text())["winner_stats_url"] == f"{URL}/{layout.WINNER_STATS}"
 
 
 def test_missing_arguments_fail_closed(tmp_path):
