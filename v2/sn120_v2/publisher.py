@@ -175,6 +175,7 @@ RULE_CHANGELOG = (
     "- 2026-11-25 / winner stats / canonical-only → byte-identical root `winner-stats.json` alias and optional per-crown fields derived only from crowned winners' public batches.",
     "- 2026-11-25 / miner walkthrough / scattered stale guidance → live-pool, reserve, checking, upload, confirmation and payout walkthrough in llms.txt and the miner quickstarts.",
     "- 2026-11-25 / miner-visible v4 edges / `check --grade` now uses the full verified live catalog including `gen:`; public params visibly show `max_stages` and the `sft_weight` default without changing hashes; older checkers name the upgrade command and `from_public_dict` tolerates future bounds; mining.json publication lag is shortened on the producer and at the end of site pull.",
+    "- 2026-11-27 / `rotation_rule` / `info` → `info-guard` (`affine-pool-rotation-v3`): a candidate enters the active pool only with a recorded pool-quality guard PASS in the sealed public guard ledger; earlier rounds replay under their own rule versions.",
 )
 
 V4_RULE_CHANGELOG = (
@@ -427,7 +428,8 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
         "links_url": links_url,
         "upload": upload_entry(links_url) if links_url else None,
         "objects": object_keys() | ({"active_pool": layout.active_pool("ACTIVE_SHA"), "pool_rotation": layout.pool_rotation("ROUND_ID"),
-            "retired_pool": layout.RETIRED_POOL, "reserve_manifest": layout.RESERVE_MANIFEST} if params.rotation_enabled else {}) | ({"pool_ranking": layout.pool_ranking("ROUND_ID"), "pool_summary": layout.POOL_SUMMARY} if params.rotation_rule == "info" else {}),
+            "retired_pool": layout.RETIRED_POOL, "reserve_manifest": layout.RESERVE_MANIFEST} if params.rotation_enabled else {}) | ({"pool_ranking": layout.pool_ranking("ROUND_ID"), "pool_summary": layout.POOL_SUMMARY} if params.rotation_rule in ("info", "info-guard") else {})
+            | ({"pool_guard": layout.pool_guard("GUARD_SHA")} if params.rotation_rule == "info-guard" else {}),
         "read_links": READ_LINKS,
         "code": REPO + "/tree/v2/v2",
         **({"pool_rotation_doc": REPO + "/blob/v2/v2/POOL_ROTATION.md"} if params.rotation_enabled else {}),
@@ -1424,9 +1426,11 @@ def _pool_lines(params: Params) -> list[str]:
     count, removed = f"{len(pool):,}", f"{len(dropped['dropped']):,}"
     rotation = []
     rotation_changed = any(getattr(params, f.name) != f.default for f in dataclasses.fields(params) if f.name.startswith("rotation_"))
-    if params.rotation_rule == "info":
+    if params.rotation_rule in ("info", "info-guard"):
+        guarded = params.rotation_rule == "info-guard"
+        rule_name = "affine-pool-rotation-v3" if guarded else "affine-pool-rotation-v2"
         rotation = [
-            "- Task rotation uses `affine-pool-rotation-v2`. Every active, reserve and non-withdrawn retired task is a public candidate.",
+            f"- Task rotation uses `{rule_name}`. Every active, reserve and non-withdrawn retired task is a public candidate.",
             "  With enough known history, p is the IRT predicted head pass rate. A reserve row may publish `prior_p`; otherwise the configured prior is used.",
             "  Score = p(1-p), Bernoulli Fisher information. Dead tasks (at least the configured head rollouts and zero passes) score zero.",
             "  Saturated tasks keep their score; their retirement reason is `high`. Withdrawn active tasks leave outside the churn cap.",
@@ -1435,6 +1439,13 @@ def _pool_lines(params: Params) -> list[str]:
             "  Retired tasks may return by score and restore their archived IRT row. The complete ranking, next-up queue and summary are public.",
             "  `python -m sn120_v2.replicate rotation --mining-json <mining.json> --round rNNNNNN` recomputes a decision from public inputs.",
         ]
+        if guarded:
+            rotation += [
+                "- Pool quality guard (`info-guard`): a candidate enters the active pool only with a recorded guard PASS for its id and its current content hash.",
+                "  The sealed public ledger `public/pool/guard/<sha>.jsonl`, named by each round's `guard_ledger_sha`, is append-only: one public-safe row per decision",
+                "  (id, content hash, pass or reject, category, guard version, UTC date). Judge reasoning is never published. A short fill is recorded as `guard_shortfall`.",
+                "  `next_up` ranks every non-withdrawn candidate; `next_up_eligible` counts the next-up candidates that may enter. Guard decisions never remove active tasks.",
+            ]
     elif params.rotation_enabled or rotation_changed:
         low = "off" if params.rotation_retire_low_p == 0 else f"on at empirical head p < {show(params.rotation_retire_low_p)} with {params.rotation_n_min_low} rollouts"
         rotation = [
