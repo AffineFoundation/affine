@@ -8,7 +8,7 @@ Never publishes per-task results in benchmarks.json. Full public rollouts use th
 objects; no aggregate table row contains a prompt or a completion. Informational only: nothing that decides a king or a
 weight reads this file."""
 import glob, hashlib, json, math, os, time
-from . import config as C, registry as R
+from . import config as C, registry as R, source
 
 OUT = os.path.join(C.SITE, "benchmarks.json")
 OWN_KINDS = ("king", "genesis")  # the rows that source.models() makes
@@ -217,8 +217,13 @@ def publish(rows, S, max_fail=3):
 
     # A published row that is no longer listed stays while it has a result. It is not in work: only a listed row is run.
     # A row of a kind that this service does not make (a reference model that an operator put in the table) always stays.
+    # A king whose head the chain lists as reverted is not kept: it must not return on the next publish.
+    dropped = source.reverted_version_ids()
+    models = [m for m in models if (m.get("head_version_id") or "") not in dropped]
     seen = {m["model_id"] for m in models}
     for pm in (prev.get("models") or []):
+        if (pm.get("head_version_id") or "") in dropped:
+            continue
         if pm.get("model_id") not in seen and (pm.get("model_id") in have or pm.get("kind") not in OWN_KINDS):
             models.append(dict(pm, status="queued" if pm.get("status") == "evaluating" else pm.get("status")))
             seen.add(pm["model_id"])

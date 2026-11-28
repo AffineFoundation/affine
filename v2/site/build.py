@@ -113,8 +113,20 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
         return link(layout.round_file(round_id)) if round_id in with_file else None
 
     history, rounds, lora_of = [], [], {}
-    for record in closed:
+    reverted = reverted_heads(snap)
+    reverted_rounds = {
+        (record.get("confirmation") or {}).get("pending_round_id")
+        for record in closed
+        if (record.get("confirmation") or {}).get("confirmed") is False
+        and (record.get("confirmation") or {}).get("new_version_id") in reverted
+    }
+    for pos, record in enumerate(closed):
         round_id, winner_pass = record["round_id"], None
+        no_decision = record["outcome"] == "no_decision"
+        is_reverted = record["outcome"] == APPLIED and (
+            round_id in reverted_rounds
+            or pos + 1 < len(closed) and closed[pos + 1].get("head_version_id") in reverted
+        )
         best_z = max((entry["z"] for entry in record["entries"] if entry.get("z") is not None), default=None)
         for entry in record["entries"]:
             status = entry.get("status")  # a round with no result (the box failed, or the operator ended it) gives no entry a status
@@ -131,11 +143,13 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
         rounds.append({
             "round_id": round_id, "file_url": round_link(round_id), "env": snap["env"], "head": record["head_version_id"],
             "seats": record["seats"], "skipped": record["skipped"], "tasks": record["n_tasks"],
-            "null_pass": record.get("null_pass_rate"), "null_cap": record.get("null_cap_rate"),
+            "null_pass": None if no_decision else record.get("null_pass_rate"), "null_cap": record.get("null_cap_rate"),
             "outcome": record["outcome"], "winner_uid": record.get("winner_uid"), "at": record["closed_at"],
             # for the charts: the open time, the pass rate of the applied winner, its z (with no winner: the highest z), and
             # the number of entries with a z. An entry whose training failed has none. ``reason`` is the validator's own text.
-            "opened_at": record["opened_at"], "winner_pass": winner_pass, "best_z": best_z,
+            # No-decision rounds have no pass rate. Reverted rounds retain best_z in the data; the z chart marks and scales around them.
+            "opened_at": record["opened_at"], "winner_pass": None if no_decision or is_reverted else winner_pass, "best_z": best_z,
+            "reverted": is_reverted, "revert_note": "head reverted after a failed next-round confirmation; unpaid" if is_reverted else None,
             "with_z": sum(entry.get("z") is not None for entry in record["entries"]), "reason": record.get("reason") or None,
         })
 
@@ -173,7 +187,28 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
     }
 
 
-def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (), kept: dict[str, Any] | None = None) -> dict[str, Any]:
+def reverted_heads(snap: dict[str, Any] | None = None) -> frozenset[str]:
+    """Version ids listed as reverted in the head chain of a snapshot."""
+    chain = (snap or {}).get("head_chain") or {}
+    ids: set[str] = set()
+
+    def add(value: Any) -> None:
+        if isinstance(value, str) and value:
+            ids.add(value)
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            for item in value:
+                add(item)
+        elif isinstance(value, dict):
+            add(value.get("reverted_version_ids"))
+            add(value.get("reverted_heads"))
+
+    add(chain.get("reverts"))
+    add(chain.get("reverted_heads"))
+    add((snap or {}).get("reverted_heads"))
+    return frozenset(ids)
+
+
+def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (), kept: dict[str, Any] | None = None, reverted: Sequence[str] = ()) -> dict[str, Any]:
     """The benchmark table of the v1 site: one row for every king, the reference models, and the genesis head.
 
     ``bench`` is ``benchmarks.json`` of the benchmark service, or None when there is no such file. ``heads`` is the
@@ -232,7 +267,7 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
     rows = [row(
         model.get("label") or model["model_id"], model.get("kind"), RUN_STATE.get(model.get("status"), model.get("status") or NO_RUN),
         model.get("round_id"), model.get("head_version_id"), model.get("crowned_at"), cells.get(model["model_id"], {}),
-    ) for model in bench["models"]]
+    ) for model in bench["models"] if model.get("kind") != KING or model.get("head_version_id") not in set(reverted)]
 
     by_round: dict[str, dict[str, Any]] = {}  # the head that is served for a benchmark: the folded head of the round
     for head in heads:
@@ -245,6 +280,8 @@ def bench_view(bench: dict[str, Any] | None, heads: Sequence[dict[str, Any]] = (
             genesis |= {"round_id": round_id, "head": genesis["head"] or head["version_id"], "at": genesis["at"] or head["applied_at"]}
         elif round_id == GENESIS_ROUND:
             rows.append(row("Genesis", GENESIS, NO_RUN, round_id, head["version_id"], head["applied_at"], {}))
+        elif head["version_id"] in set(reverted):
+            continue
         elif round_id not in named and not any(other["version_id"] in named for other in heads if other["round_id"] == round_id):
             rows.append(row(round_id, KING, NO_RUN, round_id, head["version_id"], head["applied_at"], {}))
 
@@ -337,9 +374,10 @@ def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing
     one, the page is still built, and the genesis head and each king still have their rows."""
     snap = json.loads(read(source, layout.MINING_JSON))
     heads = snap["heads"] if snap.get("schema") == SCHEMA else []  # ``view`` refuses any other snapshot
+    dropped = reverted_heads(snap)
 
     def usable(bench: dict[str, Any] | None, kept: dict[str, Any] | None) -> dict[str, Any] | None:
-        json.dumps(bench_view(bench, heads, kept), allow_nan=False)  # an input that gives no table is not used
+        json.dumps(bench_view(bench, heads, kept, dropped), allow_nan=False)  # an input that gives no table is not used
         return bench or kept
 
     def v1_models() -> dict[str, Any]:
@@ -354,7 +392,7 @@ def build_data(source: str, out: Path, link: Callable[[str], str], quiet_missing
     bench = tried("bench", "no benchmark file, so no benchmark score", lambda: usable(json.loads(read(source, layout.BENCHMARKS)), None),
                   lambda error: quiet_missing and missing(error))  # no file yet is the state at launch
     kept = tried("kept", "no reference model from the v1 history", v1_models, missing)  # a site can have no v1 history
-    table = bench_view(bench, heads, kept)
+    table = bench_view(bench, heads, kept, dropped)
     write(out / DATA, json.dumps(view(snap, table, link), separators=(",", ":"), allow_nan=False).encode())
 
 

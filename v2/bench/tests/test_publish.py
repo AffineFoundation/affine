@@ -1,6 +1,6 @@
 """publish: an errored rollout counts as a wrong sample in the pooled score, and rows that lost samples are flagged incomplete."""
 import json, os
-from affine_bench import config as C, publish
+from affine_bench import config as C, publish, source
 
 
 def test_pooled_counts_errored_rollouts_as_wrong(tmp_path, monkeypatch):
@@ -21,3 +21,48 @@ def test_pooled_counts_errored_rollouts_as_wrong(tmp_path, monkeypatch):
 def test_expected_uses_the_full_task_count():
     assert publish.expected(dict(tasks=393, tasks_total=393, rollouts=1), "math500", {"math500": 500}) == 500
     assert publish.expected(dict(tasks=30, tasks_total=30, rollouts=16), "aime22", {"aime22": 30}) == 480
+
+
+def test_source_reads_reverted_head_ids_and_falls_back_to_mining(monkeypatch):
+    docs = {
+        source.layout.HEAD_CHAIN: b'{"reverts":[{"reverted_version_ids":["h163"],"reverted_heads":["h164"]}]}',
+        source.layout.MINING_JSON: b'{"head_chain":{"reverted_heads":["h165"]}}',
+    }
+    monkeypatch.setattr(source, "store", lambda: type("Store", (), {"get": lambda self, key: docs[key]})())
+    assert source.reverted_version_ids() == {"h163", "h164"}
+    docs[source.layout.HEAD_CHAIN] = b'{"reverts":[]}'
+    assert source.reverted_version_ids() == {"h165"}
+
+
+def test_publish_removes_reverted_current_and_published_rows(tmp_path, monkeypatch):
+    monkeypatch.setattr(C, "SITE", str(tmp_path))
+    monkeypatch.setattr(C, "STATE", str(tmp_path / "state"))
+    monkeypatch.setattr(publish, "OUT", str(tmp_path / "benchmarks.json"))
+    monkeypatch.setattr(source, "reverted_version_ids", lambda: {"h163"})
+    monkeypatch.setattr(publish.R, "benchmarks", lambda **kwargs: [{"id": "a", "suite": "math"}])
+    monkeypatch.setattr(publish.R, "serving", lambda: {"version": 1})
+    previous = {
+        "models": [
+            {"model_id": "king-old", "kind": "king", "head_version_id": "h163"},
+            {"model_id": "king-kept", "kind": "king", "head_version_id": "h162"},
+            {"model_id": "reference", "kind": "reference", "head_version_id": "h163"},
+        ],
+        "results": [],
+    }
+    result = tmp_path / "state/results/king-kept/a.json"
+    result.parent.mkdir(parents=True)
+    result.write_text(json.dumps(dict(
+        model_id="king-kept", benchmark="a", score=.5, se=.1, tasks=1, tasks_total=1,
+        samples=1, rollouts=1, cap_rate=0, mean_out_tokens=1, bench_version="bench-v2",
+    )))
+    (tmp_path / "benchmarks.json").write_text(json.dumps(previous))
+    rows = [
+        {"model_id": "king-current", "kind": "king", "head_version_id": "h163"},
+        {"model_id": "king-ok", "kind": "king", "head_version_id": "h161"},
+    ]
+    publish.publish(rows, {})
+    table = json.loads((tmp_path / "benchmarks.json").read_text())
+    models = {m["model_id"]: m for m in table["models"]}
+    assert set(models) == {"king-ok", "king-kept"}
+    assert "king-old" not in models
+    assert "king-current" not in models

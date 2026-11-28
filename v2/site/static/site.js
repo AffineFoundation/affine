@@ -132,7 +132,7 @@
     box.textContent = '';
     const W = box.clientWidth || 300, H = box.clientHeight || 180, P = o.pad || { l: 40, r: 10, t: 10, b: 20 };
     const g = svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': o.name });
-    const idx = [...Array(o.n).keys()], vals = o.series.flatMap(s => idx.map(s.v)).filter(v => v != null);
+    const idx = [...Array(o.n).keys()], vals = o.series.flatMap(s => idx.map(i => s.exclude?.(i) ? null : s.v(i))).filter(v => v != null);
     box.append(g);
     if (!vals.length) { box.insertAdjacentHTML('beforeend', `<p class="empty">${esc(o.empty)}</p>`); return; }
     let [lo, hi, st] = nice(Math.min(...vals, ...(o.include || [])), Math.max(...vals, ...(o.include || [])), o.lines || 4, o.least);
@@ -146,8 +146,8 @@
       const has = idx.filter(i => s.v(i) != null), color = i => typeof s.c === 'function' ? s.c(i) : s.c;
       if (s.bar) {
         for (const i of has) {
-          const h = Math.max(1.5, Math.abs(y(s.v(i)) - zero));
-          g.append(svg('rect', { x: xs[i] - bar / 2, y: s.v(i) >= 0 ? zero - h : zero, width: bar, height: h, fill: s.hollow && s.hollow(i) ? 'none' : color(i), stroke: color(i) }));
+          const value = s.exclude?.(i) ? hi : s.v(i), h = Math.max(1.5, Math.abs(y(value) - zero));
+          g.append(svg('rect', { x: xs[i] - bar / 2, y: value >= 0 ? zero - h : zero, width: bar, height: Math.min(h, Math.abs(zero - P.t)), fill: s.hollow && s.hollow(i) ? 'none' : color(i), stroke: color(i), 'stroke-dasharray': s.hollow?.(i) ? '3 2' : 'none' }));
         }
         continue;
       }
@@ -163,6 +163,7 @@
     }
     g.append(svg('text', { x: P.l, y: H - 4, 'text-anchor': 'start' }, o.label(0)));
     if (o.n > 1) g.append(svg('text', { x: W - P.r, y: H - 4, 'text-anchor': 'end' }, o.label(o.n - 1)));
+    if (o.marks) o.marks(g, { xs, y, bar, P, W, H });
     const tip = document.createElement('output');
     tip.className = 'tip'; tip.hidden = true; box.append(tip);
     idx.forEach(i => {
@@ -276,16 +277,25 @@
       el.querySelector('.reading').textContent = reading || '—';
       chart(el.querySelector('.chart'), { n: rs.length, slots: 10, label: i => rs[i].round_id, empty: 'No round is closed yet.', name: el.querySelector('h2').textContent, ...o });
     };
-    const last = f => rs.filter(f).pop(), z = last(r => r.best_z != null), pass = last(r => r.null_pass != null), end = rs[rs.length - 1];
+    const last = f => rs.filter(f).pop(), z = last(r => r.best_z != null && r.reverted !== true), pass = last(r => ['applied', 'null'].includes(r.outcome) && r.null_pass != null), end = rs[rs.length - 1];
+    const reverted = r => r.reverted === true, decided = r => ['applied', 'null'].includes(r.outcome);
+    const ring = (g, x, at, color) => g.append(svg('circle', { cx: x, cy: at.H - at.P.b + 4.5, r: 2.5, fill: 'none', stroke: color, 'stroke-width': 1.2, 'stroke-dasharray': '2 1' }));
     tile('c-z', z && `${z.round_id} z ${sgn(z.best_z)}`, {
       include: [0, d.z_bar], ref: d.z_bar, fmt: v => sgn(v, v % 1 ? 1 : 0),
-      series: [{ bar: 1, v: i => rs[i].best_z, c: i => TONE[rs[i].outcome] || 'var(--accepted)', hollow: i => !TONE[rs[i].outcome] }],
-      tip: i => tip(rs[i], [[rs[i].outcome === 'applied' ? 'winner z' : 'best z', rs[i].best_z == null ? '—' : sgn(rs[i].best_z)], ['winner bar', 'z > ' + d.z_bar], ['batches', rs[i].seats]]),
+      series: [{ bar: 1, v: i => rs[i].best_z, exclude: i => reverted(rs[i]), c: i => reverted(rs[i]) ? 'var(--rejected)' : TONE[rs[i].outcome] || 'var(--accepted)', hollow: i => reverted(rs[i]) || !TONE[rs[i].outcome] }],
+      tip: i => tipOf(`${rs[i].round_id} · ${reverted(rs[i]) ? 'reverted' : ended(rs[i])}`, reverted(rs[i]) ? [['z', 'reverted: head reverted after a failed next-round confirmation'], ['winner UID', rs[i].winner_uid]] : [[rs[i].outcome === 'applied' ? 'winner z' : 'best z', rs[i].best_z == null ? '—' : sgn(rs[i].best_z)], ['winner bar', 'z > ' + d.z_bar], ['batches', rs[i].seats]]),
+      marks: (g, at) => rs.forEach((r, i) => {
+        if (!reverted(r)) return;
+        const x = at.xs[i] - at.bar / 2, yb = at.P.t + 6;
+        g.append(svg('path', { d: `M${x - 1} ${yb + 3} L${at.xs[i]} ${yb - 1} L${x + at.bar + 1} ${yb + 3}`, stroke: 'var(--bg)', 'stroke-width': 2.5, fill: 'none' }),
+          svg('text', { x: Math.min(Math.max(at.xs[i], at.P.l + 18), at.W - at.P.r - 18), y: at.P.t - 3, 'text-anchor': 'middle', class: 'over' }, 'reverted'));
+      }),
     });
     tile('c-pass', pass && `${pass.round_id} M ${share(pass.null_pass)}`, {
       bound: [0, 1], least: .01, fmt: whole,
-      series: [{ v: i => rs[i].null_pass, c: 'var(--accepted)' }, { v: i => rs[i].winner_pass, c: 'var(--performance)' }],
-      tip: i => tip(rs[i], [['head M', share(rs[i].null_pass, 2)], ['winner', share(rs[i].winner_pass, 2)], ['M cap-hit', share(rs[i].null_cap, 2)], ['tasks', rs[i].tasks]]),
+      series: [{ v: i => decided(rs[i]) ? rs[i].null_pass : null, c: 'var(--accepted)' }, { v: i => decided(rs[i]) && !reverted(rs[i]) ? rs[i].winner_pass : null, c: 'var(--performance)' }],
+      marks: (g, at) => rs.forEach((r, i) => !decided(r) && ring(g, at.xs[i], at, 'var(--accepted)')),
+      tip: i => tip(rs[i], [['head M', !decided(rs[i]) ? 'no decision: not scored' : share(rs[i].null_pass, 2)], ['winner', reverted(rs[i]) ? 'reverted' : share(rs[i].winner_pass, 2)], ['M cap-hit', share(rs[i].null_cap, 2)], ['tasks', rs[i].tasks]]),
     });
     tile('c-batch', end && `${end.round_id} ${end.seats} of at most ${d.round.cap} · ${end.with_z} with a z`, {
       include: [0], least: 1, fmt: v => v,
