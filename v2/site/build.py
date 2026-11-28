@@ -148,7 +148,7 @@ def view(snap: dict[str, Any], bench: dict[str, Any] | None, link: Callable[[str
             # for the charts: the open time, the pass rate of the applied winner, its z (with no winner: the highest z), and
             # the number of entries with a z. An entry whose training failed has none. ``reason`` is the validator's own text.
             # No-decision rounds have no pass rate. Reverted rounds retain best_z in the data; the z chart marks and scales around them.
-            "opened_at": record["opened_at"], "winner_pass": None if no_decision else winner_pass, "best_z": best_z,
+            "opened_at": record["opened_at"], "winner_pass": None if no_decision or is_reverted else winner_pass, "best_z": best_z,
             "reverted": is_reverted, "revert_note": "head reverted after a failed next-round confirmation; unpaid" if is_reverted else None,
             "with_z": sum(entry.get("z") is not None for entry in record["entries"]), "reason": record.get("reason") or None,
         })

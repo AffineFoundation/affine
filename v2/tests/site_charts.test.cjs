@@ -58,10 +58,16 @@ const revertedBar = zSvg.children.find(n => n.tag === 'rect' && n.attrs['stroke-
 assert(revertedBar && revertedBar.attrs.fill === 'none' && revertedBar.attrs.stroke === 'var(--rejected)');
 assert(zSvg.children.some(n => n.tag === 'text' && n.textContent === 'reverted'));
 const pSvg = tiles['c-pass'].chart.children.find(n => n.tag === 'svg');
+assert(!pSvg.children.some(n => n.tag === 'text' && /80|90|100/.test(n.textContent)), 'reverted winner pass rate must not set the axis');
+assert(!pSvg.children.some(n => n.tag === 'circle' && n.attrs.stroke === 'var(--performance)' && n.attrs.cx === zHit.attrs.x), 'reverted winner pass rate must not become a point');
 assert(!pSvg.children.some(n => n.tag === 'circle' && n.attrs.cy === '150'), 'no-decision zero must not become a point');
 assert(pSvg.children.some(n => n.tag === 'circle' && n.attrs['stroke-dasharray'] === '2 1'), 'no-decision ring remains');
 const pHit = pSvg.children.filter(n => n.attrs.fill === 'transparent')[2];
 pHit.dispatch('mouseenter');
 const pTip = tiles['c-pass'].chart.children.find(n => n.tag === 'output').innerHTML;
 assert(pTip.includes('no decision: not scored') && !pTip.includes('head M</span> 0.0%'));
+pSvg.children.filter(n => n.attrs.fill === 'transparent')[1].dispatch('mouseenter');
+const revertedPassTip = tiles['c-pass'].chart.children.find(n => n.tag === 'output').innerHTML;
+assert(revertedPassTip.includes('winner</span> reverted'));
+assert(!revertedPassTip.includes('70.00%'));
 console.log(`PASS ${path}: axis scaling, readings, gaps, reverted mark and tooltips`);

@@ -293,9 +293,9 @@
     });
     tile('c-pass', pass && `${pass.round_id} M ${share(pass.null_pass)}`, {
       bound: [0, 1], least: .01, fmt: whole,
-      series: [{ v: i => decided(rs[i]) ? rs[i].null_pass : null, c: 'var(--accepted)' }, { v: i => decided(rs[i]) ? rs[i].winner_pass : null, c: 'var(--performance)' }],
+      series: [{ v: i => decided(rs[i]) ? rs[i].null_pass : null, c: 'var(--accepted)' }, { v: i => decided(rs[i]) && !reverted(rs[i]) ? rs[i].winner_pass : null, c: 'var(--performance)' }],
       marks: (g, at) => rs.forEach((r, i) => !decided(r) && ring(g, at.xs[i], at, 'var(--accepted)')),
-      tip: i => tip(rs[i], [['head M', !decided(rs[i]) ? 'no decision: not scored' : share(rs[i].null_pass, 2)], ['winner', share(rs[i].winner_pass, 2)], ['M cap-hit', share(rs[i].null_cap, 2)], ['tasks', rs[i].tasks]]),
+      tip: i => tip(rs[i], [['head M', !decided(rs[i]) ? 'no decision: not scored' : share(rs[i].null_pass, 2)], ['winner', reverted(rs[i]) ? 'reverted' : share(rs[i].winner_pass, 2)], ['M cap-hit', share(rs[i].null_cap, 2)], ['tasks', rs[i].tasks]]),
     });
     tile('c-batch', end && `${end.round_id} ${end.seats} of at most ${d.round.cap} · ${end.with_z} with a z`, {
       include: [0], least: 1, fmt: v => v,

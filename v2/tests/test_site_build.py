@@ -238,6 +238,7 @@ def test_charts_mark_reverted_rounds_and_null_no_decision_pass_rates(tmp_path):
     data = json.loads(text)
     rows = {r["round_id"]: r for r in data["rounds"]}
     assert rows["r000163"]["reverted"] is True and rows["r000163"]["best_z"] == 21.87
+    assert rows["r000163"]["winner_pass"] is None and rows["r000163"]["null_pass"] == .559
     assert rows["r000163"]["revert_note"] == "head reverted after a failed next-round confirmation; unpaid"
     assert rows["r000165"]["reverted"] is False and rows["r000165"]["best_z"] is not None
     assert rows["r000165"]["null_pass"] is None and rows["r000165"]["winner_pass"] is None
