@@ -82,7 +82,7 @@ from sn120_v2.types import HeadManifest
 
 LINKS = "public/read_links.json"  # not an object of the store: this command makes it
 INDEX = "public/pull_index.json"  # the files under public/ that this command wrote
-ROOT_COPIES = {"llms.txt": layout.LLMS_TXT, "mining.json": layout.MINING_JSON, **layout.PUBLIC_ALIASES}
+ROOT_COPIES = {"llms.txt": layout.LLMS_TXT, "mining.json": layout.MINING_JSON, "head.json": layout.HEAD_NOW, **layout.PUBLIC_ALIASES}
 LINKS_SCHEMA = "sn120-v2-read-links-1"
 INDEX_SCHEMA = "sn120-v2-pull-index-1"
 HEADS, ROUNDS, IRT = (make("x").partition("x")[0] for make in (layout.head_manifest, layout.round_file, layout.irt_snapshot))
@@ -95,7 +95,7 @@ ROLLOUT_INDEX = layout.ROLLOUT_INDEX  # the one adoptable hand-written path
 BACKFILL_INDEX = "public/rollouts/backfill_index.json"  # never read from the store, never owned
 ROLLOUT_INDEX_SCHEMA = "sn120-v2-rollouts-index-2"
 ROUND_FILES = (layout.round_file, layout.round_scores, layout.winner_batch)
-FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.WINNER_STATS, layout.CONFIRMATION_STATS, layout.CURRENT, layout.BENCHMARKS, layout.HEAD_CHAIN,
+FIXED = (layout.MINING_JSON, layout.LLMS_TXT, layout.WINNER_STATS, layout.CONFIRMATION_STATS, layout.CURRENT, layout.HEAD_NOW, layout.BENCHMARKS, layout.HEAD_CHAIN,
          layout.RESERVE_MANIFEST, layout.RESERVE_WITHDRAWN, layout.RETIRED_POOL, layout.RETIRED_TASKS, layout.POOL_SUMMARY)
 RECHECK_ROUNDS = 2  # the newest round files are read again: a restart of the controller may write one twice
 PAIR_TRIES, PAIR_WAIT_S = 3, 1.0
@@ -397,6 +397,7 @@ class Pull:
         """The head pointer, and the signed read links for the weight files of that head."""
         pointer = self.store.get(layout.CURRENT)
         manifest = HeadManifest.from_json(pointer)  # a pointer that does not hash to its ids is refused
+        self.head_now(manifest)
         chain = None
         try:
             raw = self.store.get(layout.HEAD_CHAIN)
@@ -413,6 +414,33 @@ class Pull:
         elif layout.HEAD_CHAIN in self.owned:
             self.remove(layout.HEAD_CHAIN)  # the copy is of an older head, and the links above are of the full files
         self.put(LINKS, json.dumps(links, indent=1).encode())
+
+    def head_now(self, manifest: HeadManifest | None = None) -> None:
+        """Mirror the small head document at its store key and at the site root; older publishers omit it."""
+        if manifest is None and (self.site / layout.CURRENT).is_file():
+            manifest = HeadManifest.from_json((self.site / layout.CURRENT).read_bytes())
+        try:
+            data = self.store.get(layout.HEAD_NOW)
+        except KeyError:
+            return
+        doc = json.loads(data)
+        if doc.get("schema") != "sn120-head-now-v1":
+            self.notes.append(f"{layout.HEAD_NOW} is not a head-now document: not copied; the last good head.json stays")
+            return
+        try:
+            head = HeadManifest.from_dict(doc["head"])
+        except (V2Error, ValueError, KeyError, TypeError, AttributeError):
+            self.notes.append(f"{layout.HEAD_NOW} has no valid head manifest: not copied; the last good head.json stays")
+            return
+        if doc.get("version_id") != head.head.version_id:
+            self.notes.append(f"{layout.HEAD_NOW} names another head: not copied; the last good head.json stays")
+            return
+        if manifest is not None and head.head.version_id != manifest.head.version_id:
+            self.notes.append(f"{layout.HEAD_NOW} is not the current head yet: not copied; the last good head.json stays")
+            return
+        refuse_private(doc, "head-now")
+        self.put(layout.HEAD_NOW, data)
+        build.write(self.site / "head.json", data)
 
     def heads(self) -> None:
         """Head manifests. A file is taken only when it is a head manifest with the id of its key."""
@@ -735,6 +763,7 @@ def run(store: Any, site: Path, public_url: str, ttl_s: int, keep_rounds: int, m
     pull.step("site pages", site_pages)
     # A contract that changed while the long pull ran still gets mirrored before this locked run exits.
     pull.step("llms.txt and mining.json final refresh", pull.contract)
+    pull.step("head.json final refresh", pull.head_now)
     pull.step("confirmation stats final refresh", pull.confirmation_stats)
     pull.step("site pages final refresh", site_pages)
     for note in pull.notes:

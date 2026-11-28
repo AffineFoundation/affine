@@ -22,6 +22,7 @@ import pytest
 from moto.server import ThreadedMotoServer
 
 from sn120_v2 import layout, links, sim
+from sn120_v2.canonical import digest, to_jsonable
 from sn120_v2.errors import ConfigError, InfraError
 from sn120_v2.publisher import StorePublisher, render
 from sn120_v2.public import winner_stats_from_snapshot
@@ -106,6 +107,33 @@ def times(site: Path) -> dict[str, int]:
     return {str(path.relative_to(site)): path.stat().st_mtime_ns for path in site.rglob("*") if path.is_file()}
 
 
+def test_legacy_store_without_head_now_still_pulls(env, store, tmp_path):
+    store.delete(layout.HEAD_NOW)
+    site = tmp_path / "site"
+    done = pull(env, site)
+    assert done.returncode == 0, done.stderr
+    assert not (site / "head.json").exists()
+    assert not (site / layout.HEAD_NOW).exists()
+
+
+def test_a_head_now_race_skips_the_file_and_keeps_the_last_good_root_copy(env, store, tmp_path):
+    site = tmp_path / "site"
+    first = pull(env, site)
+    assert first.returncode == 0, first.stderr
+    good_root = (site / "head.json").read_bytes()
+    doc = json.loads(store.get(layout.HEAD_NOW))
+    doc["head"] = HeadManifest.from_json(store.get(layout.CURRENT)).to_dict()
+    doc["head"]["head"]["applied_at"] += 1
+    doc["head"]["head"]["version_id"] = digest(to_jsonable({key: value for key, value in doc["head"]["head"].items() if key != "version_id"}))
+    doc["version_id"] = doc["head"]["head"]["version_id"]
+    store.put(layout.HEAD_NOW, json.dumps(doc).encode())
+    raced = pull(env, site)
+    assert raced.returncode == 0, raced.stderr
+    assert "is not the current head yet: not copied; the last good head.json stays" in raced.stderr
+    assert (site / "head.json").read_bytes() == good_root
+    assert (site / layout.HEAD_NOW).read_bytes() == good_root
+
+
 def test_one_run_copies_the_keys_of_the_layout_writes_the_links_and_builds_the_site(env, store, tmp_path):
     site = tmp_path / "site"
     done = pull(env, site)
@@ -115,13 +143,14 @@ def test_one_run_copies_the_keys_of_the_layout_writes_the_links_and_builds_the_s
     mining = json.loads(files[layout.MINING_JSON])
     small = [key for key in store.list("public/") if key.startswith(("public/heads/", "public/rounds/")) and key not in FOREIGN]
     tables = {layout.irt_snapshot(mining["irt_snapshot_id"])} | {layout.irt_snapshot(row["irt_snapshot_id"]) for row in mining["history"]}
-    copied = {layout.MINING_JSON, layout.LLMS_TXT, layout.WINNER_STATS, layout.CONFIRMATION_STATS, layout.CURRENT, *small, *tables, layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}
-    assert len(small) == 4 and set(files) == copied | {LINKS, INDEX, "llms.txt", "mining.json", layout.WINNER_STATS_ALIAS} | BUILT
+    copied = {layout.MINING_JSON, layout.LLMS_TXT, layout.WINNER_STATS, layout.CONFIRMATION_STATS, layout.CURRENT, layout.HEAD_NOW, *small, *tables, layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}
+    assert len(small) == 4 and set(files) == copied | {LINKS, INDEX, "llms.txt", "mining.json", "head.json", layout.WINNER_STATS_ALIAS} | BUILT
     for key in copied - {layout.ROLLOUT_INDEX, "public/rollouts/SCHEMA.md"}:  # mirrored objects are byte-identical
         assert files[key] == store.get(key)
     assert json.loads(files[layout.ROLLOUT_INDEX]) == {"schema": "sn120-v2-rollouts-index-2", "backfill": None, "bench": [], "gate": [], "schema_doc": "SCHEMA.md"}
     assert (site / "public/rollouts/SCHEMA.md").read_bytes() == (PULL.parent / "static/rollouts/SCHEMA.md").read_bytes()
     assert files["llms.txt"] == files[layout.LLMS_TXT] and files["mining.json"] == files[layout.MINING_JSON]
+    assert files["head.json"] == files[layout.HEAD_NOW] == store.get(layout.HEAD_NOW)
     assert files[layout.WINNER_STATS_ALIAS] == files[layout.WINNER_STATS] == store.get(layout.WINNER_STATS_ALIAS)
     assert json.loads(files["site-data.json"])["winner_stats_url"] == f"{URL}/{layout.WINNER_STATS}"
     assert [row["uid"] for row in json.loads(files[layout.WINNER_STATS])["winners"]] == [4]
@@ -170,8 +199,10 @@ def test_the_run_invokes_winner_stats_immediately_after_the_contract(env, tmp_pa
     assert called[-1][0] == "site pages final refresh"
     assert called[-2][0] == "confirmation stats final refresh"
     assert called[-2][1].__func__ is module.Pull.confirmation_stats
-    assert called[-3][0] == "llms.txt and mining.json final refresh"
-    assert called[-3][1].__func__ is module.Pull.contract
+    assert called[-3][0] == "head.json final refresh"
+    assert called[-3][1].__func__ is module.Pull.head_now
+    assert called[-4][0] == "llms.txt and mining.json final refresh"
+    assert called[-4][1].__func__ is module.Pull.contract
     assert called[2][1].__func__ is module.Pull.winner_stats
     assert called[3][0] == "confirmation stats"
     assert called[3][1].__func__ is module.Pull.confirmation_stats

@@ -29,6 +29,7 @@ _PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 # The current head: the bytes of HeadManifest.to_json(). Not ``public/current.json``: v1 has an object at that key.
 CURRENT = "public/head.json"
+HEAD_NOW = "public/head_now.json"  # the small head-only document, refreshed at apply and fold
 LLMS_TXT = "public/llms.txt"
 MINING_JSON = "public/mining.json"
 WINNER_STATS = "public/winner-stats.json"  # crowned winners only; no waiting or losing batch facts
