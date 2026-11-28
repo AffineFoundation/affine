@@ -338,6 +338,7 @@ class ChainFolder:
         self._rest()
         self.resident.root.mkdir(parents=True, exist_ok=True)  # a box whose disk was replaced has no cache directory
         self.resident.prune({head.base_hash, head.base_fp32_master_digest, *(ref.lora_hash for ref in head.loras)})
+        restore_from_link(self.resident, head.parent_version_id, head.base_hash, head.base_fp32_master_digest)
         try:
             master_dir = self.resident.tree(layout.public_master_prefix(head.base_fp32_master_digest), head.base_fp32_master_digest)
             base_dir = self.resident.tree(layout.public_base_prefix(head.base_hash), head.base_hash)
@@ -673,6 +674,30 @@ def last_folded(state: State) -> HeadVersion:
     return next(head for head in reversed(state.heads) if head.folded)
 
 
+def restore_from_link(resident: Resident, version_id: str, base_hash: str, master_digest: str) -> None:
+    """Put a head's base and master back in the cache from its checkpoint link, by hard links, where the cache lost them.
+
+    merge_after_confirm: a crown's candidate head waits in its link while the round trains on the unchanged head
+    (the cache is pruned to that head). Once confirmed it is the head, and the next fold or round reads it here.
+    ``Resident.tree`` hashes the restored files before any use.
+    """
+    links = resident.root.parent / "checkpoint" / version_id
+    for kind, identity in ((BASE, base_hash), (MASTER, master_digest)):
+        target, source = resident.root / identity, links / kind
+        if target.is_dir() or not source.is_dir():
+            continue
+        part = target.with_name(identity + ".part")
+        shutil.rmtree(part, ignore_errors=True)
+        try:
+            for file in source.rglob("*"):
+                if file.is_file():
+                    (part / file.relative_to(source)).parent.mkdir(parents=True, exist_ok=True)
+                    os.link(file, part / file.relative_to(source))
+            part.rename(target)
+        except OSError:
+            shutil.rmtree(part, ignore_errors=True)
+
+
 class HeadKeeper:
     """The box's own copy of the head in ``chain`` mode.
 
@@ -703,6 +728,7 @@ class HeadKeeper:
         self._working = False
         self._thread: threading.Thread | None = None
         self._settled, self._problem = "", ("", "")
+        self._candidates: set[str] = set()  # merge_after_confirm: candidate heads linked while their crown waits
 
     def _proof(self, head: HeadVersion) -> None:
         self.resident.root.mkdir(parents=True, exist_ok=True)
@@ -793,6 +819,7 @@ class HeadKeeper:
 
         ``run`` calls it after each pass of its loop, so an upload that stopped starts again there.
         """
+        candidate = self._keep_candidate(state)
         head = last_folded(state).version_id
         try:
             if head != self._settled and self.due(state):
@@ -803,7 +830,7 @@ class HeadKeeper:
                 say(f"checkpoint: not started: {type(exc).__name__}: {exc}")
             self._problem = (head, type(exc).__name__)
         linked = self._linked()
-        for version_id in linked - set(state.manifests):  # not a head of this journal
+        for version_id in linked - set(state.manifests) - {candidate}:  # not a head of this journal, nor the waiting candidate
             shutil.rmtree(self.links / version_id, ignore_errors=True)
         with self._lock:
             for head in state.heads:  # oldest first
@@ -813,6 +840,28 @@ class HeadKeeper:
                 self._working = True
                 self._thread = threading.Thread(target=self._work, name="head-checkpoint", daemon=True)
                 self._thread.start()
+
+    def _keep_candidate(self, state: State) -> str:
+        """merge_after_confirm: link the waiting crown's candidate; restore and unlink a candidate once settled.
+
+        The link keeps the candidate's files when the next round prunes the cache to the unchanged head; the
+        confirming parent reads its base there. A merged candidate goes back to the cache. Neither is uploaded.
+        """
+        pending = state.pending_king
+        candidate = pending.candidate.head.version_id if pending is not None and pending.deferred else ""
+        try:
+            if candidate:
+                self.link(pending.candidate)
+                self._candidates.add(candidate)
+        except V2Error as exc:
+            say(f"the candidate {candidate[:12]} is not linked: {type(exc).__name__}: {exc}")
+        for version_id in sorted(self._candidates - {candidate}):
+            manifest = state.manifests.get(version_id)
+            if manifest is not None:  # merged: its files go back to the cache before the link goes
+                restore_from_link(self.resident, version_id, manifest.head.base_hash, manifest.head.base_fp32_master_digest)
+            shutil.rmtree(self.links / version_id, ignore_errors=True)
+            self._candidates.discard(version_id)
+        return candidate
 
     def wait(self, timeout: float | None = None) -> bool:
         """Wait for the upload thread. True when no upload runs after the wait."""

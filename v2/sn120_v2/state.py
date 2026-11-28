@@ -41,11 +41,12 @@ APPLY_DEFERRED = "apply_deferred"
 HEAD_APPLIED = "head_applied"
 CONFIRMATION_RESOLVED = "confirmation_resolved"
 HEAD_FOLDED = "head_folded"
+CROWN_DEFERRED = "crown_deferred"  # merge_after_confirm: a crown awaits its re-test; the head does not move
 ROUND_CLOSED = "round_closed"
 HEAD_REVERTED = "head_reverted"  # operator: an earlier folded head is the head again; history is kept
 
 # How a round ended.
-APPLIED = "applied"  # a winner was applied to the head
+APPLIED = "applied"  # a winner was applied to the head; under merge_after_confirm, crowned as the deferred pending
 NULL = "null"  # scored, and M stays
 NO_DECISION = "no_decision"  # our infrastructure failed: nobody is charged
 ABANDONED = "abandoned"  # a winner was named but its files could not be verified: nobody is charged
@@ -80,7 +81,7 @@ class RoundRecord(Record):
     leases: tuple[Lease, ...]
     skipped: tuple[tuple[int, int], ...] = ()
     decision: RoundDecision | None = None
-    applied: bool = False  # the winner is on the head
+    applied: bool = False  # the winner is on the head (merge_after_confirm: the winner is the deferred pending crown)
     apply_attempts: int = 0
     outcome: str = ""  # empty while the round is open
     closed_at: int = 0
@@ -234,8 +235,14 @@ def _round_opened(state: State, data: dict, at: int) -> None:
     if record.parent is not None:
         _need(state.pending_king is not None and record.parent.pending == state.pending_king,
               "a confirming round's parent does not match the one pending king")
-        if record.parent.manifest is not None:
-            _need(record.parent.manifest.head.version_id == record.parent.pending.parent_version_id,
+        pending = record.parent.pending
+        if pending.deferred:
+            # The deferred crown's candidate is scored against this round's own head, which is still its parent.
+            _need(pending.parent_version_id == record.head_version_id, "a deferred crown is re-tested on the confirming round's own head")
+            _need(record.parent.manifest is None or record.parent.manifest == pending.candidate,
+                  "a confirming round pinned another candidate manifest")
+        elif record.parent.manifest is not None:
+            _need(record.parent.manifest.head.version_id == pending.parent_version_id,
                   "a confirming round pinned another parent manifest")
     if record.rotation is not None:
         _need(bool(record.rotation.get("state_sha")) and record.rotation.get("active_sha"), "rotated round lacks pool artifact ids")
@@ -299,6 +306,23 @@ def _head_applied(state: State, data: dict, at: int) -> None:
     state.round = replace(record, applied=True)
 
 
+def _crown_deferred(state: State, data: dict, at: int) -> None:
+    """merge_after_confirm: the round's winner becomes the pending crown. Nothing is installed and nothing is paid."""
+    record, head = _open_round(state, data), state.head
+    winner = record.decision.winner if record.decision else None
+    _need(winner is not None and not record.applied, "a crown was deferred without a settled winner, or twice")
+    _need(state.params is not None and state.params.merge_after_confirm, "a crown is deferred only under merge_after_confirm")
+    pending = PendingKing.from_dict(data["pending"])
+    _need(pending.deferred and state.pending_king is None, "a deferred crown needs a free pending slot")
+    _need((pending.uid, pending.hotkey, pending.crown_round_id, pending.parent_version_id, pending.batch_sha256,
+           pending.stacked.head.loras[0].lora_hash) ==
+          (winner.uid, winner.hotkey, record.round_id, head.version_id, winner.batch_sha256, winner.lora_hash),
+          "the deferred crown does not match the winner and the current head")
+    _need(head.folded, "a deferred crown is re-tested on a folded head")
+    state.pending_king = pending
+    state.round = replace(record, applied=True)
+
+
 def _confirmation_resolved(state: State, data: dict, at: int) -> None:
     record, pending = _open_round(state, data), state.pending_king
     confirmation = Confirmation.from_dict(data["confirmation"])
@@ -313,7 +337,18 @@ def _confirmation_resolved(state: State, data: dict, at: int) -> None:
           "confirmation identity does not match the pending king")
     _need(not confirmation.confirmed or confirmation.delta > 1e-12,
           "a confirmation requires a strictly positive fresh paired delta")
-    if confirmation.confirmed:
+    _need(confirmation.merged == (pending.deferred and confirmation.confirmed),
+          "a confirmation merges exactly a confirmed deferred crown")
+    if confirmation.merged:
+        # merge_after_confirm: this one record installs the re-tested candidate and pays it from now, with no back-payment.
+        _need(state.head.version_id == pending.parent_version_id == record.head_version_id,
+              "a confirmed deferred crown merges onto the head it was re-tested on")
+        for manifest in (pending.stacked, pending.candidate):
+            parent = state.head
+            head = _new_head(state, {"manifest": manifest.to_dict()})
+            _need(head.parent_version_id == parent.version_id, "a merged head does not follow the current head")
+        state.kings.append(King(pending.uid, pending.hotkey, pending.crown_round_id, pending.new_version_id, at, pending.z))
+    elif confirmation.confirmed:
         # applied_at remains the crown's install time; this record is the later payout commit, with no back-payment.
         state.kings.append(King(pending.uid, pending.hotkey, pending.crown_round_id, pending.new_version_id, pending.applied_at, pending.z))
     state.pending_king = None
@@ -352,10 +387,36 @@ def revert_refusal(state: State, to_version_id: str) -> str:
     return ""
 
 
+def legacy_revert_refusal(state: State, round_id: str, to_version_id: str) -> str:
+    """merge_after_confirm: why the open round may not revert the legacy crown it just failed, or an empty text.
+
+    A legacy crown was installed at its crown. When its confirmation fails (or has no decision) under
+    merge_after_confirm, the head goes back to the crown's parent, and only while that crown is still the tip.
+    """
+    record = state.round
+    if state.params is None or not state.params.merge_after_confirm:
+        return "merge_after_confirm is off"
+    if record is None or record.round_id != round_id:
+        return f"round {round_id} is not the open round"
+    confirmation = record.confirmation
+    if confirmation is None or confirmation.confirmed or confirmation.merged:
+        return "the open round did not fail a legacy crown"
+    if confirmation.new_version_id not in state.manifests or to_version_id != confirmation.parent_version_id:
+        return "the revert target is not the failed legacy crown's parent"
+    tip = state.head
+    if confirmation.new_version_id not in (tip.version_id, tip.parent_version_id if tip.folded else None):
+        return "the failed legacy crown is no longer the head tip"
+    target = state.manifests.get(to_version_id)
+    if target is None or not target.head.folded or to_version_id not in ancestors(state, tip.version_id):
+        return f"head {to_version_id[:12]} is not a folded ancestor of the current head"
+    return ""
+
+
 def _head_reverted(state: State, data: dict, at: int) -> None:
     current, target = data["from_version_id"], data["to_version_id"]
     _need(current == state.head.version_id, "a head revert does not start at the current head")
-    refusal = revert_refusal(state, target)
+    # Operator reverts are idle-only. The one in-round form reverts a failed legacy crown (merge_after_confirm).
+    refusal = legacy_revert_refusal(state, data["round_id"], target) if "round_id" in data else revert_refusal(state, target)
     _need(not refusal, f"a head revert is invalid: {refusal}")
     _need(isinstance(data["reason"], str) and data["reason"].strip() != "", "a head revert needs a reason")
     keep = next(index for index, head in enumerate(state.heads) if head.version_id == target) + 1
@@ -364,7 +425,8 @@ def _head_reverted(state: State, data: dict, at: int) -> None:
     state.reverted_heads.extend(dropped)
     state.manifest = state.manifests[target]  # manifests of the reverted-away heads stay, by id
     state.reverts.append({"at": at, "from_version_id": current, "to_version_id": target, "reason": data["reason"],
-                          "reverted_version_ids": [head.version_id for head in dropped]})
+                          "reverted_version_ids": [head.version_id for head in dropped],
+                          **({"round_id": data["round_id"]} if "round_id" in data else {})})
 
 
 def _round_closed(state: State, data: dict, at: int) -> None:
@@ -408,6 +470,7 @@ HANDLERS: dict[str, Callable[[State, dict, int], None]] = {
     ROUND_SETTLED: _round_settled,
     APPLY_DEFERRED: _apply_deferred,
     HEAD_APPLIED: _head_applied,
+    CROWN_DEFERRED: _crown_deferred,
     CONFIRMATION_RESOLVED: _confirmation_resolved,
     HEAD_FOLDED: _head_folded,
     ROUND_CLOSED: _round_closed,

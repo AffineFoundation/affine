@@ -372,7 +372,18 @@ class FoldArtifact(Record):
 
 @dataclass(frozen=True)
 class PendingKing(Record):
-    """A crown already installed but not yet eligible for payout."""
+    """A crown awaiting the next round's fresh paired comparison, and not yet eligible for payout.
+
+    Legacy (``deferred`` false): the crown is already installed. ``new_version_id`` is the installed stacked head
+    and ``parent_version_id`` the old head that the next round scores again.
+
+    ``deferred`` (``merge_after_confirm``): nothing is installed. ``parent_version_id`` is the head the crown's LoRA
+    is re-tested on, and stays the head until the re-test. ``stacked`` is that head with the LoRA stacked and
+    ``candidate`` its fold: the next round scores ``candidate`` against the unchanged head, and only a confirmation
+    appends ``stacked`` and ``candidate`` to the head chain. ``new_version_id`` names ``stacked``.
+    """
+
+    LEFT_OUT_AT_DEFAULT = ("deferred", "stacked", "candidate")
 
     uid: int
     hotkey: str
@@ -382,6 +393,22 @@ class PendingKing(Record):
     batch_sha256: str
     applied_at: int
     z: float = 0.0
+    deferred: bool = False
+    stacked: HeadManifest | None = None
+    candidate: HeadManifest | None = None
+
+    def __post_init__(self) -> None:
+        _need(type(self.deferred) is bool, "deferred must be true or false")
+        if not self.deferred:
+            _need(self.stacked is None and self.candidate is None, "only a deferred crown carries candidate manifests")
+            return
+        stacked, candidate = self.stacked, self.candidate
+        _need(stacked is not None and candidate is not None, "a deferred crown names its stacked head and its fold")
+        _need(stacked.head.version_id == self.new_version_id and stacked.head.parent_version_id == self.parent_version_id
+              and len(stacked.head.loras) == 1 and stacked.head.round_id == self.crown_round_id,
+              "a deferred crown's stacked head is its one LoRA on the head it is re-tested on")
+        _need(candidate.head.folded and candidate.head.parent_version_id == self.new_version_id,
+              "a deferred crown's candidate is the fold of its stacked head")
 
 
 @dataclass(frozen=True)
@@ -409,6 +436,9 @@ class Confirmation(Record):
     excluded_training_prompts: int = 0
     confirmed: bool = False
     reason: str = ""
+    # merge_after_confirm: this confirmation merged the deferred crown into the head. Omitted while false.
+    LEFT_OUT_AT_DEFAULT = ("merged",)
+    merged: bool = False
 
 
 @dataclass(frozen=True)

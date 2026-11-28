@@ -254,6 +254,20 @@ ANCHOR_RULE_CHANGELOG = (
 )
 RULE_CHANGELOG += ANCHOR_RULE_CHANGELOG
 
+MERGE_AFTER_CONFIRM_CHANGELOG = (
+    "- 2026-11-28 / `merge_after_confirm` / A crown (z > z_crown) is not merged into the head until its LoRA passes a fresh paired re-test in the next round (z >= z_bar). Until then miners train on and are judged against the unchanged head. A crown that fails confirmation is discarded and never touches the head; a legacy unconfirmed fold that fails is reverted. Only confirmed crowns are merged and paid.",
+)
+MERGE_AFTER_CONFIRM_EXPLANATION = (
+    "A crown (z > z_crown) is not merged into the head until its LoRA passes a fresh paired re-test in the next round. "
+    "Until then miners train on and are judged against the unchanged head. A crown that fails confirmation is discarded "
+    "and never touches the head; a legacy unconfirmed fold that fails is reverted. Only confirmed crowns are merged and paid."
+)
+
+
+def rule_changelog(params: Params) -> tuple[str, ...]:
+    """The rule changelog; the merge-after-confirmation entry is listed only while that rule is on."""
+    return RULE_CHANGELOG + (MERGE_AFTER_CONFIRM_CHANGELOG if params.merge_after_confirm else ())
+
 RECIPE_NOTES = {
     "method": "GRPO on the LoRA weights only; the base weights are frozen",
     "steps": "epochs (full passes) over the batch or each v4 stage; each pass makes `minibatches` updates",
@@ -503,7 +517,9 @@ def contract(params: Params, public_url: str, links_url: str = "") -> dict[str, 
             "no_decision_unpaid": True,
             "training_prompt_exclusion": "map the pending crown's winner-batch prompts through task.batch_prompt(); skip unmapped prompts; exclude mapped task ids before the shared draw",
             "public_round_fields": ["parent_outcomes", "parent_error", "confirmation"],
-            "confirmation_fields": ["parent_version_id", "pending_round_id", "pending_uid", "new_version_id", "delta", "se", "z", "new_pass_rate", "old_pass_rate", "new_head_pass_rate", "old_head_pass_rate", "n_tasks", "excluded_training_prompts", "confirmed", "paid", "payout_status", "reason"],
+            "confirmation_fields": ["parent_version_id", "pending_round_id", "pending_uid", "new_version_id", "delta", "se", "z", "new_pass_rate", "old_pass_rate", "new_head_pass_rate", "old_head_pass_rate", "n_tasks", "excluded_training_prompts", "confirmed", "paid", "payout_status", "reason"]
+                + (["merged"] if params.merge_after_confirm else []),
+            **({"merge_rule": "after_confirmation", "merge_explanation": MERGE_AFTER_CONFIRM_EXPLANATION} if params.merge_after_confirm else {}),
         } if params.confirm_next_round else {"enabled": False, "payout": "historical immediate apply-and-pay; no parent slot or training-prompt exclusion"},
         "null_model": NULL_MODEL,
         "generator_task_check": copy.deepcopy(GENERATOR_TASK_CHECK),
@@ -578,7 +594,10 @@ def head_now_preview(mining: Mapping[str, Any], manifest: HeadManifest) -> list[
     """Move the current head to the end of the existing bounded preview, without exposing round state."""
     head = manifest.head
     row = {"version_id": head.version_id, "round_id": head.round_id, "applied_at": head.applied_at, "folded": head.folded}
-    previous = [dict(item) for item in mining.get("heads") or [] if item.get("version_id") != head.version_id]
+    rows = [dict(item) for item in mining.get("heads") or []]
+    ids = [item.get("version_id") for item in rows]
+    # A head already in the preview is a revert target (or the same head again): the rows after it left the head.
+    previous = rows[:ids.index(head.version_id)] if head.version_id in ids else rows
     return [*previous, row][-HISTORY_PREVIEW:]
 
 
@@ -2003,8 +2022,16 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
         if not params.confirm_next_round else
         "  With no eligible LoRA, M stays and there is no new crown.",
         *([
-            f"- Paired crown confirmation (`confirm_next_round`): a winner of round r is applied, folded and served immediately, but payout waits.",
-            f"  In round r+1, the old parent and the installed new head each run {params.null_samples} fresh samples per task on the same draw.",
+            *([
+                "- Paired crown confirmation with merge after confirmation (`confirm_next_round`, `merge_after_confirm`): a winner of",
+                "  round r is not merged into the head. Its LoRA is folded into a candidate that is not served for training; payout waits.",
+                "  In round r+1 miners train on and are judged against the unchanged head, which is null M.",
+                f"  The candidate (the unchanged head plus the crown's LoRA, folded) and the unchanged head each run {params.null_samples} fresh",
+                "  samples per task on the same draw. Below, new is the candidate and parent is the unchanged head.",
+            ] if params.merge_after_confirm else [
+                f"- Paired crown confirmation (`confirm_next_round`): a winner of round r is applied, folded and served immediately, but payout waits.",
+                f"  In round r+1, the old parent and the installed new head each run {params.null_samples} fresh samples per task on the same draw.",
+            ]),
             "  Parent sample k uses exactly the same seed and sampling configuration as new-head null sample k on each task.",
             "  For each task, new_mean_t and parent_mean_t average their respective samples; d_t = new_mean_t - parent_mean_t.",
             "  delta is the weighted mean of d_t; SE uses the paired-difference estimator above on those differences of sample means.",
@@ -2015,8 +2042,17 @@ def _judging_lines(doc: Mapping[str, Any], params: Params) -> list[str]:
                if params.crown_gate == "argmax_symmetric" and params.z_bar > 0 else
                ". Exact ties and losses fail. SE and diagnostic z are published, but neither is a threshold."),
             "  Missing parent files or parent-scoring failures are unpaid",
-            "  no_decision, not confirmation and not a round failure. A failed or undecided crown stays installed and is the next training base.",
-            "  The previous pending crown resolves before a new winner applies; every new crown becomes the next pending crown.",
+            *([
+                "  no_decision, not confirmation and not a round failure. A failed or undecided crown is discarded and never touches the head;",
+                "  it is never re-tested. A confirmed crown's candidate becomes the head at its confirmation (head.json, mining.json head_chain).",
+                "  A crown that was folded into the head before this rule (a legacy pending crown) and then fails or has no decision is reverted:",
+                "  the head goes back to that crown's parent while the crown is still the head tip.",
+                "  The previous pending crown resolves first; then round r+1's own winner (z > z_crown against the unchanged head) becomes the",
+                "  next pending crown, re-tested in round r+2 on the head that is current then.",
+            ] if params.merge_after_confirm else [
+                "  no_decision, not confirmation and not a round failure. A failed or undecided crown stays installed and is the next training base.",
+                "  The previous pending crown resolves before a new winner applies; every new crown becomes the next pending crown.",
+            ]),
             "  Only a confirmed king joins the paid set, at its confirmation; the confirming round pays it no back-payment.",
             "  The pending crown's winner-batch prompts are mapped with task.batch_prompt() and their task ids are excluded before the shared draw.",
             "  Unmapped prompts are skipped without blocking round open. With no pending crown the draw is unchanged; disabled mode is immediate apply-and-pay.",
@@ -2337,7 +2373,7 @@ def llms_text(doc: Mapping[str, Any]) -> str:
         "",
         *table(("parameter", "value"), numbers),
         "",
-        *RULE_CHANGELOG,
+        *rule_changelog(params),
         "",
         "- `eval_time_budget_s`: the longest time that the box waits for one answer of a model in scoring. It is not the",
         "  time of the scoring: the times of a round are in section 3.",
