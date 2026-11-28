@@ -213,8 +213,9 @@ class Params(Record):
         "rotation_retire_low_p", "rotation_n_min_low", "rotation_active_size",
         "rotation_rule", "rotation_churn_frac", "rotation_prior_p", "rotation_queue_publish", "rotation_churn_max",
         "eval_merged", "null_prune_from_round", "min_kl_seq", "min_kl_tok", "kl_rollouts",
-        "kl_max_tokens", "kl_time_limit_s", "confirm_next_round",
-        "z_crown", "recite_max_share", "max_kl_tok",
+        "kl_max_tokens", "kl_time_limit_s", "confirm_next_round", "max_stages", "train_tokens_per_s_floor",
+        "z_crown", "recite_max_share", "max_kl_tok", "anchor_n", "anchor_min_p", "anchor_min_rollouts", "anchor_hi_p",
+        "anchor_hi_share", "anchor_z_veto", "anchor_min_scored",
     )
 
     netuid: int = 120
@@ -292,6 +293,18 @@ class Params(Record):
     max_kl_tok: float = 0.0  # behaviour KL ceiling: kl_tok above it cannot crown or confirm; 0 = off
     recite_max_share: float = 0.0  # anti-recitation: share of target 10-grams found in active-pool task text; 0 = off
 
+    # Anchors: an easy-task regression check. ``anchor_n`` retired tasks the head solved (measured record pass rate
+    # >= anchor_min_p over >= anchor_min_rollouts head rollouts while active) are scored next to the gate draw.
+    # They never count toward delta, IRT, rotation or confirmation. A crown is vetoed when the paired anchor z is
+    # below -anchor_z_veto over at least anchor_min_scored scored anchors. 0 = off; every default is omitted from JSON.
+    anchor_n: int = 0
+    anchor_min_p: float = 0.8
+    anchor_min_rollouts: int = 4
+    anchor_hi_p: float = 0.95  # stratum boundary: round(anchor_n * anchor_hi_share) anchors come from records >= this
+    anchor_hi_share: float = 0.25
+    anchor_z_veto: float = 1.645  # one-sided: veto when anchor z < -anchor_z_veto
+    anchor_min_scored: int = 100  # fewer scored anchors: the check is not evaluated and does not veto
+
     recipe: Recipe = field(default_factory=Recipe)
 
     # One training seed for every LoRA in a new round. Legacy records without this field decode as ``batch``.
@@ -323,6 +336,10 @@ class Params(Record):
     # PLACEHOLDER: cap on steps x the tokens the trainer runs through the model for one file; 0 = no limit.
     # The cap does not count minibatches: each optimizer update has a fixed cost that no admission rule counts.
     max_train_token_steps: int = 16_000_000
+    max_stages: int = 5  # affine-batch-v4: one to five ordered GRPO/SFT stages
+    # When positive, reserve enough wall time for the configured token-step
+    # floor plus the ten-minute post-training reserve. 0 leaves old params off.
+    train_tokens_per_s_floor: int = 0
 
     # Queue and leases.
     round_time_limit_s: int = 100 * 60  # launch rule: at most this long from the lease to the promotion of the winner
@@ -446,6 +463,13 @@ class Params(Record):
         _need(type(self.kl_rollouts) is int and self.kl_rollouts >= 8, "kl_rollouts must be an integer of at least 8")
         _need(type(self.kl_max_tokens) is int and self.kl_max_tokens >= 0, "kl_max_tokens must be a nonnegative integer")
         _need(type(self.kl_time_limit_s) is int and self.kl_time_limit_s > 0, "kl_time_limit_s must be a positive integer")
+        _need(type(self.anchor_n) is int and self.anchor_n >= 0, "anchor_n must be an integer of at least 0")
+        _need(type(self.anchor_min_rollouts) is int and self.anchor_min_rollouts >= 0, "anchor_min_rollouts must be an integer of at least 0")
+        _need(type(self.anchor_min_scored) is int and self.anchor_min_scored >= 0, "anchor_min_scored must be an integer of at least 0")
+        _need(_unit(self.anchor_min_p) and _unit(self.anchor_hi_p) and _unit(self.anchor_hi_share), "anchor_min_p, anchor_hi_p and anchor_hi_share must be in [0, 1]")
+        _need(math.isfinite(self.anchor_z_veto) and self.anchor_z_veto >= 0, "anchor_z_veto must be zero or more")
+        # Anchors live only on the argmax path: it has no early drops, so no anchor can enter a drop test.
+        _need(self.anchor_n == 0 or self.crown_gate == "argmax_symmetric", "anchor_n applies only to crown_gate argmax_symmetric")
         _need(0.0 < self.drop_alpha < 1.0, "drop_alpha must be between 0 and 1")
         _need(_unit(self.cap_hit_floor) and _unit(self.cap_hit_margin), "cap-hit settings must be in [0, 1]")
         _need(_unit(self.min_cover) and self.min_cover > 0, "min_cover must be in (0, 1]")
@@ -472,6 +496,10 @@ class Params(Record):
             0 < self.train_time_budget_s < self.round_time_limit_s - self.promote_reserve_s,
             "train_time_budget_s must leave time for the scoring inside round_time_limit_s",
         )
+        _need(type(self.max_stages) is int and 1 <= self.max_stages <= 5, "max_stages must be an integer from 1 to 5")
+        _need(type(self.train_tokens_per_s_floor) is int and self.train_tokens_per_s_floor >= 0, "train_tokens_per_s_floor must be a nonnegative integer")
+        _need(self.train_tokens_per_s_floor <= 0 or self.train_time_budget_s >= math.ceil(self.max_train_token_steps / self.train_tokens_per_s_floor) + 600,
+              "train_time_budget_s must cover max_train_token_steps / train_tokens_per_s_floor, rounded up, plus 600 seconds")
         _need(self.eval_chunk_tasks >= 1, "eval_chunk_tasks must be at least 1")
         _need(self.apply_retry_s > 0 and self.apply_max_attempts >= 1, "apply retry settings must be positive")
         _need(self.kings_window >= 1 and self.burn_uid >= 0, "kings_window >= 1 and burn_uid >= 0")
